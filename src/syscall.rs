@@ -158,7 +158,7 @@ pub fn hostname() -> Result<String> {
     }
     let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     let name = String::from_utf8(buf[..len].to_vec())
-        .map_err(|e| SysError::InvalidArgument(e.to_string()))?;
+        .map_err(|e| SysError::InvalidArgument(std::borrow::Cow::Owned(e.to_string())))?;
     tracing::trace!(hostname = %name, "gethostname");
     Ok(name)
 }
@@ -166,6 +166,13 @@ pub fn hostname() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── compile-time guarantees ──────────────────────────────────────
+
+    const _: () = {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SysInfo>();
+    };
 
     // ── checked_syscall ─────────────────────────────────────────────
 

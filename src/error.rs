@@ -1,26 +1,31 @@
 //! Unified error type with errno mapping.
 
+use std::borrow::Cow;
+
 /// All errors that agnosys can produce.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SysError {
     #[error("syscall failed with errno {errno}: {message}")]
-    SyscallFailed { errno: i32, message: String },
+    SyscallFailed {
+        errno: i32,
+        message: Cow<'static, str>,
+    },
 
     #[error("invalid argument: {0}")]
-    InvalidArgument(String),
+    InvalidArgument(Cow<'static, str>),
 
     #[error("permission denied: {operation}")]
-    PermissionDenied { operation: String },
+    PermissionDenied { operation: Cow<'static, str> },
 
     #[error("resource temporarily unavailable")]
     WouldBlock,
 
     #[error("kernel module not loaded: {module}")]
-    ModuleNotLoaded { module: String },
+    ModuleNotLoaded { module: Cow<'static, str> },
 
     #[error("feature not supported: {feature}")]
-    NotSupported { feature: String },
+    NotSupported { feature: Cow<'static, str> },
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -35,16 +40,16 @@ impl SysError {
     pub fn from_errno(errno: i32) -> Self {
         match errno {
             libc::EPERM | libc::EACCES => Self::PermissionDenied {
-                operation: String::new(),
+                operation: Cow::Borrowed(""),
             },
             libc::EAGAIN => Self::WouldBlock,
-            libc::EINVAL => Self::InvalidArgument("invalid argument".into()),
+            libc::EINVAL => Self::InvalidArgument(Cow::Borrowed("invalid argument")),
             libc::ENOSYS => Self::NotSupported {
-                feature: "syscall".into(),
+                feature: Cow::Borrowed("syscall"),
             },
             _ => Self::SyscallFailed {
                 errno,
-                message: std::io::Error::from_raw_os_error(errno).to_string(),
+                message: Cow::Owned(std::io::Error::from_raw_os_error(errno).to_string()),
             },
         }
     }
@@ -62,6 +67,13 @@ impl SysError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── compile-time guarantees ──────────────────────────────────────
+
+    const _: () = {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SysError>();
+    };
 
     // ── from_errno mapping ──────────────────────────────────────────
 

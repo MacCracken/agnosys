@@ -15,7 +15,7 @@ exclude = [".claude/", ".github/", "docs/", "scripts/"]
 
 [features]
 default = ["syscall", "error"]
-syscall = []
+syscall = ["error"]
 error = []
 udev = []
 landlock = []
@@ -36,17 +36,18 @@ secureboot = []
 update = []
 agent = []
 drm = []
+serde = ["dep:serde"]
 logging = ["dep:tracing-subscriber"]
 full = [
     "syscall", "error", "udev", "landlock", "seccomp", "netns",
     "luks", "dmverity", "ima", "tpm", "certpin", "fuse", "pam",
     "mac", "audit", "journald", "bootloader", "secureboot",
-    "update", "agent", "drm", "logging",
+    "update", "agent", "drm", "logging", "serde",
 ]
 
 [dependencies]
 libc = "0.2"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"], optional = true }
 thiserror = "2"
 tracing = "0.1"
 
