@@ -53,6 +53,13 @@ const DRM_IOCTL_MODE_GETRESOURCES: libc::c_ulong =
 const DRM_IOCTL_MODE_GETCONNECTOR: libc::c_ulong =
     drm_iowr(0xA7, std::mem::size_of::<DrmModeGetConnector>());
 
+// ── Safety caps for kernel-reported sizes ────────────────────────────
+
+/// Maximum string length we'll allocate for DRM version fields.
+const MAX_VERSION_STRING: u64 = 4096;
+/// Maximum count of resources (CRTCs, connectors, etc.) we'll allocate for.
+const MAX_RESOURCE_COUNT: u32 = 1024;
+
 // ── Kernel structures ───────────────────────────────────────────────
 
 #[repr(C)]
@@ -372,10 +379,13 @@ impl Device {
         let mut ver = DrmVersion::default();
         self.ioctl(DRM_IOCTL_VERSION, &mut ver)?;
 
-        // Allocate buffers
-        let mut name_buf = vec![0u8; ver.name_len as usize];
-        let mut date_buf = vec![0u8; ver.date_len as usize];
-        let mut desc_buf = vec![0u8; ver.desc_len as usize];
+        // Allocate buffers (capped to prevent malicious/buggy kernel reports)
+        let mut name_buf = vec![0u8; ver.name_len.min(MAX_VERSION_STRING) as usize];
+        let mut date_buf = vec![0u8; ver.date_len.min(MAX_VERSION_STRING) as usize];
+        let mut desc_buf = vec![0u8; ver.desc_len.min(MAX_VERSION_STRING) as usize];
+        ver.name_len = name_buf.len() as u64;
+        ver.date_len = date_buf.len() as u64;
+        ver.desc_len = desc_buf.len() as u64;
 
         // Second call: fill buffers
         ver.name = name_buf.as_mut_ptr() as u64;
@@ -425,7 +435,12 @@ impl Device {
         let mut res = DrmModeCardRes::default();
         self.ioctl(DRM_IOCTL_MODE_GETRESOURCES, &mut res)?;
 
-        // Allocate arrays
+        // Allocate arrays (capped to prevent malicious/buggy kernel reports)
+        res.count_fbs = res.count_fbs.min(MAX_RESOURCE_COUNT);
+        res.count_crtcs = res.count_crtcs.min(MAX_RESOURCE_COUNT);
+        res.count_connectors = res.count_connectors.min(MAX_RESOURCE_COUNT);
+        res.count_encoders = res.count_encoders.min(MAX_RESOURCE_COUNT);
+
         let mut fb_ids = vec![0u32; res.count_fbs as usize];
         let mut crtc_ids = vec![0u32; res.count_crtcs as usize];
         let mut connector_ids = vec![0u32; res.count_connectors as usize];
@@ -660,12 +675,28 @@ mod tests {
     // ── ConnectorType ───────────────────────────────────────────────
 
     #[test]
-    fn connector_type_from_kernel() {
+    fn connector_type_from_kernel_all() {
         assert_eq!(ConnectorType::from_kernel(0), ConnectorType::Unknown);
         assert_eq!(ConnectorType::from_kernel(1), ConnectorType::VGA);
+        assert_eq!(ConnectorType::from_kernel(2), ConnectorType::DVII);
+        assert_eq!(ConnectorType::from_kernel(3), ConnectorType::DVID);
+        assert_eq!(ConnectorType::from_kernel(4), ConnectorType::DVIA);
+        assert_eq!(ConnectorType::from_kernel(5), ConnectorType::Composite);
+        assert_eq!(ConnectorType::from_kernel(6), ConnectorType::SVideo);
+        assert_eq!(ConnectorType::from_kernel(7), ConnectorType::LVDS);
+        assert_eq!(ConnectorType::from_kernel(8), ConnectorType::Component);
+        assert_eq!(ConnectorType::from_kernel(9), ConnectorType::NinePinDIN);
         assert_eq!(ConnectorType::from_kernel(10), ConnectorType::DisplayPort);
         assert_eq!(ConnectorType::from_kernel(11), ConnectorType::HDMIA);
+        assert_eq!(ConnectorType::from_kernel(12), ConnectorType::HDMIB);
+        assert_eq!(ConnectorType::from_kernel(13), ConnectorType::TV);
         assert_eq!(ConnectorType::from_kernel(14), ConnectorType::EDP);
+        assert_eq!(ConnectorType::from_kernel(15), ConnectorType::Virtual);
+        assert_eq!(ConnectorType::from_kernel(16), ConnectorType::DSI);
+        assert_eq!(ConnectorType::from_kernel(17), ConnectorType::DPI);
+        assert_eq!(ConnectorType::from_kernel(18), ConnectorType::Writeback);
+        assert_eq!(ConnectorType::from_kernel(19), ConnectorType::SPI);
+        assert_eq!(ConnectorType::from_kernel(20), ConnectorType::USB);
         assert_eq!(ConnectorType::from_kernel(999), ConnectorType::Other(999));
     }
 
@@ -681,6 +712,13 @@ mod tests {
         assert_ne!(ConnectorType::VGA, ConnectorType::HDMIA);
         assert_eq!(ConnectorType::Other(5), ConnectorType::Other(5));
         assert_ne!(ConnectorType::Other(5), ConnectorType::Other(6));
+    }
+
+    #[test]
+    fn connector_type_clone_copy() {
+        let a = ConnectorType::HDMIA;
+        let b = a; // Copy
+        assert_eq!(a, b);
     }
 
     // ── ConnectionStatus ────────────────────────────────────────────
@@ -705,6 +743,13 @@ mod tests {
         assert!(dbg.contains("Connected"));
     }
 
+    #[test]
+    fn connection_status_clone_copy() {
+        let a = ConnectionStatus::Connected;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
     // ── Cap ─────────────────────────────────────────────────────────
 
     #[test]
@@ -712,6 +757,22 @@ mod tests {
         assert_eq!(Cap::DumbBuffer as u64, 0x01);
         assert_eq!(Cap::Prime as u64, 0x05);
         assert_eq!(Cap::SyncObj as u64, 0x13);
+    }
+
+    #[test]
+    fn cap_all_values() {
+        assert_eq!(Cap::VblankHighCrtc as u64, 0x02);
+        assert_eq!(Cap::DumbPreferredDepth as u64, 0x03);
+        assert_eq!(Cap::DumbPreferShadow as u64, 0x04);
+        assert_eq!(Cap::TimestampMonotonic as u64, 0x06);
+        assert_eq!(Cap::AsyncPageFlip as u64, 0x07);
+        assert_eq!(Cap::CursorWidth as u64, 0x08);
+        assert_eq!(Cap::CursorHeight as u64, 0x09);
+        assert_eq!(Cap::AddFb2Modifiers as u64, 0x10);
+        assert_eq!(Cap::PageFlipTarget as u64, 0x11);
+        assert_eq!(Cap::CrtcInVblankEvent as u64, 0x12);
+        assert_eq!(Cap::SyncObjTimeline as u64, 0x14);
+        assert_eq!(Cap::AtomicAsyncPageFlip as u64, 0x15);
     }
 
     #[test]
@@ -724,6 +785,13 @@ mod tests {
     fn cap_eq() {
         assert_eq!(Cap::DumbBuffer, Cap::DumbBuffer);
         assert_ne!(Cap::DumbBuffer, Cap::Prime);
+    }
+
+    #[test]
+    fn cap_clone_copy() {
+        let a = Cap::Prime;
+        let b = a;
+        assert_eq!(a, b);
     }
 
     // ── Version ─────────────────────────────────────────────────────
@@ -793,6 +861,83 @@ mod tests {
         let dbg = format!("{c:?}");
         assert!(dbg.contains("HDMIA"));
         assert!(dbg.contains("Connected"));
+    }
+
+    // ── Render nodes ─────────────────────────────────────────────────
+
+    #[test]
+    fn enumerate_render_nodes_sorted() {
+        if let Ok(nodes) = enumerate_render_nodes() {
+            for window in nodes.windows(2) {
+                assert!(window[0] <= window[1]);
+            }
+        }
+    }
+
+    // ── GPU-conditional: multiple caps ───────────────────────────────
+
+    #[test]
+    fn device_get_multiple_caps() {
+        let dev = match open_first_card() {
+            Some(d) => d,
+            None => return,
+        };
+        // Query several caps — all should return without error
+        let _ = dev.get_cap(Cap::Prime);
+        let _ = dev.get_cap(Cap::TimestampMonotonic);
+        let _ = dev.get_cap(Cap::CursorWidth);
+        let _ = dev.get_cap(Cap::CursorHeight);
+        let _ = dev.get_cap(Cap::SyncObj);
+    }
+
+    #[test]
+    fn device_version_fields_populated() {
+        let dev = match open_first_card() {
+            Some(d) => d,
+            None => return,
+        };
+        let ver = dev.version().unwrap();
+        assert!(!ver.name.is_empty());
+        // date and desc may be empty for some drivers but should be valid strings
+        let _ = ver.date;
+        let _ = ver.desc;
+    }
+
+    // ── Struct clone tests ──────────────────────────────────────────
+
+    #[test]
+    fn connector_info_clone() {
+        let c = ConnectorInfo {
+            id: 1,
+            connector_type: ConnectorType::HDMIA,
+            connector_type_id: 1,
+            status: ConnectionStatus::Connected,
+            mm_width: 0,
+            mm_height: 0,
+            encoder_id: 0,
+            count_modes: 0,
+            count_encoders: 0,
+        };
+        let c2 = c.clone();
+        assert_eq!(c.id, c2.id);
+        assert_eq!(c.connector_type, c2.connector_type);
+    }
+
+    #[test]
+    fn mode_resources_clone() {
+        let r = ModeResources {
+            crtc_ids: vec![1, 2],
+            connector_ids: vec![3],
+            encoder_ids: vec![],
+            fb_ids: vec![],
+            min_width: 0,
+            max_width: 1920,
+            min_height: 0,
+            max_height: 1080,
+        };
+        let r2 = r.clone();
+        assert_eq!(r.crtc_ids, r2.crtc_ids);
+        assert_eq!(r.max_width, r2.max_width);
     }
 
     // ── ioctl helpers ───────────────────────────────────────────────

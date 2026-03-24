@@ -29,7 +29,7 @@ const SECCOMP_SET_MODE_FILTER: libc::c_uint = 1;
 
 // seccomp filter flags
 const SECCOMP_FILTER_FLAG_TSYNC: libc::c_ulong = 1;
-const _SECCOMP_FILTER_FLAG_LOG: libc::c_ulong = 1 << 1;
+const SECCOMP_FILTER_FLAG_LOG: libc::c_ulong = 1 << 1;
 
 // Return actions (top 16 bits)
 const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
@@ -342,6 +342,48 @@ pub fn load_tsync(filter: &Filter) -> Result<()> {
         Err(SysError::from_errno(errno))
     } else {
         tracing::info!(instructions = filter.len(), "seccomp filter loaded (tsync)");
+        Ok(())
+    }
+}
+
+/// Load a seccomp filter with kernel-level logging of all filter actions.
+pub fn load_logged(filter: &Filter) -> Result<()> {
+    if filter.is_empty() {
+        return Err(SysError::InvalidArgument(Cow::Borrowed(
+            "empty seccomp filter",
+        )));
+    }
+    if filter.len() > 32768 {
+        return Err(SysError::InvalidArgument(Cow::Borrowed(
+            "seccomp filter exceeds 32768 instruction limit",
+        )));
+    }
+
+    set_no_new_privs()?;
+
+    let prog = SockFprog {
+        len: filter.instructions.len() as libc::c_ushort,
+        filter: filter.instructions.as_ptr(),
+    };
+
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            SECCOMP_SET_MODE_FILTER,
+            SECCOMP_FILTER_FLAG_LOG,
+            &prog as *const SockFprog,
+        )
+    };
+
+    if ret < 0 {
+        let errno = unsafe { *libc::__errno_location() };
+        tracing::error!(errno, "seccomp logged load failed");
+        Err(SysError::from_errno(errno))
+    } else {
+        tracing::info!(
+            instructions = filter.len(),
+            "seccomp filter loaded (logged)"
+        );
         Ok(())
     }
 }

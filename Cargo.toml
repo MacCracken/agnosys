@@ -18,7 +18,7 @@ default = ["syscall", "error"]
 syscall = ["error"]
 error = []
 udev = ["error"]
-landlock = ["error"]
+landlock = ["error", "dep:bitflags"]
 seccomp = ["error"]
 netns = []
 luks = []
@@ -46,7 +46,7 @@ full = [
 ]
 
 [dependencies]
-bitflags = "2"
+bitflags = { version = "2", optional = true }
 libc = "0.2"
 serde = { version = "1", features = ["derive"], optional = true }
 thiserror = "2"

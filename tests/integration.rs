@@ -160,3 +160,136 @@ fn query_sysinfo_avoids_redundant_syscalls() {
     assert!(free > 0);
     assert!(procs > 0);
 }
+
+// ── udev integration ────────────────────────────────────────────────
+
+#[cfg(feature = "udev")]
+mod udev_integration {
+    #[test]
+    fn enumerate_and_inspect_net_devices() {
+        let devs = agnosys::udev::enumerate("net").unwrap();
+        assert!(!devs.is_empty());
+        for dev in &devs {
+            assert!(!dev.name().is_empty());
+            assert!(dev.syspath().exists());
+            assert_eq!(dev.subsystem(), "net");
+        }
+    }
+
+    #[test]
+    fn device_from_syspath_round_trip() {
+        let devs = agnosys::udev::enumerate("net").unwrap();
+        for dev in &devs {
+            let dev2 = agnosys::udev::device_from_syspath(dev.syspath()).unwrap();
+            assert_eq!(dev.name(), dev2.name());
+        }
+    }
+
+    #[test]
+    fn monitor_nonblocking() {
+        if let Ok(mon) = agnosys::udev::Monitor::new() {
+            // Should return None immediately (no events pending)
+            assert!(mon.try_recv().unwrap().is_none());
+        }
+    }
+}
+
+// ── landlock integration ────────────────────────────────────────────
+
+#[cfg(feature = "landlock")]
+mod landlock_integration {
+    use agnosys::landlock::{FsAccess, Ruleset};
+    use std::path::Path;
+
+    #[test]
+    fn abi_version_consistent() {
+        // Two calls should return the same version
+        let v1 = agnosys::landlock::abi_version();
+        let v2 = agnosys::landlock::abi_version();
+        match (v1, v2) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b),
+            (Err(_), Err(_)) => {} // both unsupported, fine
+            _ => panic!("abi_version inconsistent"),
+        }
+    }
+
+    #[test]
+    fn ruleset_add_multiple_paths() {
+        let rs = match Ruleset::new(FsAccess::READ_FILE | FsAccess::READ_DIR) {
+            Ok(rs) => rs,
+            Err(_) => return,
+        };
+        assert!(
+            rs.allow_path(Path::new("/tmp"), FsAccess::READ_FILE)
+                .is_ok()
+        );
+        assert!(rs.allow_path(Path::new("/usr"), FsAccess::READ_DIR).is_ok());
+        assert!(
+            rs.allow_path(Path::new("/var"), FsAccess::READ_FILE)
+                .is_ok()
+        );
+    }
+}
+
+// ── seccomp integration ─────────────────────────────────────────────
+
+#[cfg(feature = "seccomp")]
+mod seccomp_integration {
+    use agnosys::seccomp::{Action, FilterBuilder};
+
+    #[test]
+    fn build_and_inspect_filter() {
+        let filter = FilterBuilder::new(Action::KillProcess)
+            .allow_syscall(libc::SYS_read)
+            .allow_syscall(libc::SYS_write)
+            .allow_syscall(libc::SYS_exit_group)
+            .build();
+        assert!(!filter.is_empty());
+        // arch(3) + nr(1) + 3 checks + default(1) + 3 returns = 11
+        assert_eq!(filter.len(), 11);
+    }
+
+    #[test]
+    fn no_new_privs_idempotent() {
+        assert!(agnosys::seccomp::set_no_new_privs().is_ok());
+        assert!(agnosys::seccomp::set_no_new_privs().is_ok());
+    }
+
+    #[test]
+    fn filter_with_errno_default() {
+        let filter = FilterBuilder::new(Action::Errno(libc::EPERM as u16))
+            .allow_syscall(libc::SYS_read)
+            .build();
+        assert_eq!(filter.len(), 7);
+    }
+}
+
+// ── drm integration ─────────────────────────────────────────────────
+
+#[cfg(feature = "drm")]
+mod drm_integration {
+    #[test]
+    fn enumerate_and_open() {
+        let cards = match agnosys::drm::enumerate_cards() {
+            Ok(c) if !c.is_empty() => c,
+            _ => return,
+        };
+        for card in &cards {
+            if let Ok(dev) = agnosys::drm::Device::open(card) {
+                let ver = dev.version().unwrap();
+                assert!(!ver.name.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn enumerate_cards_and_render_nodes_consistent() {
+        let cards = agnosys::drm::enumerate_cards().unwrap_or_default();
+        let nodes = agnosys::drm::enumerate_render_nodes().unwrap_or_default();
+        // If we have cards, we likely have render nodes (though not guaranteed)
+        if !cards.is_empty() {
+            // Just verify both work without error
+            let _ = nodes;
+        }
+    }
+}

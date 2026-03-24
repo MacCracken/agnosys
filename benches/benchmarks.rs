@@ -253,6 +253,9 @@ fn bench_drm(c: &mut Criterion) {
         group.bench_function("get_cap_dumb_buffer", |b| {
             b.iter(|| dev.get_cap(agnosys::drm::Cap::DumbBuffer))
         });
+        if dev.mode_resources().is_ok() {
+            group.bench_function("mode_resources", |b| b.iter(|| dev.mode_resources()));
+        }
     }
 
     group.finish();
