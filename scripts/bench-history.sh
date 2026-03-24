@@ -29,7 +29,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # Run benchmarks and capture output, stripping ANSI escape codes
-BENCH_OUTPUT=$(cargo bench --bench benchmarks 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+BENCH_OUTPUT=$(cargo bench --all-features --bench benchmarks 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
 
 # Show full output
 echo "$BENCH_OUTPUT"

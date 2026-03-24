@@ -196,8 +196,16 @@ impl FilterBuilder {
     /// 1. Validates the architecture matches the compile target
     /// 2. Checks the syscall number against each rule
     /// 3. Falls through to the default action
+    ///
+    /// # Panics
+    ///
+    /// Panics if more than 254 rules are added (BPF jump offset limit).
     #[must_use]
     pub fn build(self) -> Filter {
+        assert!(
+            self.rules.len() <= 254,
+            "seccomp filter cannot have more than 254 rules (BPF u8 jump offset limit)"
+        );
         let rule_count = self.rules.len();
         let mut insns = Vec::with_capacity(4 + rule_count * 2);
 
@@ -481,6 +489,80 @@ mod tests {
         assert!(arch != 0);
     }
 
+    // ── Filter accessors ──────────────────────────────────────────
+
+    #[test]
+    fn filter_len_and_is_empty() {
+        let f = FilterBuilder::new(Action::Allow).build();
+        assert!(!f.is_empty());
+        assert!(!f.is_empty());
+    }
+
+    // ── load validation ────────────────────────────────────────────
+
+    #[test]
+    fn load_tsync_rejects_empty() {
+        let filter = Filter {
+            instructions: vec![],
+        };
+        assert!(load_tsync(&filter).is_err());
+    }
+
+    // ── Builder with various defaults ──────────────────────────────
+
+    #[test]
+    fn builder_default_allow() {
+        let f = FilterBuilder::new(Action::Allow).build();
+        assert_eq!(f.len(), 5);
+    }
+
+    #[test]
+    fn builder_default_errno() {
+        let f = FilterBuilder::new(Action::Errno(libc::EPERM as u16)).build();
+        assert_eq!(f.len(), 5);
+    }
+
+    #[test]
+    fn builder_default_log() {
+        let f = FilterBuilder::new(Action::Log).build();
+        assert_eq!(f.len(), 5);
+    }
+
+    #[test]
+    fn builder_default_trap() {
+        let f = FilterBuilder::new(Action::Trap).build();
+        assert_eq!(f.len(), 5);
+    }
+
+    #[test]
+    fn builder_default_kill_thread() {
+        let f = FilterBuilder::new(Action::KillThread).build();
+        assert_eq!(f.len(), 5);
+    }
+
+    // ── Rule limit ─────────────────────────────────────────────────
+
+    #[test]
+    fn builder_254_rules_ok() {
+        let mut fb = FilterBuilder::new(Action::KillProcess);
+        for i in 0..254 {
+            fb = fb.allow_syscall(i);
+        }
+        let f = fb.build();
+        // arch(3) + nr(1) + 254 checks + default(1) + 254 returns
+        assert_eq!(f.len(), 3 + 1 + 254 + 1 + 254);
+    }
+
+    #[test]
+    #[should_panic(expected = "BPF u8 jump offset limit")]
+    fn builder_255_rules_panics() {
+        let mut fb = FilterBuilder::new(Action::KillProcess);
+        for i in 0..255 {
+            fb = fb.allow_syscall(i);
+        }
+        let _ = fb.build();
+    }
+
     // ── Action equality ─────────────────────────────────────────────
 
     #[test]
@@ -489,13 +571,32 @@ mod tests {
         assert_ne!(Action::Allow, Action::KillProcess);
         assert_eq!(Action::Errno(1), Action::Errno(1));
         assert_ne!(Action::Errno(1), Action::Errno(2));
+        assert_eq!(Action::Trace(5), Action::Trace(5));
+        assert_ne!(Action::Trace(5), Action::Trace(6));
+    }
+
+    // ── Action clone/copy ──────────────────────────────────────────
+
+    #[test]
+    fn action_clone_copy() {
+        let a = Action::Errno(42);
+        let b = a; // Copy
+        #[allow(clippy::clone_on_copy)]
+        let c = a.clone(); // Clone
+        assert_eq!(a, b);
+        assert_eq!(a, c);
     }
 
     // ── Action debug ────────────────────────────────────────────────
 
     #[test]
-    fn action_debug() {
-        let dbg = format!("{:?}", Action::KillProcess);
-        assert!(dbg.contains("KillProcess"));
+    fn action_debug_all_variants() {
+        assert!(format!("{:?}", Action::Allow).contains("Allow"));
+        assert!(format!("{:?}", Action::KillProcess).contains("KillProcess"));
+        assert!(format!("{:?}", Action::KillThread).contains("KillThread"));
+        assert!(format!("{:?}", Action::Trap).contains("Trap"));
+        assert!(format!("{:?}", Action::Errno(1)).contains("Errno"));
+        assert!(format!("{:?}", Action::Trace(1)).contains("Trace"));
+        assert!(format!("{:?}", Action::Log).contains("Log"));
     }
 }

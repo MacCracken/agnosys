@@ -133,6 +133,22 @@ fn bench_landlock(c: &mut Criterion) {
             )
         })
     });
+    group.bench_function("ruleset_new", |b| {
+        use agnosys::landlock::{FsAccess, Ruleset};
+        b.iter(|| Ruleset::new(black_box(FsAccess::READ_FILE)))
+    });
+    if let Ok(rs) = agnosys::landlock::Ruleset::new(agnosys::landlock::FsAccess::READ_FILE) {
+        // Leak the ruleset so we can use it in the closure without lifetime issues
+        let rs = Box::leak(Box::new(rs));
+        group.bench_function("ruleset_allow_path", |b| {
+            b.iter(|| {
+                rs.allow_path(
+                    std::path::Path::new("/tmp"),
+                    black_box(agnosys::landlock::FsAccess::READ_FILE),
+                )
+            })
+        });
+    }
 
     group.finish();
 }
@@ -168,6 +184,16 @@ fn bench_seccomp(c: &mut Criterion) {
             fb.build()
         })
     });
+    group.bench_function("filter_len", |b| {
+        let f = FilterBuilder::new(Action::KillProcess)
+            .allow_syscall(libc::SYS_read)
+            .build();
+        b.iter(|| black_box(f.len()))
+    });
+    group.bench_function("filter_is_empty", |b| {
+        let f = FilterBuilder::new(Action::KillProcess).build();
+        b.iter(|| black_box(f.is_empty()))
+    });
     group.finish();
 }
 
@@ -189,7 +215,19 @@ fn bench_udev(c: &mut Criterion) {
             agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
         b.iter(|| dev.attr(black_box("address")))
     });
-
+    group.bench_function("enumerate_bus_platform", |b| {
+        b.iter(|| agnosys::udev::enumerate_bus(black_box("platform")))
+    });
+    group.bench_function("device_name", |b| {
+        let dev =
+            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
+        b.iter(|| black_box(dev.name()))
+    });
+    group.bench_function("device_properties", |b| {
+        let dev =
+            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
+        b.iter(|| black_box(dev.properties()))
+    });
     group.finish();
 }
 

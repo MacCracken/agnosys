@@ -663,4 +663,109 @@ mod tests {
     fn parse_empty_msg() {
         assert!(parse_uevent_msg(b"").is_none());
     }
+
+    #[test]
+    fn parse_header_only() {
+        let msg = b"add@/devices/test\0";
+        let uevent = parse_uevent_msg(msg).unwrap();
+        assert_eq!(uevent.action, UeventAction::Add);
+        assert!(uevent.devpath.is_empty()); // no DEVPATH KV pair
+    }
+
+    #[test]
+    fn parse_no_kv_after_header() {
+        let msg = b"change@/devices/x\0\0\0";
+        let uevent = parse_uevent_msg(msg).unwrap();
+        assert_eq!(uevent.action, UeventAction::Change);
+        assert!(uevent.properties.is_empty());
+    }
+
+    // ── Device methods ──────────────────────────────────────────────
+
+    #[test]
+    fn device_property_missing_key() {
+        let devs = enumerate("net").unwrap();
+        if let Some(dev) = devs.first() {
+            assert!(dev.property("NONEXISTENT_AGNOSYS_KEY").is_none());
+        }
+    }
+
+    #[test]
+    fn device_devnode_lo() {
+        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
+        // lo typically has no DEVNAME, so devnode returns None
+        let _ = dev.devnode();
+    }
+
+    #[test]
+    fn device_devtype_lo() {
+        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
+        // lo may or may not have DEVTYPE
+        let _ = dev.devtype();
+    }
+
+    #[test]
+    fn device_driver_lo() {
+        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
+        // lo has no driver symlink
+        let _ = dev.driver();
+    }
+
+    #[test]
+    fn device_properties_not_empty_for_lo() {
+        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
+        assert!(!dev.properties().is_empty());
+    }
+
+    // ── Uevent clone/debug ──────────────────────────────────────────
+
+    #[test]
+    fn uevent_clone() {
+        let msg = b"add@/devices/test\0DEVPATH=/devices/test\0SUBSYSTEM=net\0";
+        let uevent = parse_uevent_msg(msg).unwrap();
+        let cloned = uevent.clone();
+        assert_eq!(cloned.action, uevent.action);
+        assert_eq!(cloned.devpath, uevent.devpath);
+        assert_eq!(cloned.subsystem, uevent.subsystem);
+    }
+
+    #[test]
+    fn uevent_debug() {
+        let msg = b"add@/devices/test\0DEVPATH=/devices/test\0";
+        let uevent = parse_uevent_msg(msg).unwrap();
+        let dbg = format!("{uevent:?}");
+        assert!(dbg.contains("Add"));
+    }
+
+    // ── enumerate_bus pci ───────────────────────────────────────────
+
+    #[test]
+    fn enumerate_bus_pci() {
+        // PCI bus should exist on most systems
+        let _ = enumerate_bus("pci");
+    }
+
+    // ── UeventAction clone/copy ─────────────────────────────────────
+
+    #[test]
+    fn uevent_action_clone_copy() {
+        let a = UeventAction::Add;
+        let b = a; // Copy
+        #[allow(clippy::clone_on_copy)]
+        let c = a.clone(); // Clone
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn uevent_action_debug_all() {
+        assert!(format!("{:?}", UeventAction::Add).contains("Add"));
+        assert!(format!("{:?}", UeventAction::Remove).contains("Remove"));
+        assert!(format!("{:?}", UeventAction::Change).contains("Change"));
+        assert!(format!("{:?}", UeventAction::Move).contains("Move"));
+        assert!(format!("{:?}", UeventAction::Online).contains("Online"));
+        assert!(format!("{:?}", UeventAction::Offline).contains("Offline"));
+        assert!(format!("{:?}", UeventAction::Bind).contains("Bind"));
+        assert!(format!("{:?}", UeventAction::Unbind).contains("Unbind"));
+    }
 }

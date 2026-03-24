@@ -10,8 +10,8 @@
 //! use agnosys::landlock::{Ruleset, FsAccess};
 //! use std::path::Path;
 //!
-//! let mut rs = Ruleset::new().expect("landlock not supported");
-//! rs.handle_fs(FsAccess::READ_FILE | FsAccess::READ_DIR | FsAccess::EXECUTE);
+//! let access = FsAccess::READ_FILE | FsAccess::READ_DIR | FsAccess::EXECUTE | FsAccess::WRITE_FILE;
+//! let rs = Ruleset::new(access).expect("landlock not supported");
 //! rs.allow_path(Path::new("/usr"), FsAccess::READ_FILE | FsAccess::EXECUTE).unwrap();
 //! rs.allow_path(Path::new("/tmp"), FsAccess::READ_FILE | FsAccess::WRITE_FILE).unwrap();
 //! rs.restrict_self().unwrap();
@@ -132,8 +132,8 @@ fn raw_create_ruleset(attr: &RulesetAttr, flags: u32) -> Result<i32> {
             flags,
         )
     };
-    let errno = unsafe { *libc::__errno_location() };
     if ret < 0 {
+        let errno = unsafe { *libc::__errno_location() };
         tracing::error!(errno, "landlock_create_ruleset failed");
         Err(SysError::from_errno(errno))
     } else {
@@ -152,8 +152,8 @@ fn raw_add_rule(ruleset_fd: i32, rule_type: libc::c_int, attr: *const libc::c_vo
             0u32, // flags, must be 0
         )
     };
-    let errno = unsafe { *libc::__errno_location() };
     if ret < 0 {
+        let errno = unsafe { *libc::__errno_location() };
         tracing::error!(errno, rule_type, "landlock_add_rule failed");
         Err(SysError::from_errno(errno))
     } else {
@@ -164,8 +164,8 @@ fn raw_add_rule(ruleset_fd: i32, rule_type: libc::c_int, attr: *const libc::c_vo
 #[inline]
 fn raw_restrict_self(ruleset_fd: i32, flags: u32) -> Result<()> {
     let ret = unsafe { libc::syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, flags) };
-    let errno = unsafe { *libc::__errno_location() };
     if ret < 0 {
+        let errno = unsafe { *libc::__errno_location() };
         tracing::error!(errno, "landlock_restrict_self failed");
         Err(SysError::from_errno(errno))
     } else {
@@ -190,8 +190,8 @@ pub fn abi_version() -> Result<i32> {
             LANDLOCK_CREATE_RULESET_VERSION,
         )
     };
-    let errno = unsafe { *libc::__errno_location() };
     if ret < 0 {
+        let errno = unsafe { *libc::__errno_location() };
         tracing::debug!(errno, "landlock ABI version query failed");
         if errno == libc::ENOSYS {
             return Err(SysError::NotSupported {
@@ -227,6 +227,11 @@ pub fn supported_fs_access() -> Result<FsAccess> {
 /// A Landlock ruleset under construction.
 ///
 /// Build rules, then call [`restrict_self`](Ruleset::restrict_self) to enforce.
+///
+/// The handled access rights are declared at construction time and sent to the
+/// kernel immediately. Any handled access not explicitly allowed via
+/// [`allow_path`](Ruleset::allow_path) or [`allow_net_port`](Ruleset::allow_net_port)
+/// will be denied after [`restrict_self`](Ruleset::restrict_self).
 pub struct Ruleset {
     fd: OwnedFd,
     handled_fs: u64,
@@ -234,54 +239,50 @@ pub struct Ruleset {
 }
 
 impl Ruleset {
-    /// Create a new empty ruleset.
+    /// Create a ruleset that handles the given filesystem access rights.
     ///
+    /// The kernel ruleset is created immediately with these access rights.
     /// Fails if Landlock is not supported on this kernel.
-    pub fn new() -> Result<Self> {
-        // Verify landlock is available
-        abi_version()?;
-
-        let attr = RulesetAttr {
-            handled_access_fs: 0,
-            handled_access_net: 0,
-        };
-        let fd = raw_create_ruleset(&attr, 0)?;
-        tracing::debug!(fd, "created landlock ruleset");
-        Ok(Self {
-            fd: unsafe { OwnedFd::from_raw_fd(fd) },
-            handled_fs: 0,
-            handled_net: 0,
-        })
+    pub fn new(fs: FsAccess) -> Result<Self> {
+        Self::with_net(fs, NetAccess::empty())
     }
 
-    /// Create a ruleset that handles the given filesystem access rights.
-    pub fn with_fs(fs: FsAccess) -> Result<Self> {
+    /// Create a ruleset that handles both filesystem and network access rights.
+    ///
+    /// Network access requires Landlock ABI v4+ (kernel 6.2+).
+    pub fn with_net(fs: FsAccess, net: NetAccess) -> Result<Self> {
         abi_version()?;
 
         let attr = RulesetAttr {
             handled_access_fs: fs.bits(),
-            handled_access_net: 0,
+            handled_access_net: net.bits(),
         };
         let fd = raw_create_ruleset(&attr, 0)?;
-        tracing::debug!(fd, fs = fs.bits(), "created landlock ruleset with fs");
+        tracing::debug!(
+            fd,
+            fs = fs.bits(),
+            net = net.bits(),
+            "created landlock ruleset"
+        );
         Ok(Self {
             fd: unsafe { OwnedFd::from_raw_fd(fd) },
             handled_fs: fs.bits(),
-            handled_net: 0,
+            handled_net: net.bits(),
         })
     }
 
-    /// Declare which filesystem access rights this ruleset handles.
-    ///
-    /// Any handled access not explicitly allowed via [`allow_path`](Ruleset::allow_path)
-    /// will be denied after [`restrict_self`](Ruleset::restrict_self).
-    pub fn handle_fs(&mut self, access: FsAccess) {
-        self.handled_fs |= access.bits();
+    /// The filesystem access rights this ruleset handles.
+    #[inline]
+    #[must_use]
+    pub fn handled_fs(&self) -> FsAccess {
+        FsAccess::from_bits_truncate(self.handled_fs)
     }
 
-    /// Declare which network access rights this ruleset handles (ABI v4+).
-    pub fn handle_net(&mut self, access: NetAccess) {
-        self.handled_net |= access.bits();
+    /// The network access rights this ruleset handles.
+    #[inline]
+    #[must_use]
+    pub fn handled_net(&self) -> NetAccess {
+        NetAccess::from_bits_truncate(self.handled_net)
     }
 
     /// Allow specific filesystem access beneath a directory path.
@@ -374,6 +375,7 @@ mod tests {
         const fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<FsAccess>();
         assert_send_sync::<NetAccess>();
+        assert_send_sync::<Ruleset>();
     };
 
     // ── ABI version ─────────────────────────────────────────────────
@@ -403,6 +405,51 @@ mod tests {
     }
 
     #[test]
+    fn fs_access_remaining_bits() {
+        assert_eq!(FsAccess::REMOVE_DIR.bits(), 1 << 4);
+        assert_eq!(FsAccess::REMOVE_FILE.bits(), 1 << 5);
+        assert_eq!(FsAccess::MAKE_CHAR.bits(), 1 << 6);
+        assert_eq!(FsAccess::MAKE_DIR.bits(), 1 << 7);
+        assert_eq!(FsAccess::MAKE_REG.bits(), 1 << 8);
+        assert_eq!(FsAccess::MAKE_SOCK.bits(), 1 << 9);
+        assert_eq!(FsAccess::MAKE_FIFO.bits(), 1 << 10);
+        assert_eq!(FsAccess::MAKE_BLOCK.bits(), 1 << 11);
+        assert_eq!(FsAccess::MAKE_SYM.bits(), 1 << 12);
+        assert_eq!(FsAccess::REFER.bits(), 1 << 13);
+        assert_eq!(FsAccess::TRUNCATE.bits(), 1 << 14);
+        assert_eq!(FsAccess::IOCTL_DEV.bits(), 1 << 15);
+    }
+
+    #[test]
+    fn fs_access_empty() {
+        let empty = FsAccess::empty();
+        assert!(empty.is_empty());
+        assert_eq!(empty.bits(), 0);
+    }
+
+    #[test]
+    fn fs_access_intersection() {
+        let a = FsAccess::READ_FILE | FsAccess::WRITE_FILE | FsAccess::EXECUTE;
+        let b = FsAccess::READ_FILE | FsAccess::READ_DIR;
+        let inter = a & b;
+        assert_eq!(inter, FsAccess::READ_FILE);
+    }
+
+    #[test]
+    fn fs_access_difference() {
+        let a = FsAccess::READ_FILE | FsAccess::WRITE_FILE;
+        let diff = a - FsAccess::WRITE_FILE;
+        assert_eq!(diff, FsAccess::READ_FILE);
+    }
+
+    #[test]
+    fn fs_access_debug() {
+        let dbg = format!("{:?}", FsAccess::READ_FILE | FsAccess::EXECUTE);
+        assert!(dbg.contains("READ_FILE"));
+        assert!(dbg.contains("EXECUTE"));
+    }
+
+    #[test]
     fn fs_access_all_abi_v1_bits() {
         let all_v1 = FsAccess::from_bits_truncate(ABI_V1_FS);
         assert!(all_v1.contains(FsAccess::EXECUTE));
@@ -429,13 +476,12 @@ mod tests {
 
     #[test]
     fn ruleset_new_returns_result() {
-        // Kernel may or may not support landlock
-        let _ = Ruleset::new();
+        let _ = Ruleset::new(FsAccess::READ_FILE);
     }
 
     #[test]
-    fn ruleset_with_fs_returns_result() {
-        let _ = Ruleset::with_fs(FsAccess::READ_FILE | FsAccess::EXECUTE);
+    fn ruleset_with_net_returns_result() {
+        let _ = Ruleset::with_net(FsAccess::READ_FILE | FsAccess::EXECUTE, NetAccess::BIND_TCP);
     }
 
     #[test]
@@ -447,18 +493,17 @@ mod tests {
 
     #[test]
     fn ruleset_allow_path_on_supported_kernel() {
-        let rs = match Ruleset::with_fs(FsAccess::READ_FILE) {
+        let rs = match Ruleset::new(FsAccess::READ_FILE) {
             Ok(rs) => rs,
-            Err(_) => return, // kernel doesn't support landlock
+            Err(_) => return,
         };
-        // /tmp should exist on any Linux system
         let result = rs.allow_path(Path::new("/tmp"), FsAccess::READ_FILE);
         assert!(result.is_ok());
     }
 
     #[test]
     fn ruleset_allow_path_bad_path() {
-        let rs = match Ruleset::with_fs(FsAccess::READ_FILE) {
+        let rs = match Ruleset::new(FsAccess::READ_FILE) {
             Ok(rs) => rs,
             Err(_) => return,
         };
@@ -470,30 +515,48 @@ mod tests {
     }
 
     #[test]
-    fn handle_fs_accumulates() {
-        let mut rs = match Ruleset::new() {
+    fn ruleset_allow_path_null_byte() {
+        let rs = match Ruleset::new(FsAccess::READ_FILE) {
             Ok(rs) => rs,
             Err(_) => return,
         };
-        rs.handle_fs(FsAccess::READ_FILE);
-        rs.handle_fs(FsAccess::WRITE_FILE);
-        assert_eq!(
-            rs.handled_fs,
-            (FsAccess::READ_FILE | FsAccess::WRITE_FILE).bits()
-        );
+        let result = rs.allow_path(Path::new("/tmp/\0bad"), FsAccess::READ_FILE);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn handle_net_accumulates() {
-        let mut rs = match Ruleset::new() {
+    fn ruleset_handled_fs_matches_constructor() {
+        let access = FsAccess::READ_FILE | FsAccess::WRITE_FILE;
+        let rs = match Ruleset::new(access) {
             Ok(rs) => rs,
             Err(_) => return,
         };
-        rs.handle_net(NetAccess::BIND_TCP);
-        rs.handle_net(NetAccess::CONNECT_TCP);
-        assert_eq!(
-            rs.handled_net,
-            (NetAccess::BIND_TCP | NetAccess::CONNECT_TCP).bits()
+        assert_eq!(rs.handled_fs(), access);
+        assert!(rs.handled_net().is_empty());
+    }
+
+    #[test]
+    fn ruleset_with_net_tracks_both() {
+        let fs = FsAccess::EXECUTE;
+        let net = NetAccess::BIND_TCP | NetAccess::CONNECT_TCP;
+        let rs = match Ruleset::with_net(fs, net) {
+            Ok(rs) => rs,
+            Err(_) => return,
+        };
+        assert_eq!(rs.handled_fs(), fs);
+        assert_eq!(rs.handled_net(), net);
+    }
+
+    #[test]
+    fn ruleset_multiple_path_rules() {
+        let rs = match Ruleset::new(FsAccess::READ_FILE | FsAccess::EXECUTE) {
+            Ok(rs) => rs,
+            Err(_) => return,
+        };
+        assert!(
+            rs.allow_path(Path::new("/tmp"), FsAccess::READ_FILE)
+                .is_ok()
         );
+        assert!(rs.allow_path(Path::new("/usr"), FsAccess::EXECUTE).is_ok());
     }
 }
