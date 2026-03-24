@@ -26,4 +26,20 @@ mod tests {
     fn init_does_not_panic() {
         init();
     }
+
+    #[test]
+    fn init_with_level_does_not_panic() {
+        init_with_level("debug");
+    }
+
+    #[test]
+    fn init_with_level_warn() {
+        init_with_level("warn");
+    }
+
+    #[test]
+    fn double_init_is_safe() {
+        init();
+        init(); // second call should be a no-op (try_init)
+    }
 }

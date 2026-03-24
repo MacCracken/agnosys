@@ -94,61 +94,160 @@ pub fn hostname() -> Result<String> {
 mod tests {
     use super::*;
 
+    // ── checked_syscall ─────────────────────────────────────────────
+
     #[test]
-    fn test_getpid() {
+    fn checked_syscall_success() {
+        let ret = checked_syscall("getpid", unsafe { libc::syscall(libc::SYS_getpid) });
+        assert!(ret.is_ok());
+        assert!(ret.unwrap() > 0);
+    }
+
+    #[test]
+    fn checked_syscall_failure() {
+        let ret = checked_syscall("bad_syscall", -1);
+        assert!(ret.is_err());
+    }
+
+    #[test]
+    fn checked_syscall_zero_is_ok() {
+        let ret = checked_syscall("zero", 0);
+        assert!(ret.is_ok());
+        assert_eq!(ret.unwrap(), 0);
+    }
+
+    // ── getpid ──────────────────────────────────────────────────────
+
+    #[test]
+    fn getpid_positive() {
         assert!(getpid() > 0);
     }
 
     #[test]
-    fn test_gettid() {
+    fn getpid_stable() {
+        let a = getpid();
+        let b = getpid();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn getpid_matches_libc() {
+        let ours = getpid();
+        let theirs = unsafe { libc::getpid() };
+        assert_eq!(ours, theirs);
+    }
+
+    // ── gettid ──────────────────────────────────────────────────────
+
+    #[test]
+    fn gettid_positive() {
         assert!(gettid() > 0);
     }
 
     #[test]
-    fn test_getuid() {
-        // Just verify it doesn't panic
-        let _ = getuid();
+    fn gettid_stable() {
+        let a = gettid();
+        let b = gettid();
+        assert_eq!(a, b);
+    }
+
+    // ── getuid / geteuid ────────────────────────────────────────────
+
+    #[test]
+    fn getuid_matches_libc() {
+        assert_eq!(getuid(), unsafe { libc::getuid() });
     }
 
     #[test]
-    fn test_geteuid() {
+    fn geteuid_matches_libc() {
+        assert_eq!(geteuid(), unsafe { libc::geteuid() });
+    }
+
+    #[test]
+    fn euid_gte_zero() {
+        // u32 is always >= 0, but verify the call succeeds
         let _ = geteuid();
     }
 
-    #[test]
-    fn test_is_root() {
-        // In CI, we're not root
-        let _ = is_root();
-    }
+    // ── is_root ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_uptime() {
+    fn is_root_consistent_with_euid() {
+        assert_eq!(is_root(), geteuid() == 0);
+    }
+
+    // ── uptime ──────────────────────────────────────────────────────
+
+    #[test]
+    fn uptime_positive() {
         let up = uptime().unwrap();
         assert!(up > 0.0);
     }
 
     #[test]
-    fn test_total_memory() {
+    fn uptime_monotonic() {
+        let a = uptime().unwrap();
+        let b = uptime().unwrap();
+        assert!(b >= a);
+    }
+
+    // ── total_memory ────────────────────────────────────────────────
+
+    #[test]
+    fn total_memory_positive() {
         let mem = total_memory().unwrap();
         assert!(mem > 0);
     }
 
     #[test]
-    fn test_available_memory() {
+    fn total_memory_reasonable() {
+        let mem = total_memory().unwrap();
+        // At least 32 MB, less than 256 TB
+        assert!(mem >= 32 * 1024 * 1024);
+        assert!(mem < 256 * 1024 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn total_memory_stable() {
+        let a = total_memory().unwrap();
+        let b = total_memory().unwrap();
+        assert_eq!(a, b);
+    }
+
+    // ── available_memory ────────────────────────────────────────────
+
+    #[test]
+    fn available_memory_positive() {
         let mem = available_memory().unwrap();
         assert!(mem > 0);
     }
 
     #[test]
-    fn test_hostname() {
+    fn available_lte_total() {
+        let total = total_memory().unwrap();
+        let avail = available_memory().unwrap();
+        assert!(avail <= total);
+    }
+
+    // ── hostname ────────────────────────────────────────────────────
+
+    #[test]
+    fn hostname_not_empty() {
         let name = hostname().unwrap();
         assert!(!name.is_empty());
     }
 
     #[test]
-    fn test_checked_syscall_success() {
-        let ret = checked_syscall("getpid", unsafe { libc::syscall(libc::SYS_getpid) });
-        assert!(ret.is_ok());
-        assert!(ret.unwrap() > 0);
+    fn hostname_valid_utf8() {
+        let name = hostname().unwrap();
+        // If we got here, it's valid UTF-8. Also check reasonable length.
+        assert!(name.len() <= 255);
+    }
+
+    #[test]
+    fn hostname_stable() {
+        let a = hostname().unwrap();
+        let b = hostname().unwrap();
+        assert_eq!(a, b);
     }
 }
