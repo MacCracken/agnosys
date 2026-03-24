@@ -1,6 +1,6 @@
 [package]
 name = "agnosys"
-version = "0.1.0"
+version = "0.23.3"
 edition = "2024"
 rust-version = "1.89"
 license = "GPL-3.0-only"
@@ -18,8 +18,8 @@ default = ["syscall", "error"]
 syscall = ["error"]
 error = []
 udev = []
-landlock = []
-seccomp = []
+landlock = ["error"]
+seccomp = ["error"]
 netns = []
 luks = []
 dmverity = []
@@ -46,6 +46,7 @@ full = [
 ]
 
 [dependencies]
+bitflags = "2"
 libc = "0.2"
 serde = { version = "1", features = ["derive"], optional = true }
 thiserror = "2"

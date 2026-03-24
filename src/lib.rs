@@ -35,8 +35,12 @@ pub mod syscall;
 
 // Future modules — uncomment as implemented:
 // #[cfg(feature = "udev")] pub mod udev;
-// #[cfg(feature = "landlock")] pub mod landlock;
-// #[cfg(feature = "seccomp")] pub mod seccomp;
+
+#[cfg(feature = "landlock")]
+pub mod landlock;
+
+#[cfg(feature = "seccomp")]
+pub mod seccomp;
 // #[cfg(feature = "netns")] pub mod netns;
 // #[cfg(feature = "luks")] pub mod luks;
 // #[cfg(feature = "dmverity")] pub mod dmverity;

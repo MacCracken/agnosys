@@ -117,5 +117,68 @@ fn bench_error(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_syscall, bench_error);
+#[cfg(feature = "landlock")]
+fn bench_landlock(c: &mut Criterion) {
+    let mut group = c.benchmark_group("landlock");
+
+    group.bench_function("abi_version", |b| b.iter(agnosys::landlock::abi_version));
+    group.bench_function("supported_fs_access", |b| {
+        b.iter(agnosys::landlock::supported_fs_access)
+    });
+    group.bench_function("fs_access_combine", |b| {
+        use agnosys::landlock::FsAccess;
+        b.iter(|| {
+            black_box(
+                FsAccess::READ_FILE | FsAccess::WRITE_FILE | FsAccess::EXECUTE | FsAccess::READ_DIR,
+            )
+        })
+    });
+
+    group.finish();
+}
+
+#[cfg(not(feature = "landlock"))]
+fn bench_landlock(_c: &mut Criterion) {}
+
+#[cfg(feature = "seccomp")]
+fn bench_seccomp(c: &mut Criterion) {
+    use agnosys::seccomp::{Action, FilterBuilder};
+    let mut group = c.benchmark_group("seccomp");
+
+    group.bench_function("build_empty", |b| {
+        b.iter(|| FilterBuilder::new(Action::KillProcess).build())
+    });
+    group.bench_function("build_5_rules", |b| {
+        b.iter(|| {
+            FilterBuilder::new(Action::KillProcess)
+                .allow_syscall(libc::SYS_read)
+                .allow_syscall(libc::SYS_write)
+                .allow_syscall(libc::SYS_exit_group)
+                .allow_syscall(libc::SYS_brk)
+                .allow_syscall(libc::SYS_mmap)
+                .build()
+        })
+    });
+    group.bench_function("build_20_rules", |b| {
+        b.iter(|| {
+            let mut fb = FilterBuilder::new(Action::KillProcess);
+            for i in 0..20 {
+                fb = fb.allow_syscall(black_box(i));
+            }
+            fb.build()
+        })
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "seccomp"))]
+fn bench_seccomp(_c: &mut Criterion) {}
+
+criterion_group!(
+    benches,
+    bench_syscall,
+    bench_error,
+    bench_landlock,
+    bench_seccomp
+);
 criterion_main!(benches);
