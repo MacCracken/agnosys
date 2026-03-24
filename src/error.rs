@@ -99,20 +99,26 @@ mod tests {
 
     #[test]
     fn test_display_permission() {
-        let e = SysError::PermissionDenied { operation: "mount".into() };
+        let e = SysError::PermissionDenied {
+            operation: "mount".into(),
+        };
         assert!(e.to_string().contains("permission denied"));
         assert!(e.to_string().contains("mount"));
     }
 
     #[test]
     fn test_display_module() {
-        let e = SysError::ModuleNotLoaded { module: "tpm_tis".into() };
+        let e = SysError::ModuleNotLoaded {
+            module: "tpm_tis".into(),
+        };
         assert!(e.to_string().contains("tpm_tis"));
     }
 
     #[test]
     fn test_display_not_supported() {
-        let e = SysError::NotSupported { feature: "landlock".into() };
+        let e = SysError::NotSupported {
+            feature: "landlock".into(),
+        };
         assert!(e.to_string().contains("landlock"));
     }
 

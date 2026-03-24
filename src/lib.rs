@@ -33,62 +33,26 @@ pub mod error;
 #[cfg(feature = "syscall")]
 pub mod syscall;
 
-#[cfg(feature = "udev")]
-pub mod udev;
-
-#[cfg(feature = "landlock")]
-pub mod landlock;
-
-#[cfg(feature = "seccomp")]
-pub mod seccomp;
-
-#[cfg(feature = "netns")]
-pub mod netns;
-
-#[cfg(feature = "luks")]
-pub mod luks;
-
-#[cfg(feature = "dmverity")]
-pub mod dmverity;
-
-#[cfg(feature = "ima")]
-pub mod ima;
-
-#[cfg(feature = "tpm")]
-pub mod tpm;
-
-#[cfg(feature = "certpin")]
-pub mod certpin;
-
-#[cfg(feature = "fuse")]
-pub mod fuse;
-
-#[cfg(feature = "pam")]
-pub mod pam;
-
-#[cfg(feature = "mac")]
-pub mod mac;
-
-#[cfg(feature = "audit")]
-pub mod audit;
-
-#[cfg(feature = "journald")]
-pub mod journald;
-
-#[cfg(feature = "bootloader")]
-pub mod bootloader;
-
-#[cfg(feature = "secureboot")]
-pub mod secureboot;
-
-#[cfg(feature = "update")]
-pub mod update;
-
-#[cfg(feature = "agent")]
-pub mod agent;
-
-#[cfg(feature = "drm")]
-pub mod drm;
+// Future modules — uncomment as implemented:
+// #[cfg(feature = "udev")] pub mod udev;
+// #[cfg(feature = "landlock")] pub mod landlock;
+// #[cfg(feature = "seccomp")] pub mod seccomp;
+// #[cfg(feature = "netns")] pub mod netns;
+// #[cfg(feature = "luks")] pub mod luks;
+// #[cfg(feature = "dmverity")] pub mod dmverity;
+// #[cfg(feature = "ima")] pub mod ima;
+// #[cfg(feature = "tpm")] pub mod tpm;
+// #[cfg(feature = "certpin")] pub mod certpin;
+// #[cfg(feature = "fuse")] pub mod fuse;
+// #[cfg(feature = "pam")] pub mod pam;
+// #[cfg(feature = "mac")] pub mod mac;
+// #[cfg(feature = "audit")] pub mod audit;
+// #[cfg(feature = "journald")] pub mod journald;
+// #[cfg(feature = "bootloader")] pub mod bootloader;
+// #[cfg(feature = "secureboot")] pub mod secureboot;
+// #[cfg(feature = "update")] pub mod update;
+// #[cfg(feature = "agent")] pub mod agent;
+// #[cfg(feature = "drm")] pub mod drm;
 
 #[cfg(feature = "logging")]
 pub mod logging;

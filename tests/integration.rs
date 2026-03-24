@@ -15,7 +15,7 @@ fn test_system_info_consistent() {
 fn test_hostname_is_valid_utf8() {
     let name = agnosys::syscall::hostname().unwrap();
     assert!(!name.is_empty());
-    assert!(name.is_ascii() || name.len() > 0); // should be valid
+    assert!(name.is_ascii() || !name.is_empty()); // should be valid
 }
 
 #[test]

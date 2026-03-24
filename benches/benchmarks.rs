@@ -1,16 +1,16 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn bench_syscall(c: &mut Criterion) {
     use agnosys::syscall::*;
     let mut group = c.benchmark_group("syscall");
 
-    group.bench_function("getpid", |b| b.iter(|| getpid()));
-    group.bench_function("gettid", |b| b.iter(|| gettid()));
-    group.bench_function("getuid", |b| b.iter(|| getuid()));
-    group.bench_function("geteuid", |b| b.iter(|| geteuid()));
-    group.bench_function("is_root", |b| b.iter(|| is_root()));
-    group.bench_function("uptime", |b| b.iter(|| uptime()));
-    group.bench_function("hostname", |b| b.iter(|| hostname()));
+    group.bench_function("getpid", |b| b.iter(getpid));
+    group.bench_function("gettid", |b| b.iter(gettid));
+    group.bench_function("getuid", |b| b.iter(getuid));
+    group.bench_function("geteuid", |b| b.iter(geteuid));
+    group.bench_function("is_root", |b| b.iter(is_root));
+    group.bench_function("uptime", |b| b.iter(uptime));
+    group.bench_function("hostname", |b| b.iter(hostname));
 
     group.finish();
 }
