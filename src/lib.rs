@@ -33,8 +33,8 @@ pub mod error;
 #[cfg(feature = "syscall")]
 pub mod syscall;
 
-// Future modules — uncomment as implemented:
-// #[cfg(feature = "udev")] pub mod udev;
+#[cfg(feature = "udev")]
+pub mod udev;
 
 #[cfg(feature = "landlock")]
 pub mod landlock;

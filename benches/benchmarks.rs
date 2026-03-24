@@ -174,11 +174,34 @@ fn bench_seccomp(c: &mut Criterion) {
 #[cfg(not(feature = "seccomp"))]
 fn bench_seccomp(_c: &mut Criterion) {}
 
+#[cfg(feature = "udev")]
+fn bench_udev(c: &mut Criterion) {
+    let mut group = c.benchmark_group("udev");
+
+    group.bench_function("enumerate_net", |b| {
+        b.iter(|| agnosys::udev::enumerate(black_box("net")))
+    });
+    group.bench_function("device_from_syspath_lo", |b| {
+        b.iter(|| agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")))
+    });
+    group.bench_function("device_attr_read", |b| {
+        let dev =
+            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
+        b.iter(|| dev.attr(black_box("address")))
+    });
+
+    group.finish();
+}
+
+#[cfg(not(feature = "udev"))]
+fn bench_udev(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
     bench_error,
     bench_landlock,
-    bench_seccomp
+    bench_seccomp,
+    bench_udev
 );
 criterion_main!(benches);
