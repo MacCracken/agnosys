@@ -211,9 +211,12 @@ impl AuditSocket {
         };
         self.seq += 1;
 
-        // Copy header
-        let hdr_bytes: [u8; NLMSG_HDRLEN] = unsafe { std::mem::transmute(hdr) };
-        buf[..NLMSG_HDRLEN].copy_from_slice(&hdr_bytes);
+        // Serialize header manually (avoids transmute)
+        buf[0..4].copy_from_slice(&hdr.nlmsg_len.to_ne_bytes());
+        buf[4..6].copy_from_slice(&hdr.nlmsg_type.to_ne_bytes());
+        buf[6..8].copy_from_slice(&hdr.nlmsg_flags.to_ne_bytes());
+        buf[8..12].copy_from_slice(&hdr.nlmsg_seq.to_ne_bytes());
+        buf[12..16].copy_from_slice(&hdr.nlmsg_pid.to_ne_bytes());
         buf[NLMSG_HDRLEN..].copy_from_slice(data);
 
         // Send
@@ -263,8 +266,9 @@ impl AuditSocket {
             )));
         }
 
-        let status: AuditStatus =
-            unsafe { std::ptr::read(resp[NLMSG_HDRLEN..].as_ptr() as *const AuditStatus) };
+        let status: AuditStatus = unsafe {
+            std::ptr::read_unaligned(resp[NLMSG_HDRLEN..].as_ptr() as *const AuditStatus)
+        };
 
         tracing::trace!(
             enabled = status.enabled,
@@ -490,6 +494,41 @@ mod tests {
     fn parse_empty_line() {
         let map = parse_audit_line("");
         assert!(map.is_empty());
+    }
+
+    #[test]
+    fn parse_single_kv() {
+        let map = parse_audit_line("key=value");
+        assert_eq!(map.get("key").unwrap(), "value");
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn parse_trailing_spaces() {
+        let map = parse_audit_line("key1=val1  key2=val2  ");
+        assert_eq!(map.get("key1").unwrap(), "val1");
+        assert_eq!(map.get("key2").unwrap(), "val2");
+    }
+
+    #[test]
+    fn parse_hex_encoded_value() {
+        // Audit records often have hex-encoded proctitle
+        let map = parse_audit_line("proctitle=2F7573722F62696E2F");
+        assert_eq!(map.get("proctitle").unwrap(), "2F7573722F62696E2F");
+    }
+
+    // ── AuditMsgType boundary tests ────────────────────────────────
+
+    #[test]
+    fn msg_type_user_range_boundary() {
+        // 1100 = first user msg
+        assert_eq!(AuditMsgType::from_raw(1100), AuditMsgType::User);
+        // 1299 = last before syscall range
+        assert_eq!(AuditMsgType::from_raw(1299), AuditMsgType::User);
+        // 1300 = AUDIT_SYSCALL (not User)
+        assert_eq!(AuditMsgType::from_raw(1300), AuditMsgType::Syscall);
+        // 1099 = before user range -> Other
+        assert_eq!(AuditMsgType::from_raw(1099), AuditMsgType::Other(1099));
     }
 
     // ── read_log_tail ───────────────────────────────────────────────

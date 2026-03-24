@@ -10,8 +10,9 @@
 //! use agnosys::luks;
 //!
 //! // Check if a device has a LUKS header
-//! if luks::is_luks_device("/dev/sda2").unwrap() {
-//!     let header = luks::read_header("/dev/sda2").unwrap();
+//! use std::path::Path;
+//! if luks::is_luks_device(Path::new("/dev/sda2")).unwrap() {
+//!     let header = luks::read_header(Path::new("/dev/sda2")).unwrap();
 //!     println!("LUKS version: {}", header.version);
 //!     println!("Cipher: {}-{}", header.cipher_name, header.cipher_mode);
 //! }
@@ -84,13 +85,13 @@ pub struct VolumeStatus {
 // ── LUKS header reading ─────────────────────────────────────────────
 
 /// Check if a device has a valid LUKS header.
-pub fn is_luks_device(path: &str) -> Result<bool> {
+pub fn is_luks_device(path: &Path) -> Result<bool> {
     let data = read_device_bytes(path, LUKS_MAGIC_LEN)?;
     Ok(data.len() >= LUKS_MAGIC_LEN && data[..LUKS_MAGIC_LEN] == LUKS1_MAGIC)
 }
 
 /// Read and parse the LUKS header from a device.
-pub fn read_header(path: &str) -> Result<LuksHeader> {
+pub fn read_header(path: &Path) -> Result<LuksHeader> {
     let data = read_device_bytes(path, LUKS_HEADER_READ_SIZE)?;
 
     if data.len() < LUKS_HEADER_READ_SIZE {
@@ -217,17 +218,17 @@ pub fn volume_status(name: &str) -> Result<VolumeStatus> {
 // ── Internal helpers ────────────────────────────────────────────────
 
 /// Read the first `count` bytes from a device/file.
-fn read_device_bytes(path: &str, count: usize) -> Result<Vec<u8>> {
+fn read_device_bytes(path: &Path, count: usize) -> Result<Vec<u8>> {
     use std::io::Read;
 
     let mut file = std::fs::File::open(path).map_err(|e| {
-        tracing::error!(path, error = %e, "failed to open device");
+        tracing::error!(path = %path.display(), error = %e, "failed to open device");
         SysError::Io(e)
     })?;
 
     let mut buf = vec![0u8; count];
     let n = file.read(&mut buf).map_err(|e| {
-        tracing::error!(path, error = %e, "failed to read device");
+        tracing::error!(path = %path.display(), error = %e, "failed to read device");
         SysError::Io(e)
     })?;
     buf.truncate(n);
@@ -264,14 +265,14 @@ mod tests {
 
     #[test]
     fn is_luks_nonexistent_device() {
-        let result = is_luks_device("/dev/nonexistent_agnosys_test");
+        let result = is_luks_device(Path::new("/dev/nonexistent_agnosys_test"));
         assert!(result.is_err());
     }
 
     #[test]
     fn is_luks_regular_file() {
         // /dev/null is not a LUKS device
-        let result = is_luks_device("/dev/null");
+        let result = is_luks_device(Path::new("/dev/null"));
         // /dev/null reads as empty, so not LUKS
         assert!(matches!(result, Ok(false)));
     }
@@ -280,14 +281,14 @@ mod tests {
 
     #[test]
     fn read_header_nonexistent() {
-        let result = read_header("/dev/nonexistent_agnosys_test");
+        let result = read_header(Path::new("/dev/nonexistent_agnosys_test"));
         assert!(result.is_err());
     }
 
     #[test]
     fn read_header_not_luks() {
         // /dev/zero has magic bytes of all zeros
-        let result = read_header("/dev/zero");
+        let result = read_header(Path::new("/dev/zero"));
         assert!(result.is_err());
     }
 
@@ -484,9 +485,9 @@ mod tests {
         header[256..260].copy_from_slice(&0x0000DEADu32.to_be_bytes());
 
         // Write to temp file and parse
-        let tmp = "/tmp/agnosys_test_luks_header";
+        let tmp = &format!("/tmp/agnosys_test_luks_header_{}", std::process::id());
         std::fs::write(tmp, &header).unwrap();
-        let h = read_header(tmp).unwrap();
+        let h = read_header(Path::new(tmp)).unwrap();
         std::fs::remove_file(tmp).unwrap();
 
         assert_eq!(h.version, 1);
@@ -504,18 +505,69 @@ mod tests {
     fn is_luks_synthetic() {
         let mut header = vec![0u8; 16];
         header[..6].copy_from_slice(&LUKS1_MAGIC);
-        let tmp = "/tmp/agnosys_test_luks_magic";
+        let tmp = &format!("/tmp/agnosys_test_luks_magic_{}", std::process::id());
         std::fs::write(tmp, &header).unwrap();
-        assert!(is_luks_device(tmp).unwrap());
+        assert!(is_luks_device(Path::new(tmp)).unwrap());
         std::fs::remove_file(tmp).unwrap();
+    }
+
+    #[test]
+    fn is_luks_too_small() {
+        let tmp = &format!("/tmp/agnosys_test_luks_small_{}", std::process::id());
+        std::fs::write(tmp, [0x4C, 0x55]).unwrap(); // Only 2 bytes
+        assert!(!is_luks_device(Path::new(tmp)).unwrap());
+        std::fs::remove_file(tmp).unwrap();
+    }
+
+    #[test]
+    fn read_header_truncated_with_magic() {
+        let tmp = &format!("/tmp/agnosys_test_luks_trunc_{}", std::process::id());
+        let mut data = vec![0u8; 100]; // < 592
+        data[..6].copy_from_slice(&LUKS1_MAGIC);
+        std::fs::write(tmp, &data).unwrap();
+        let result = read_header(Path::new(tmp));
+        assert!(result.is_err());
+        std::fs::remove_file(tmp).unwrap();
+    }
+
+    #[test]
+    fn parse_all_8_key_slots() {
+        let mut header = vec![0u8; LUKS_HEADER_READ_SIZE];
+        header[..6].copy_from_slice(&LUKS1_MAGIC);
+        header[6..8].copy_from_slice(&1u16.to_be_bytes());
+        header[8..11].copy_from_slice(b"aes");
+        header[40..51].copy_from_slice(b"xts-plain64");
+        header[72..78].copy_from_slice(b"sha256");
+        header[104..108].copy_from_slice(&4096u32.to_be_bytes());
+        header[108..112].copy_from_slice(&64u32.to_be_bytes());
+        // Set slots 0,2,4 active, rest inactive
+        for i in 0..LUKS1_NUM_KEYS {
+            let offset = 208 + i * 48;
+            if i % 2 == 0 {
+                header[offset..offset + 4].copy_from_slice(&0x00AC71F3u32.to_be_bytes());
+            } else {
+                header[offset..offset + 4].copy_from_slice(&0x0000DEADu32.to_be_bytes());
+            }
+        }
+        let tmp = &format!("/tmp/agnosys_test_luks_8slots_{}", std::process::id());
+        std::fs::write(tmp, &header).unwrap();
+        let h = read_header(Path::new(tmp)).unwrap();
+        std::fs::remove_file(tmp).unwrap();
+
+        assert_eq!(h.key_slots.len(), 8);
+        assert_eq!(h.key_slots[0], KeySlotStatus::Active);
+        assert_eq!(h.key_slots[1], KeySlotStatus::Inactive);
+        assert_eq!(h.key_slots[2], KeySlotStatus::Active);
+        assert_eq!(h.key_slots[3], KeySlotStatus::Inactive);
+        assert_eq!(h.key_slots[4], KeySlotStatus::Active);
     }
 
     #[test]
     fn is_not_luks_synthetic() {
         let header = vec![0u8; 16];
-        let tmp = "/tmp/agnosys_test_not_luks";
+        let tmp = &format!("/tmp/agnosys_test_not_luks_{}", std::process::id());
         std::fs::write(tmp, &header).unwrap();
-        assert!(!is_luks_device(tmp).unwrap());
+        assert!(!is_luks_device(Path::new(tmp)).unwrap());
         std::fs::remove_file(tmp).unwrap();
     }
 }

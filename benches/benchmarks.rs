@@ -406,6 +406,9 @@ fn bench_luks(c: &mut Criterion) {
     group.bench_function("volume_status", |b| {
         b.iter(|| agnosys::luks::volume_status(black_box("nonexistent")))
     });
+    group.bench_function("is_luks_device", |b| {
+        b.iter(|| agnosys::luks::is_luks_device(std::path::Path::new("/dev/null")))
+    });
     group.finish();
 }
 
@@ -429,6 +432,12 @@ fn bench_dmverity(c: &mut Criterion) {
     group.bench_function("root_hash_from_hex", |b| {
         b.iter(|| agnosys::dmverity::RootHash::from_hex(black_box("abcdef0123456789")))
     });
+    group.bench_function("is_verity_device", |b| {
+        b.iter(|| agnosys::dmverity::is_verity_device(std::path::Path::new("/dev/null")))
+    });
+    group.bench_function("verity_status", |b| {
+        b.iter(|| agnosys::dmverity::verity_status(black_box("nonexistent")))
+    });
     group.finish();
 }
 
@@ -445,6 +454,9 @@ fn bench_audit(c: &mut Criterion) {
     group.bench_function("parse_audit_line_real", |b| {
         let line = "type=SYSCALL msg=audit(1234567890.123:42): arch=c000003e syscall=59 success=yes pid=1234 ppid=1 uid=0";
         b.iter(|| agnosys::audit::parse_audit_line(black_box(line)))
+    });
+    group.bench_function("msg_type_from_raw", |b| {
+        b.iter(|| agnosys::audit::AuditMsgType::from_raw(black_box(1300)))
     });
     group.finish();
 }

@@ -126,13 +126,13 @@ impl std::fmt::Display for RootHash {
 // ── Superblock reading ──────────────────────────────────────────────
 
 /// Check if a device/file has a verity superblock.
-pub fn is_verity_device(path: &str) -> Result<bool> {
+pub fn is_verity_device(path: &Path) -> Result<bool> {
     let data = read_bytes(path, VERITY_MAGIC_LEN)?;
     Ok(data.len() >= VERITY_MAGIC_LEN && data[..VERITY_MAGIC_LEN] == VERITY_MAGIC)
 }
 
 /// Read and parse a verity superblock.
-pub fn read_superblock(path: &str) -> Result<VeritySuperblock> {
+pub fn read_superblock(path: &Path) -> Result<VeritySuperblock> {
     let data = read_bytes(path, VERITY_SB_READ_SIZE)?;
 
     if data.len() < VERITY_SB_READ_SIZE {
@@ -159,7 +159,7 @@ pub fn read_superblock(path: &str) -> Result<VeritySuperblock> {
     ]);
 
     // Salt at offset 80, up to 256 bytes, preceded by salt_size at 80
-    let salt_size = u16::from_le_bytes([data[80], data[81]]) as usize;
+    let salt_size = (u16::from_le_bytes([data[80], data[81]]) as usize).min(256);
     let salt_start = 84; // after salt_size (2 bytes) + padding (2 bytes)
     let salt = if salt_size > 0 && salt_start + salt_size <= data.len() {
         hex_encode(&data[salt_start..salt_start + salt_size])
@@ -231,15 +231,15 @@ pub fn validate_root_hash(actual: &RootHash, expected: &RootHash) -> bool {
 
 // ── Internal helpers ────────────────────────────────────────────────
 
-fn read_bytes(path: &str, count: usize) -> Result<Vec<u8>> {
+fn read_bytes(path: &Path, count: usize) -> Result<Vec<u8>> {
     use std::io::Read;
     let mut file = std::fs::File::open(path).map_err(|e| {
-        tracing::error!(path, error = %e, "failed to open device");
+        tracing::error!(path = %path.display(), error = %e, "failed to open device");
         SysError::Io(e)
     })?;
     let mut buf = vec![0u8; count];
     let n = file.read(&mut buf).map_err(|e| {
-        tracing::error!(path, error = %e, "failed to read device");
+        tracing::error!(path = %path.display(), error = %e, "failed to read device");
         SysError::Io(e)
     })?;
     buf.truncate(n);
@@ -340,24 +340,24 @@ mod tests {
 
     #[test]
     fn is_verity_nonexistent() {
-        assert!(is_verity_device("/dev/nonexistent_agnosys").is_err());
+        assert!(is_verity_device(Path::new("/dev/nonexistent_agnosys")).is_err());
     }
 
     #[test]
     fn is_verity_null() {
-        assert!(!is_verity_device("/dev/null").unwrap());
+        assert!(!is_verity_device(Path::new("/dev/null")).unwrap());
     }
 
     // ── read_superblock ─────────────────────────────────────────────
 
     #[test]
     fn read_superblock_nonexistent() {
-        assert!(read_superblock("/dev/nonexistent_agnosys").is_err());
+        assert!(read_superblock(Path::new("/dev/nonexistent_agnosys")).is_err());
     }
 
     #[test]
     fn read_superblock_not_verity() {
-        assert!(read_superblock("/dev/zero").is_err());
+        assert!(read_superblock(Path::new("/dev/zero")).is_err());
     }
 
     // ── RootHash ────────────────────────────────────────────────────
@@ -551,9 +551,9 @@ mod tests {
         // data_blocks at 72..80
         sb[72..80].copy_from_slice(&1000u64.to_le_bytes());
 
-        let tmp = "/tmp/agnosys_test_verity_sb";
+        let tmp = &format!("/tmp/agnosys_test_verity_sb_{}", std::process::id());
         std::fs::write(tmp, &sb).unwrap();
-        let parsed = read_superblock(tmp).unwrap();
+        let parsed = read_superblock(Path::new(tmp)).unwrap();
         std::fs::remove_file(tmp).unwrap();
 
         assert_eq!(parsed.version, 1);
@@ -564,12 +564,70 @@ mod tests {
     }
 
     #[test]
+    fn read_superblock_truncated_with_magic() {
+        let tmp = &format!("/tmp/agnosys_test_verity_trunc_{}", std::process::id());
+        let mut data = vec![0u8; 100]; // < 512
+        data[..8].copy_from_slice(&VERITY_MAGIC);
+        std::fs::write(tmp, &data).unwrap();
+        let result = read_superblock(Path::new(tmp));
+        assert!(result.is_err());
+        std::fs::remove_file(tmp).unwrap();
+    }
+
+    #[test]
+    fn verity_superblock_debug() {
+        let sb = VeritySuperblock {
+            version: 1,
+            hash_algorithm: "sha256".into(),
+            data_block_size: 4096,
+            hash_block_size: 4096,
+            data_blocks: 1000,
+            salt: "abcd".into(),
+            uuid: "test-uuid".into(),
+        };
+        let dbg = format!("{sb:?}");
+        assert!(dbg.contains("sha256"));
+        assert!(dbg.contains("4096"));
+    }
+
+    #[test]
+    fn verity_superblock_clone() {
+        let sb = VeritySuperblock {
+            version: 1,
+            hash_algorithm: "sha256".into(),
+            data_block_size: 4096,
+            hash_block_size: 4096,
+            data_blocks: 500,
+            salt: String::new(),
+            uuid: String::new(),
+        };
+        let sb2 = sb.clone();
+        assert_eq!(sb.version, sb2.version);
+        assert_eq!(sb.data_blocks, sb2.data_blocks);
+    }
+
+    #[test]
+    fn validate_root_hash_both_empty() {
+        let a = RootHash::from_bytes(&[]);
+        let b = RootHash::from_bytes(&[]);
+        assert!(validate_root_hash(&a, &b));
+    }
+
+    #[test]
+    fn root_hash_hex_round_trip() {
+        let h = RootHash::from_hex("deadbeef01234567").unwrap();
+        let hex = h.to_hex();
+        let h2 = RootHash::from_hex(&hex).unwrap();
+        assert_eq!(h, h2);
+    }
+
+    #[test]
     fn is_verity_synthetic() {
         let mut data = vec![0u8; 16];
         data[..8].copy_from_slice(&VERITY_MAGIC);
-        let tmp = "/tmp/agnosys_test_verity_magic";
+        let tmp = &format!("/tmp/agnosys_test_verity_magic_{}", std::process::id());
         std::fs::write(tmp, &data).unwrap();
-        assert!(is_verity_device(tmp).unwrap());
+        assert!(is_verity_device(Path::new(tmp)).unwrap());
         std::fs::remove_file(tmp).unwrap();
     }
 }

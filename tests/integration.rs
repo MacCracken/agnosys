@@ -430,3 +430,104 @@ mod logging_integration {
         tracing::trace!("trace level integration test");
     }
 }
+
+// ── luks integration ────────────────────────────────────────────────
+
+#[cfg(feature = "luks")]
+mod luks_integration {
+    use std::path::Path;
+
+    #[test]
+    fn dm_available_check() {
+        // Just verify no panic
+        let _ = agnosys::luks::dm_available();
+    }
+
+    #[test]
+    fn list_dm_devices_no_control() {
+        if let Ok(devs) = agnosys::luks::list_dm_devices() {
+            assert!(!devs.contains(&"control".to_owned()));
+        }
+    }
+
+    #[test]
+    fn volume_path_and_exists() {
+        let p = agnosys::luks::volume_path("integration_test_nonexistent");
+        assert_eq!(p, Path::new("/dev/mapper/integration_test_nonexistent"));
+        assert!(!agnosys::luks::volume_exists(
+            "integration_test_nonexistent"
+        ));
+    }
+
+    #[test]
+    fn dev_null_is_not_luks() {
+        assert!(!agnosys::luks::is_luks_device(Path::new("/dev/null")).unwrap());
+    }
+}
+
+// ── dmverity integration ────────────────────────────────────────────
+
+#[cfg(feature = "dmverity")]
+mod dmverity_integration {
+    use std::path::Path;
+
+    #[test]
+    fn dev_null_is_not_verity() {
+        assert!(!agnosys::dmverity::is_verity_device(Path::new("/dev/null")).unwrap());
+    }
+
+    #[test]
+    fn volume_path_correct() {
+        assert_eq!(
+            agnosys::dmverity::volume_path("system"),
+            Path::new("/dev/mapper/system")
+        );
+    }
+
+    #[test]
+    fn root_hash_round_trip() {
+        let h = agnosys::dmverity::RootHash::from_hex("abcdef0123456789").unwrap();
+        let hex = h.to_hex();
+        let h2 = agnosys::dmverity::RootHash::from_hex(&hex).unwrap();
+        assert_eq!(h, h2);
+    }
+
+    #[test]
+    fn validate_root_hash_integration() {
+        let a = agnosys::dmverity::RootHash::from_bytes(&[1, 2, 3]);
+        let b = agnosys::dmverity::RootHash::from_bytes(&[1, 2, 3]);
+        let c = agnosys::dmverity::RootHash::from_bytes(&[4, 5, 6]);
+        assert!(agnosys::dmverity::validate_root_hash(&a, &b));
+        assert!(!agnosys::dmverity::validate_root_hash(&a, &c));
+    }
+}
+
+// ── audit integration ───────────────────────────────────────────────
+
+#[cfg(feature = "audit")]
+mod audit_integration {
+    #[test]
+    fn is_available_returns_bool() {
+        let _ = agnosys::audit::is_available();
+    }
+
+    #[test]
+    fn parse_audit_line_real_format() {
+        let line = "type=SYSCALL msg=audit(1234567890.123:42): arch=c000003e syscall=59 success=yes pid=1234";
+        let map = agnosys::audit::parse_audit_line(line);
+        assert_eq!(map.get("arch").unwrap(), "c000003e");
+        assert_eq!(map.get("pid").unwrap(), "1234");
+    }
+
+    #[test]
+    fn msg_type_classification() {
+        assert_eq!(
+            agnosys::audit::AuditMsgType::from_raw(agnosys::audit::AUDIT_SYSCALL),
+            agnosys::audit::AuditMsgType::Syscall
+        );
+        assert_eq!(
+            agnosys::audit::AuditMsgType::from_raw(agnosys::audit::AUDIT_PATH),
+            agnosys::audit::AuditMsgType::Path
+        );
+    }
+}
