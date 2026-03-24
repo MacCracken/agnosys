@@ -531,3 +531,219 @@ mod audit_integration {
         );
     }
 }
+
+// ── pam integration ─────────────────────────────────────────────────
+
+#[cfg(feature = "pam")]
+mod pam_integration {
+    #[test]
+    fn is_available_and_list() {
+        if agnosys::pam::is_available() {
+            let svcs = agnosys::pam::list_services().unwrap();
+            assert!(!svcs.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_config_round_trip() {
+        let config = "auth required pam_unix.so nullok\naccount required pam_unix.so";
+        let entries = agnosys::pam::parse_pam_config(config);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].module, "pam_unix.so");
+    }
+
+    #[test]
+    fn service_path_format() {
+        let p = agnosys::pam::service_path("login");
+        assert!(p.to_string_lossy().contains("pam.d"));
+    }
+}
+
+// ── mac integration ─────────────────────────────────────────────────
+
+#[cfg(feature = "mac")]
+mod mac_integration {
+    #[test]
+    fn lsm_detection() {
+        let _ = agnosys::mac::list_lsms();
+        let _ = agnosys::mac::active_lsm();
+        let _ = agnosys::mac::lsm_string();
+    }
+
+    #[test]
+    fn security_context_readable() {
+        let _ = agnosys::mac::current_context();
+        let pid = agnosys::syscall::getpid();
+        let _ = agnosys::mac::process_context(pid);
+    }
+
+    #[test]
+    fn selinux_apparmor_detection() {
+        let _ = agnosys::mac::selinux_available();
+        let _ = agnosys::mac::apparmor_available();
+    }
+}
+
+// ── ima integration ─────────────────────────────────────────────────
+
+#[cfg(feature = "ima")]
+mod ima_integration {
+    #[test]
+    fn ima_status() {
+        let _ = agnosys::ima::is_available();
+        let _ = agnosys::ima::policy_readable();
+    }
+
+    #[test]
+    fn parse_policy_works() {
+        let rules = agnosys::ima::parse_policy("measure func=FILE_CHECK\n# comment\n");
+        assert_eq!(rules.len(), 1);
+    }
+}
+
+// ── fuse integration ────────────────────────────────────────────────
+
+#[cfg(feature = "fuse")]
+mod fuse_integration {
+    #[test]
+    fn fuse_status() {
+        let _ = agnosys::fuse::is_available();
+        let _ = agnosys::fuse::list_mounts();
+    }
+
+    #[test]
+    fn fuse_op_classification() {
+        assert_eq!(
+            agnosys::fuse::FuseOp::from_opcode(26),
+            agnosys::fuse::FuseOp::Init
+        );
+        assert_eq!(
+            agnosys::fuse::FuseOp::from_opcode(3),
+            agnosys::fuse::FuseOp::GetAttr
+        );
+    }
+}
+
+// ── update integration ──────────────────────────────────────────────
+
+#[cfg(feature = "update")]
+mod update_integration {
+    use std::path::Path;
+
+    #[test]
+    fn atomic_write_round_trip() {
+        let tmp = &format!("/tmp/agnosys_integ_atomic_{}", std::process::id());
+        let path = Path::new(tmp);
+        agnosys::update::atomic_write(path, b"integration test").unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
+        assert_eq!(content, "integration test");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn sync_and_writable() {
+        agnosys::update::sync_dir(Path::new("/tmp")).unwrap();
+        assert!(agnosys::update::is_writable(Path::new("/tmp")).unwrap());
+    }
+
+    #[test]
+    fn same_filesystem_check() {
+        assert!(agnosys::update::same_filesystem(Path::new("/tmp"), Path::new("/tmp")).unwrap());
+    }
+}
+
+// ── tpm integration ─────────────────────────────────────────────────
+
+#[cfg(feature = "tpm")]
+mod tpm_integration {
+    #[test]
+    fn tpm_detection() {
+        let _ = agnosys::tpm::is_available();
+        let _ = agnosys::tpm::rm_available();
+        let _ = agnosys::tpm::list_devices();
+    }
+
+    #[test]
+    fn tpm_info_if_available() {
+        if agnosys::tpm::is_available() {
+            let info = agnosys::tpm::device_info().unwrap();
+            assert!(!info.name.is_empty());
+        }
+    }
+}
+
+// ── secureboot integration ──────────────────────────────────────────
+
+#[cfg(feature = "secureboot")]
+mod secureboot_integration {
+    #[test]
+    fn efi_detection() {
+        let _ = agnosys::secureboot::is_efi();
+        let _ = agnosys::secureboot::efivars_available();
+    }
+
+    #[test]
+    fn secure_boot_state_if_efi() {
+        if agnosys::secureboot::is_efi() {
+            let state = agnosys::secureboot::state().unwrap();
+            // Just verify it returns without error
+            let _ = state.secure_boot;
+        }
+    }
+
+    #[test]
+    fn key_db_checks() {
+        let _ = agnosys::secureboot::key_db_exists(agnosys::secureboot::KeyDb::PK);
+        let _ = agnosys::secureboot::key_db_exists(agnosys::secureboot::KeyDb::Dbx);
+    }
+}
+
+// ── journald integration ────────────────────────────────────────────
+
+#[cfg(feature = "journald")]
+mod journald_integration {
+    #[test]
+    fn journal_status() {
+        let _ = agnosys::journald::is_available();
+        let _ = agnosys::journald::has_persistent_storage();
+        let _ = agnosys::journald::has_volatile_storage();
+    }
+
+    #[test]
+    fn machine_id_if_exists() {
+        if let Ok(mid) = agnosys::journald::machine_id() {
+            assert_eq!(mid.len(), 32);
+        }
+    }
+
+    #[test]
+    fn send_if_available() {
+        if agnosys::journald::is_available() {
+            agnosys::journald::send_message("integration test", 7, "agnosys-integ").unwrap();
+        }
+    }
+}
+
+// ── bootloader integration ──────────────────────────────────────────
+
+#[cfg(feature = "bootloader")]
+mod bootloader_integration {
+    #[test]
+    fn detect_bootloader() {
+        let info = agnosys::bootloader::detect().unwrap();
+        assert!(!info.name.is_empty());
+    }
+
+    #[test]
+    fn boot_partition() {
+        let _ = agnosys::bootloader::boot_mounted();
+        let _ = agnosys::bootloader::list_kernels();
+    }
+
+    #[test]
+    fn parse_config() {
+        let config = agnosys::bootloader::parse_loader_config("default linux\ntimeout 5\n");
+        assert_eq!(config.default, "linux");
+        assert_eq!(config.timeout, "5");
+    }
+}

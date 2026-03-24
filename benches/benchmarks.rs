@@ -293,6 +293,9 @@ fn bench_netns(c: &mut Criterion) {
     group.bench_function("current", |b| b.iter(agnosys::netns::current));
     group.bench_function("current_ns_id", |b| b.iter(agnosys::netns::current_ns_id));
     group.bench_function("list", |b| b.iter(agnosys::netns::list));
+    group.bench_function("named_path", |b| {
+        b.iter(|| agnosys::netns::named_path(black_box("test")))
+    });
     group.finish();
 }
 
@@ -476,6 +479,14 @@ fn bench_pam(c: &mut Criterion) {
         let config = "auth required pam_unix.so\naccount required pam_unix.so\nsession optional pam_systemd.so";
         b.iter(|| agnosys::pam::parse_pam_config(black_box(config)))
     });
+    group.bench_function("service_path", |b| {
+        b.iter(|| agnosys::pam::service_path(black_box("login")))
+    });
+    if agnosys::pam::service_exists("other") {
+        group.bench_function("read_service", |b| {
+            b.iter(|| agnosys::pam::read_service(black_box("other")))
+        });
+    }
     group.finish();
 }
 
@@ -493,6 +504,12 @@ fn bench_mac(c: &mut Criterion) {
     });
     group.bench_function("list_lsms", |b| b.iter(agnosys::mac::list_lsms));
     group.bench_function("current_context", |b| b.iter(agnosys::mac::current_context));
+    group.bench_function("lsm_string", |b| b.iter(agnosys::mac::lsm_string));
+    group.bench_function("selinux_mode", |b| b.iter(agnosys::mac::selinux_mode));
+    group.bench_function("process_context_self", |b| {
+        let pid = agnosys::syscall::getpid();
+        b.iter(|| agnosys::mac::process_context(black_box(pid)))
+    });
     group.finish();
 }
 
@@ -508,6 +525,7 @@ fn bench_ima(c: &mut Criterion) {
             "measure func=FILE_CHECK\ndont_measure fsmagic=0x9fa0\nappraise func=FILE_CHECK";
         b.iter(|| agnosys::ima::parse_policy(black_box(policy)))
     });
+    group.bench_function("policy_readable", |b| b.iter(agnosys::ima::policy_readable));
     group.finish();
 }
 
@@ -539,6 +557,21 @@ fn bench_update(c: &mut Criterion) {
         b.iter(|| agnosys::update::atomic_write(path, black_box(b"bench data")));
         let _ = std::fs::remove_file(path);
     });
+    group.bench_function("same_filesystem", |b| {
+        b.iter(|| {
+            agnosys::update::same_filesystem(
+                std::path::Path::new("/tmp"),
+                std::path::Path::new("/tmp"),
+            )
+        })
+    });
+    group.bench_function("fsync_file", |b| {
+        let tmp = &format!("/tmp/agnosys_bench_fsync_{}", std::process::id());
+        std::fs::write(tmp, "bench").unwrap();
+        let path = std::path::Path::new(tmp);
+        b.iter(|| agnosys::update::fsync_file(path));
+        let _ = std::fs::remove_file(tmp);
+    });
     group.finish();
 }
 
@@ -549,7 +582,11 @@ fn bench_update(_c: &mut Criterion) {}
 fn bench_tpm(c: &mut Criterion) {
     let mut group = c.benchmark_group("tpm");
     group.bench_function("is_available", |b| b.iter(agnosys::tpm::is_available));
+    group.bench_function("rm_available", |b| b.iter(agnosys::tpm::rm_available));
     group.bench_function("list_devices", |b| b.iter(agnosys::tpm::list_devices));
+    group.bench_function("event_log_available", |b| {
+        b.iter(agnosys::tpm::event_log_available)
+    });
     group.finish();
 }
 
@@ -564,6 +601,17 @@ fn bench_secureboot(c: &mut Criterion) {
         b.iter(agnosys::secureboot::efivars_available)
     });
     group.bench_function("state", |b| b.iter(agnosys::secureboot::state));
+    group.bench_function("key_db_exists_pk", |b| {
+        b.iter(|| agnosys::secureboot::key_db_exists(agnosys::secureboot::KeyDb::PK))
+    });
+    group.bench_function("efi_var_path", |b| {
+        b.iter(|| {
+            agnosys::secureboot::efi_var_path(
+                black_box("SecureBoot"),
+                black_box("8be4df61-93ca-11d2-aa0d-00e098032b8c"),
+            )
+        })
+    });
     group.finish();
 }
 
@@ -575,6 +623,12 @@ fn bench_journald(c: &mut Criterion) {
     let mut group = c.benchmark_group("journald");
     group.bench_function("is_available", |b| b.iter(agnosys::journald::is_available));
     group.bench_function("machine_id", |b| b.iter(agnosys::journald::machine_id));
+    group.bench_function("has_persistent_storage", |b| {
+        b.iter(agnosys::journald::has_persistent_storage)
+    });
+    group.bench_function("has_volatile_storage", |b| {
+        b.iter(agnosys::journald::has_volatile_storage)
+    });
     group.finish();
 }
 
@@ -590,6 +644,13 @@ fn bench_bootloader(c: &mut Criterion) {
     });
     group.bench_function("list_kernels", |b| {
         b.iter(agnosys::bootloader::list_kernels)
+    });
+    group.bench_function("parse_loader_config", |b| {
+        let config = "default arch-*\ntimeout 5\nconsole-mode auto\neditor yes";
+        b.iter(|| agnosys::bootloader::parse_loader_config(black_box(config)))
+    });
+    group.bench_function("list_entries", |b| {
+        b.iter(agnosys::bootloader::list_entries)
     });
     group.finish();
 }
