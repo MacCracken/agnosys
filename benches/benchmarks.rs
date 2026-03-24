@@ -43,6 +43,14 @@ fn bench_syscall(c: &mut Criterion) {
             black_box(info.procs());
         })
     });
+    group.bench_function("sysinfo_uptime", |b| {
+        let info = query_sysinfo().unwrap();
+        b.iter(|| black_box(info.uptime()))
+    });
+    group.bench_function("sysinfo_total_memory", |b| {
+        let info = query_sysinfo().unwrap();
+        b.iter(|| black_box(info.total_memory()))
+    });
 
     group.finish();
 }
@@ -228,6 +236,21 @@ fn bench_udev(c: &mut Criterion) {
             agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
         b.iter(|| black_box(dev.properties()))
     });
+    group.bench_function("device_devnode", |b| {
+        let dev =
+            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
+        b.iter(|| black_box(dev.devnode()))
+    });
+    group.bench_function("device_driver", |b| {
+        let dev =
+            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
+        b.iter(|| black_box(dev.driver()))
+    });
+    group.bench_function("device_subsystem", |b| {
+        let dev =
+            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
+        b.iter(|| black_box(dev.subsystem()))
+    });
     group.finish();
 }
 
@@ -264,6 +287,109 @@ fn bench_drm(c: &mut Criterion) {
 #[cfg(not(feature = "drm"))]
 fn bench_drm(_c: &mut Criterion) {}
 
+#[cfg(feature = "netns")]
+fn bench_netns(c: &mut Criterion) {
+    let mut group = c.benchmark_group("netns");
+    group.bench_function("current", |b| b.iter(agnosys::netns::current));
+    group.bench_function("current_ns_id", |b| b.iter(agnosys::netns::current_ns_id));
+    group.bench_function("list", |b| b.iter(agnosys::netns::list));
+    group.finish();
+}
+
+#[cfg(not(feature = "netns"))]
+fn bench_netns(_c: &mut Criterion) {}
+
+#[cfg(feature = "certpin")]
+fn bench_certpin(c: &mut Criterion) {
+    use agnosys::certpin::{Pin, PinSet};
+    let mut group = c.benchmark_group("certpin");
+    group.bench_function("sha256_32b", |b| {
+        b.iter(|| Pin::from_spki(black_box(&[0xAB; 32])))
+    });
+    group.bench_function("sha256_256b", |b| {
+        b.iter(|| Pin::from_spki(black_box(&[0xAB; 256])))
+    });
+    group.bench_function("pin_to_base64", |b| {
+        let pin = Pin::from_spki(b"test");
+        b.iter(|| black_box(&pin).to_base64())
+    });
+    group.bench_function("pin_to_hex", |b| {
+        let pin = Pin::from_spki(b"test");
+        b.iter(|| black_box(&pin).to_hex())
+    });
+    group.bench_function("pinset_validate_hit", |b| {
+        let mut ps = PinSet::new();
+        ps.add(Pin::from_spki(b"key1"));
+        b.iter(|| ps.validate_spki(black_box(b"key1")))
+    });
+    group.bench_function("pinset_validate_miss", |b| {
+        let mut ps = PinSet::new();
+        ps.add(Pin::from_spki(b"key1"));
+        b.iter(|| ps.validate_spki(black_box(b"key2")))
+    });
+    group.bench_function("pin_from_base64", |b| {
+        let pin = Pin::from_spki(b"bench");
+        let b64 = pin.to_base64();
+        b.iter(|| Pin::from_base64(black_box(&b64)))
+    });
+    group.bench_function("pin_from_bytes", |b| {
+        let hash = [0xABu8; 32];
+        b.iter(|| Pin::from_bytes(black_box(hash)))
+    });
+    group.bench_function("pinset_add", |b| {
+        b.iter(|| {
+            let mut ps = PinSet::new();
+            ps.add(Pin::from_spki(b"k1"));
+            ps.add(Pin::from_spki(b"k2"));
+            ps.add(Pin::from_spki(b"k3"));
+            black_box(&ps);
+        })
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "certpin"))]
+fn bench_certpin(_c: &mut Criterion) {}
+
+#[cfg(feature = "agent")]
+fn bench_agent(c: &mut Criterion) {
+    let mut group = c.benchmark_group("agent");
+    group.bench_function("get_process_name", |b| {
+        b.iter(agnosys::agent::get_process_name)
+    });
+    group.bench_function("get_oom_score_adj", |b| {
+        b.iter(agnosys::agent::get_oom_score_adj)
+    });
+    group.bench_function("current_cgroup", |b| b.iter(agnosys::agent::current_cgroup));
+    group.bench_function("is_pid1", |b| b.iter(agnosys::agent::is_pid1));
+    group.bench_function("set_process_name", |b| {
+        b.iter(|| agnosys::agent::set_process_name(black_box("bench")))
+    });
+    group.bench_function("has_capability", |b| {
+        b.iter(|| agnosys::agent::has_capability(black_box(0)))
+    });
+    group.bench_function("watchdog_notify", |b| {
+        b.iter(agnosys::agent::watchdog_notify)
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "agent"))]
+fn bench_agent(_c: &mut Criterion) {}
+
+#[cfg(feature = "logging")]
+fn bench_logging(c: &mut Criterion) {
+    let mut group = c.benchmark_group("logging");
+    group.bench_function("init", |b| b.iter(agnosys::logging::init));
+    group.bench_function("init_with_level", |b| {
+        b.iter(|| agnosys::logging::init_with_level(black_box("info")))
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "logging"))]
+fn bench_logging(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
@@ -271,6 +397,10 @@ criterion_group!(
     bench_landlock,
     bench_seccomp,
     bench_udev,
-    bench_drm
+    bench_drm,
+    bench_netns,
+    bench_certpin,
+    bench_agent,
+    bench_logging
 );
 criterion_main!(benches);

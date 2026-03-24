@@ -286,10 +286,147 @@ mod drm_integration {
     fn enumerate_cards_and_render_nodes_consistent() {
         let cards = agnosys::drm::enumerate_cards().unwrap_or_default();
         let nodes = agnosys::drm::enumerate_render_nodes().unwrap_or_default();
-        // If we have cards, we likely have render nodes (though not guaranteed)
         if !cards.is_empty() {
-            // Just verify both work without error
             let _ = nodes;
         }
+    }
+}
+
+// ── netns integration ───────────────────────────────────────────────
+
+#[cfg(feature = "netns")]
+mod netns_integration {
+    #[test]
+    fn current_ns_fd_and_id() {
+        let ns = agnosys::netns::current().unwrap();
+        assert!(ns.as_raw_fd() >= 0);
+        assert!(ns.name().is_none());
+
+        let id = agnosys::netns::current_ns_id().unwrap();
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn list_namespaces() {
+        let names = agnosys::netns::list().unwrap();
+        // May be empty, just verify no error and sorted
+        for window in names.windows(2) {
+            assert!(window[0] <= window[1]);
+        }
+    }
+
+    #[test]
+    fn named_path_construction() {
+        let p = agnosys::netns::named_path("test");
+        assert!(p.to_string_lossy().contains("netns"));
+        assert!(p.to_string_lossy().contains("test"));
+    }
+}
+
+// ── certpin integration ─────────────────────────────────────────────
+
+#[cfg(feature = "certpin")]
+mod certpin_integration {
+    use agnosys::certpin::{Pin, PinSet};
+
+    #[test]
+    fn pin_round_trip_spki_to_base64() {
+        let pin = Pin::from_spki(b"test public key info");
+        let b64 = pin.to_base64();
+        let pin2 = Pin::from_base64(&b64).unwrap();
+        assert_eq!(pin, pin2);
+    }
+
+    #[test]
+    fn pin_display_format() {
+        let pin = Pin::from_spki(b"key");
+        let s = format!("{pin}");
+        assert!(s.starts_with("sha256/"));
+        assert!(s.len() > 10);
+    }
+
+    #[test]
+    fn pinset_validate_workflow() {
+        let mut ps = PinSet::new();
+        let pin = Pin::from_spki(b"trusted_key_material");
+        ps.add(pin);
+
+        assert!(ps.validate_spki(b"trusted_key_material"));
+        assert!(!ps.validate_spki(b"untrusted_key_material"));
+        assert_eq!(ps.len(), 1);
+        assert!(!ps.is_empty());
+    }
+
+    #[test]
+    fn sha256_known_vectors() {
+        // Verify our SHA-256 produces correct output for known inputs
+        let pin = Pin::from_spki(b"");
+        // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        assert_eq!(
+            pin.to_hex(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+}
+
+// ── agent integration ───────────────────────────────────────────────
+
+#[cfg(feature = "agent")]
+mod agent_integration {
+    #[test]
+    fn process_name_round_trip() {
+        let original = agnosys::agent::get_process_name().unwrap();
+        agnosys::agent::set_process_name("integ-test").unwrap();
+        let name = agnosys::agent::get_process_name().unwrap();
+        assert_eq!(name, "integ-test");
+        agnosys::agent::set_process_name(&original).unwrap();
+    }
+
+    #[test]
+    fn oom_score_read() {
+        let score = agnosys::agent::get_oom_score_adj().unwrap();
+        assert!((-1000..=1000).contains(&score));
+    }
+
+    #[test]
+    fn cgroup_path_valid() {
+        let cg = agnosys::agent::current_cgroup().unwrap();
+        assert!(cg.starts_with('/'));
+    }
+
+    #[test]
+    fn is_pid1_false() {
+        assert!(!agnosys::agent::is_pid1());
+    }
+
+    #[test]
+    fn has_capability_chown() {
+        // CAP_CHOWN = 0 — should be in bounding set
+        let result = agnosys::agent::has_capability(0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn watchdog_no_socket() {
+        let result = agnosys::agent::watchdog_notify().unwrap();
+        assert!(!result);
+    }
+}
+
+// ── logging integration ─────────────────────────────────────────────
+
+#[cfg(feature = "logging")]
+mod logging_integration {
+    #[test]
+    fn init_then_use_tracing() {
+        agnosys::logging::init();
+        // After init, tracing macros should work without panic
+        tracing::info!("integration test log");
+    }
+
+    #[test]
+    fn init_with_level_then_trace() {
+        agnosys::logging::init_with_level("trace");
+        tracing::trace!("trace level integration test");
     }
 }

@@ -559,4 +559,46 @@ mod tests {
         );
         assert!(rs.allow_path(Path::new("/usr"), FsAccess::EXECUTE).is_ok());
     }
+
+    // ── allow_net_port (ABI v4+, kernel-dependent) ──────────────────
+
+    #[test]
+    fn ruleset_allow_net_port() {
+        let rs = match Ruleset::with_net(FsAccess::empty(), NetAccess::BIND_TCP) {
+            Ok(rs) => rs,
+            Err(_) => return,
+        };
+        // May fail if ABI < v4, just verify no panic
+        let _ = rs.allow_net_port(8080, NetAccess::BIND_TCP);
+    }
+
+    #[test]
+    fn ruleset_allow_net_port_multiple() {
+        let rs = match Ruleset::with_net(
+            FsAccess::empty(),
+            NetAccess::BIND_TCP | NetAccess::CONNECT_TCP,
+        ) {
+            Ok(rs) => rs,
+            Err(_) => return,
+        };
+        let _ = rs.allow_net_port(80, NetAccess::CONNECT_TCP);
+        let _ = rs.allow_net_port(443, NetAccess::CONNECT_TCP);
+        let _ = rs.allow_net_port(8080, NetAccess::BIND_TCP);
+    }
+
+    // ── NetAccess ───────────────────────────────────────────────────
+
+    #[test]
+    fn net_access_empty() {
+        let empty = NetAccess::empty();
+        assert!(empty.is_empty());
+        assert_eq!(empty.bits(), 0);
+    }
+
+    #[test]
+    fn net_access_debug() {
+        let dbg = format!("{:?}", NetAccess::BIND_TCP | NetAccess::CONNECT_TCP);
+        assert!(dbg.contains("BIND_TCP"));
+        assert!(dbg.contains("CONNECT_TCP"));
+    }
 }

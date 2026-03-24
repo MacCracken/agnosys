@@ -641,4 +641,39 @@ mod tests {
         assert!(format!("{:?}", Action::Trace(1)).contains("Trace"));
         assert!(format!("{:?}", Action::Log).contains("Log"));
     }
+
+    // ── load_logged validation ──────────────────────────────────────
+
+    #[test]
+    fn load_logged_rejects_empty() {
+        let filter = Filter {
+            instructions: vec![],
+        };
+        assert!(load_logged(&filter).is_err());
+    }
+
+    // ── on_syscall action encoding ──────────────────────────────────
+
+    #[test]
+    fn on_syscall_with_all_actions() {
+        // Verify all action types work in on_syscall
+        let filter = FilterBuilder::new(Action::KillProcess)
+            .on_syscall(libc::SYS_read, Action::Allow)
+            .on_syscall(libc::SYS_write, Action::Errno(libc::EPERM as u16))
+            .on_syscall(libc::SYS_openat, Action::Trap)
+            .on_syscall(libc::SYS_close, Action::Log)
+            .on_syscall(libc::SYS_stat, Action::Trace(1))
+            .on_syscall(libc::SYS_fstat, Action::KillThread)
+            .build();
+        // 6 rules: arch(3) + nr(1) + 6 checks + default(1) + 6 returns = 17
+        assert_eq!(filter.len(), 17);
+    }
+
+    // ── Builder with default trace ──────────────────────────────────
+
+    #[test]
+    fn builder_default_trace() {
+        let f = FilterBuilder::new(Action::Trace(99)).build();
+        assert_eq!(f.len(), 5);
+    }
 }

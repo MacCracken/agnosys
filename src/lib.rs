@@ -39,14 +39,16 @@ pub mod udev;
 #[cfg(feature = "landlock")]
 pub mod landlock;
 
+#[cfg(feature = "netns")]
+pub mod netns;
 #[cfg(feature = "seccomp")]
 pub mod seccomp;
-// #[cfg(feature = "netns")] pub mod netns;
 // #[cfg(feature = "luks")] pub mod luks;
 // #[cfg(feature = "dmverity")] pub mod dmverity;
 // #[cfg(feature = "ima")] pub mod ima;
 // #[cfg(feature = "tpm")] pub mod tpm;
-// #[cfg(feature = "certpin")] pub mod certpin;
+#[cfg(feature = "certpin")]
+pub mod certpin;
 // #[cfg(feature = "fuse")] pub mod fuse;
 // #[cfg(feature = "pam")] pub mod pam;
 // #[cfg(feature = "mac")] pub mod mac;
@@ -55,7 +57,8 @@ pub mod seccomp;
 // #[cfg(feature = "bootloader")] pub mod bootloader;
 // #[cfg(feature = "secureboot")] pub mod secureboot;
 // #[cfg(feature = "update")] pub mod update;
-// #[cfg(feature = "agent")] pub mod agent;
+#[cfg(feature = "agent")]
+pub mod agent;
 #[cfg(feature = "drm")]
 pub mod drm;
 

@@ -6,6 +6,9 @@
 - landlock: Filesystem sandboxing via Landlock LSM (ABI v1-v4) — ruleset builder, path rules, net port rules
 - seccomp: Syscall filtering via seccomp-BPF — filter builder, allowlist/denylist policies, architecture validation
 - drm: Direct Rendering Manager — device enumeration, driver version, capabilities, KMS resources, connector queries
+- netns: Network namespaces — create, enter, list, current ns fd/inode
+- certpin: Certificate pinning — SHA-256 pin computation (zero-dep), base64, SPKI extraction, PinSet validation
+- agent: Agent runtime support — process naming, OOM score, cgroup inspection, capability check, systemd watchdog
 - SysInfo struct: Single sysinfo(2) call for uptime/memory/procs
 - query_sysinfo() convenience function
 - Send+Sync compile-time assertions on all public types
