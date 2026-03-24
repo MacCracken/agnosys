@@ -15,6 +15,8 @@
 - pam: PAM service inspection — list services, parse PAM stacks, read service configs
 - mac: Mandatory Access Control — LSM detection, SELinux/AppArmor/Smack queries, security contexts
 - ima: Integrity Measurement Architecture — runtime measurements, policy parsing, violation count
+- fuse: FUSE protocol — /dev/fuse device, request reading, reply writing, mount listing
+- update: Atomic update primitives — atomic_write, atomic_copy, atomic_swap, fsync, directory sync
 - SysInfo struct: Single sysinfo(2) call for uptime/memory/procs
 - query_sysinfo() convenience function
 - Send+Sync compile-time assertions on all public types

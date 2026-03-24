@@ -514,6 +514,37 @@ fn bench_ima(c: &mut Criterion) {
 #[cfg(not(feature = "ima"))]
 fn bench_ima(_c: &mut Criterion) {}
 
+#[cfg(feature = "fuse")]
+fn bench_fuse(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fuse");
+    group.bench_function("is_available", |b| b.iter(agnosys::fuse::is_available));
+    group.bench_function("list_mounts", |b| b.iter(agnosys::fuse::list_mounts));
+    group.finish();
+}
+
+#[cfg(not(feature = "fuse"))]
+fn bench_fuse(_c: &mut Criterion) {}
+
+#[cfg(feature = "update")]
+fn bench_update(c: &mut Criterion) {
+    let mut group = c.benchmark_group("update");
+    group.bench_function("is_writable_tmp", |b| {
+        b.iter(|| agnosys::update::is_writable(std::path::Path::new("/tmp")))
+    });
+    group.bench_function("sync_dir_tmp", |b| {
+        b.iter(|| agnosys::update::sync_dir(std::path::Path::new("/tmp")))
+    });
+    group.bench_function("atomic_write", |b| {
+        let path = std::path::Path::new("/tmp/agnosys_bench_atomic");
+        b.iter(|| agnosys::update::atomic_write(path, black_box(b"bench data")));
+        let _ = std::fs::remove_file(path);
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "update"))]
+fn bench_update(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
@@ -531,6 +562,8 @@ criterion_group!(
     bench_audit,
     bench_pam,
     bench_mac,
-    bench_ima
+    bench_ima,
+    bench_fuse,
+    bench_update
 );
 criterion_main!(benches);

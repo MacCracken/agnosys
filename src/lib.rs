@@ -53,7 +53,8 @@ pub mod ima;
 // #[cfg(feature = "tpm")] pub mod tpm;
 #[cfg(feature = "certpin")]
 pub mod certpin;
-// #[cfg(feature = "fuse")] pub mod fuse;
+#[cfg(feature = "fuse")]
+pub mod fuse;
 #[cfg(feature = "pam")]
 pub mod pam;
 
@@ -64,11 +65,12 @@ pub mod mac;
 // #[cfg(feature = "journald")] pub mod journald;
 // #[cfg(feature = "bootloader")] pub mod bootloader;
 // #[cfg(feature = "secureboot")] pub mod secureboot;
-// #[cfg(feature = "update")] pub mod update;
 #[cfg(feature = "agent")]
 pub mod agent;
 #[cfg(feature = "drm")]
 pub mod drm;
+#[cfg(feature = "update")]
+pub mod update;
 
 #[cfg(feature = "logging")]
 pub mod logging;
