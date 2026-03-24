@@ -24,11 +24,10 @@ Agnosys owns **safe Rust bindings to Linux kernel interfaces**. It does NOT own:
 - [x] `#[must_use]` on all pure functions
 - [x] `tracing` instrumentation on all kernel operations
 - [x] Send+Sync compile-time assertions on all public types
-- [x] Tests + benchmarks (86 tests, 27 benchmarks at phase completion)
 - [x] CI/CD pipeline (ci.yml, release.yml, deny.toml, codecov.yml)
 - [x] Community files (SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md)
 
-## Phase 2 — Security Modules (V0.23) ✅
+## Phase 2 — Security Modules ✅
 
 - [x] `landlock` — Filesystem/network sandboxing via Landlock LSM (ABI v1-v5)
 - [x] `seccomp` — BPF syscall filter builder, allowlist approach, architecture validation
@@ -38,62 +37,60 @@ Agnosys owns **safe Rust bindings to Linux kernel interfaces**. It does NOT own:
 
 Consumer validation: **kavach** ✅, **aegis** ✅, **shakti** ✅, **libro** ✅
 
-## Phase 3 — Storage, Integrity & Trust (V0.23) ✅
+## Phase 3 — Storage, Integrity & Trust ✅
 
 - [x] `luks` — LUKS header parsing, key slot inspection, dm-crypt volume management
 - [x] `dmverity` — Verity superblock parsing, root hash validation (constant-time), volume status
 - [x] `ima` — IMA runtime measurements, policy parsing, violation count
 - [x] `certpin` — SHA-256 pin computation (zero-dep), base64, SPKI extraction, PinSet validation
-- [ ] `tpm` — TPM2 context, PCR read/extend, quote, seal/unseal
-- [ ] `secureboot` — Secure Boot state detection, EFI variable reading
-- [ ] `fuse` — FUSE session setup, request dispatch, reply
+- [x] `tpm` — TPM2 device detection, PCR bank reading, capabilities, event log access
+- [x] `secureboot` — Secure Boot state, EFI variable reading, PK/KEK/db/dbx key databases
+- [x] `fuse` — FUSE protocol over /dev/fuse, request/reply, mount listing
 
-Consumer validation: **stiva** ✅, **sigil** partial (certpin+ima done, tpm+secureboot pending)
+Consumer validation: **stiva** ✅, **sigil** ✅, **ark** ✅ (partial — fuse done)
 
-## Phase 4 — System Services & Device
+## Phase 4 — System Services & Device ✅
 
 - [x] `agent` — Process naming, OOM score, cgroup inspection, capabilities, systemd watchdog
 - [x] `netns` — Network namespace create, enter, list, current ns fd/inode
 - [x] `udev` — Pure sysfs/netlink device enumeration, hotplug monitoring, uevent parsing
 - [x] `drm` — DRM/KMS device enumeration, driver version, capabilities, mode resources, connectors
-- [ ] `journald` — Systemd journal write, structured log entry, cursor-based reading
-- [ ] `bootloader` — Bootloader detection, entry management, default setting
-- [ ] `update` — Atomic update primitives (rename, sync, pivot)
+- [x] `journald` — Structured journal log sending, journal file listing, disk usage
+- [x] `bootloader` — systemd-boot/GRUB detection, boot entry parsing, kernel listing
+- [x] `update` — Atomic write/copy/swap, fsync, directory sync, renameat2(RENAME_EXCHANGE)
 
-Consumer validation: **daimon** ✅, **nein** ✅, **yukti** ✅, **soorat** ✅, **argonaut** pending, **ark** partial
+Consumer validation: **daimon** ✅, **nein** ✅, **yukti** ✅, **soorat** ✅, **argonaut** ✅, **ark** ✅
 
-## Remaining (8 modules)
+## All Modules Complete ✅
 
-| Module | Consumer | Status | Complexity |
-|--------|----------|--------|------------|
-| `tpm` | sigil | Not started | High — TPM2 command set |
-| `secureboot` | sigil | Not started | Low — EFI variable reading |
-| `journald` | argonaut | Not started | Low — journal socket write |
-| `bootloader` | argonaut | Not started | Medium — bootctl/EFI vars |
-| `fuse` | ark | Not started | High — FUSE protocol |
-| `update` | ark | Not started | Medium — atomic fs ops |
+All 22 modules implemented. All 13 consumers unblocked.
 
-## V1.0 — Stable API
+## V1.0 — Stable API (Next)
 
-- [ ] All 22 modules implemented
-- [ ] API stabilization across all modules
-- [ ] Comprehensive benchmarks (currently 100 benchmarks across 14 modules)
-- [ ] Documentation with security considerations per module
-- [ ] All consumers migrated from monolith `agnos-sys` to crates.io `agnosys`
+- [x] All 22 modules implemented
+- [ ] API stabilization review — freeze public API signatures
+- [ ] Comprehensive documentation with security considerations per module
+- [ ] All consumers migrated from monolith `agnos-sys` to path dependency on `agnosys`
 - [ ] Monolith `userland/agnos-sys/` deprecated (thin wrapper that re-exports agnosys)
-- [ ] Published to crates.io
+- [ ] Fuzz testing for parsers (LUKS header, verity superblock, DER/SPKI, audit lines, PAM config)
+- [ ] `cargo-semver-checks` integration for API stability
+- [ ] Example programs for each major module
+- [ ] Coverage target: 80%+ line coverage via `cargo llvm-cov`
+
+> **Note:** Agnosys is an internal library crate — it is NOT published to crates.io.
+> Consumers depend on it via path or git dependency within the AGNOS workspace.
 
 ## Progress
 
 | Metric | Count |
 |--------|-------|
-| Modules implemented | **14 / 22** (64%) |
-| Consumer crates unblocked | **10 / 12** (sigil partial, argonaut pending, ark partial) |
-| Unit tests | 394 |
-| Integration tests | 51 |
-| Doc-tests | 13 |
-| Total tests | **458** |
-| Benchmarks | **100** |
+| Modules implemented | **22 / 22** (100%) |
+| Consumer crates unblocked | **13 / 13** (100%) |
+| Unit tests | 511 |
+| Integration tests | 75 |
+| Doc-tests | 19 |
+| Total tests | **605** |
+| Benchmarks | **132** |
 | Version | 0.23.3 |
 
 ## Migration Strategy
@@ -113,7 +110,7 @@ Each phase delivers independently. Consumers can migrate one module at a time:
 agnos-sys = { path = "../agnos-sys" }
 
 # After (only pulls what's needed)
-agnosys = { version = "0.23", features = ["landlock", "seccomp"] }
+agnosys = { path = "../agnosys", features = ["landlock", "seccomp"] }
 ```
 
 ## Consumer Map
@@ -125,9 +122,9 @@ agnosys = { version = "0.23", features = ["landlock", "seccomp"] }
 | shakti | pam | ✅ Ready |
 | libro | audit | ✅ Ready |
 | stiva | luks, dmverity | ✅ Ready |
-| sigil | tpm, ima, secureboot, certpin | 🔶 2/4 done (certpin, ima) |
-| ark | fuse, update | ⬜ Pending |
-| argonaut | journald, bootloader | ⬜ Pending |
+| sigil | tpm, ima, secureboot, certpin | ✅ Ready |
+| ark | fuse, update | ✅ Ready |
+| argonaut | journald, bootloader | ✅ Ready |
 | daimon | seccomp, certpin, agent | ✅ Ready |
 | nein | netns | ✅ Ready |
 | yukti | udev | ✅ Ready |

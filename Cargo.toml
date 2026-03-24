@@ -5,12 +5,9 @@ edition = "2024"
 rust-version = "1.89"
 license = "GPL-3.0-only"
 description = "AGNOS kernel interface — safe Rust bindings for Linux syscalls, Landlock, seccomp, udev, TPM, LUKS, dm-verity"
-homepage = "https://github.com/MacCracken/agnosys"
 repository = "https://github.com/MacCracken/agnosys"
 readme = "README.md"
-documentation = "https://docs.rs/agnosys"
-keywords = ["linux", "kernel", "syscall", "security", "sandboxing"]
-categories = ["os", "api-bindings"]
+publish = false
 exclude = [".claude/", ".github/", "docs/", "scripts/"]
 
 [features]
@@ -68,3 +65,23 @@ name = "integration"
 [[example]]
 name = "detect_hardware"
 required-features = ["syscall", "error"]
+
+[[example]]
+name = "sysinfo"
+required-features = ["syscall", "error"]
+
+[[example]]
+name = "enumerate_devices"
+required-features = ["udev"]
+
+[[example]]
+name = "security_status"
+required-features = ["mac", "landlock", "secureboot", "tpm", "ima"]
+
+[[example]]
+name = "gpu_info"
+required-features = ["drm"]
+
+[[example]]
+name = "seccomp_sandbox"
+required-features = ["seccomp"]

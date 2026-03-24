@@ -41,3 +41,9 @@ Please report security issues to **security@agnos.dev**.
 - Minimal dependency surface (core depends only on libc, serde, thiserror, tracing)
 - Feature-gated modules — consumers compile only what they use
 - `#[non_exhaustive]` on all public enums to allow safe evolution
+- Constant-time comparisons for security-sensitive operations (dm-verity root hash)
+- Kernel-reported sizes capped to prevent OOM (DRM, LUKS, dm-verity)
+
+## Per-Module Security Notes
+
+See [docs/SECURITY-NOTES.md](docs/SECURITY-NOTES.md) for detailed security considerations per module.

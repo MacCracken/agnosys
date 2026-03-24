@@ -12,13 +12,13 @@ Consumer crates:
   kavach     ──→ agnosys[landlock,seccomp]   (sandboxing)           ✅
   nein       ──→ agnosys[netns]             (network namespaces)    ✅
   stiva      ──→ agnosys[luks,dmverity]     (encrypted storage)     ✅
-  sigil      ──→ agnosys[tpm,ima,certpin]   (trust verification)    🔶
+  sigil      ──→ agnosys[tpm,ima,certpin]   (trust verification)    ✅
   soorat     ──→ agnosys[drm]              (GPU rendering)          ✅
   libro      ──→ agnosys[audit]            (kernel audit)           ✅
-  argonaut   ──→ agnosys[journald,bootloader] (init system)         ⬜
+  argonaut   ──→ agnosys[journald,bootloader] (init system)         ✅
   shakti     ──→ agnosys[pam]              (authentication)         ✅
   aegis      ──→ agnosys[mac]             (mandatory access control) ✅
-  ark        ──→ agnosys[fuse,update]      (package management)     ⬜
+  ark        ──→ agnosys[fuse,update]      (package management)     ✅
   daimon     ──→ agnosys[certpin,agent]    (agent runtime)          ✅
 ```
 
@@ -42,19 +42,19 @@ Consumer crates:
 | `audit` | libro | Kernel audit netlink interface | ✅ |
 | `agent` | daimon | Agent runtime kernel support | ✅ |
 | `drm` | soorat | Direct Rendering Manager / KMS | ✅ |
-| `tpm` | sigil | Trusted Platform Module | ⬜ |
-| `secureboot` | sigil | Secure Boot verification | ⬜ |
-| `journald` | argonaut | Systemd journal | ⬜ |
-| `bootloader` | argonaut | Bootloader interface | ⬜ |
-| `fuse` | ark | Filesystem in Userspace | ⬜ |
-| `update` | ark | System update primitives | ⬜ |
+| `tpm` | sigil | Trusted Platform Module | ✅ |
+| `secureboot` | sigil | Secure Boot verification | ✅ |
+| `journald` | argonaut | Systemd journal | ✅ |
+| `bootloader` | argonaut | Bootloader interface | ✅ |
+| `fuse` | ark | Filesystem in Userspace | ✅ |
+| `update` | ark | System update primitives | ✅ |
 | `serde` | optional | Serde derive support | ✅ |
 
 ## Quick Start
 
 ```rust
 // Only pull what you need
-// Cargo.toml: agnosys = { version = "0.23", features = ["udev", "landlock"] }
+// Cargo.toml: agnosys = { path = "../agnosys", features = ["udev", "landlock"] }
 
 use agnosys::error::SysError;
 
@@ -83,7 +83,7 @@ make check                     # fmt + clippy + test + audit
 
 See [docs/development/roadmap.md](docs/development/roadmap.md).
 
-**Progress:** 14/22 modules implemented, 10/12 consumers unblocked, 458 tests, 100 benchmarks.
+**Complete:** 22/22 modules, 13/13 consumers unblocked, 605 tests, 132 benchmarks.
 
 ## License
 
