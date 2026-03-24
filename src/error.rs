@@ -31,6 +31,7 @@ pub type Result<T> = std::result::Result<T, SysError>;
 impl SysError {
     /// Create from a raw errno value.
     #[inline]
+    #[must_use]
     pub fn from_errno(errno: i32) -> Self {
         match errno {
             libc::EPERM | libc::EACCES => Self::PermissionDenied {
@@ -50,6 +51,7 @@ impl SysError {
 
     /// Create from the last OS error.
     #[inline]
+    #[must_use]
     pub fn last_os_error() -> Self {
         let err = std::io::Error::last_os_error();
         let errno = err.raw_os_error().unwrap_or(-1);

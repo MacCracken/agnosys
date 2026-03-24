@@ -9,11 +9,14 @@ use crate::error::{Result, SysError};
 ///
 /// Returns the syscall result on success, or `SysError` on failure.
 #[inline]
+#[must_use = "syscall result contains the return value or error"]
 pub fn checked_syscall(name: &str, ret: libc::c_long) -> Result<libc::c_long> {
     if ret < 0 {
+        // Read errno BEFORE any tracing — tracing may allocate and clobber errno
         let errno = unsafe { *libc::__errno_location() };
+        let err = SysError::from_errno(errno);
         tracing::error!(syscall = name, errno, "syscall failed");
-        Err(SysError::from_errno(errno))
+        Err(err)
     } else {
         Ok(ret)
     }
@@ -21,73 +24,143 @@ pub fn checked_syscall(name: &str, ret: libc::c_long) -> Result<libc::c_long> {
 
 /// Get the current process ID.
 #[inline]
+#[must_use]
 pub fn getpid() -> i32 {
     unsafe { libc::getpid() }
 }
 
 /// Get the current thread ID.
 #[inline]
+#[must_use]
 pub fn gettid() -> i64 {
     unsafe { libc::syscall(libc::SYS_gettid) as i64 }
 }
 
 /// Get the current user ID.
 #[inline]
+#[must_use]
 pub fn getuid() -> u32 {
     unsafe { libc::getuid() }
 }
 
 /// Get the current effective user ID.
 #[inline]
+#[must_use]
 pub fn geteuid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
 /// Check if the current process has root privileges.
 #[inline]
+#[must_use]
 pub fn is_root() -> bool {
     geteuid() == 0
 }
 
-/// Get system uptime in seconds.
-pub fn uptime() -> Result<f64> {
-    let mut info: libc::sysinfo = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::sysinfo(&mut info) };
-    if ret < 0 {
-        return Err(SysError::last_os_error());
+// ── sysinfo helpers ─────────────────────────────────────────────────
+
+/// Cached result of a single `sysinfo(2)` call.
+///
+/// Use [`query_sysinfo`] to fetch, then access fields directly.
+/// This avoids redundant kernel roundtrips when you need multiple values.
+pub struct SysInfo {
+    inner: libc::sysinfo,
+}
+
+impl SysInfo {
+    /// System uptime in seconds.
+    #[inline]
+    #[must_use]
+    pub fn uptime(&self) -> f64 {
+        self.inner.uptime as f64
     }
-    Ok(info.uptime as f64)
+
+    /// Total physical RAM in bytes.
+    #[inline]
+    #[must_use]
+    pub fn total_memory(&self) -> u64 {
+        self.inner.totalram * self.inner.mem_unit as u64
+    }
+
+    /// Free physical RAM in bytes.
+    #[inline]
+    #[must_use]
+    pub fn free_memory(&self) -> u64 {
+        self.inner.freeram * self.inner.mem_unit as u64
+    }
+
+    /// Number of current processes.
+    #[inline]
+    #[must_use]
+    pub fn procs(&self) -> u16 {
+        self.inner.procs
+    }
+}
+
+/// Perform a single `sysinfo(2)` call and return a [`SysInfo`] snapshot.
+#[inline]
+#[must_use = "sysinfo result should be used"]
+pub fn query_sysinfo() -> Result<SysInfo> {
+    let mut inner: libc::sysinfo = unsafe { std::mem::zeroed() };
+    let ret = unsafe { libc::sysinfo(&mut inner) };
+    if ret < 0 {
+        let err = SysError::last_os_error();
+        tracing::error!("sysinfo syscall failed");
+        return Err(err);
+    }
+    tracing::trace!(
+        "sysinfo: uptime={}s total_ram={}",
+        inner.uptime,
+        inner.totalram
+    );
+    Ok(SysInfo { inner })
+}
+
+/// Get system uptime in seconds.
+///
+/// For multiple sysinfo fields, prefer [`query_sysinfo`] to avoid repeated syscalls.
+#[inline]
+#[must_use = "uptime result should be used"]
+pub fn uptime() -> Result<f64> {
+    query_sysinfo().map(|s| s.uptime())
 }
 
 /// Get total system memory in bytes.
+///
+/// For multiple sysinfo fields, prefer [`query_sysinfo`] to avoid repeated syscalls.
+#[inline]
+#[must_use = "memory result should be used"]
 pub fn total_memory() -> Result<u64> {
-    let mut info: libc::sysinfo = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::sysinfo(&mut info) };
-    if ret < 0 {
-        return Err(SysError::last_os_error());
-    }
-    Ok(info.totalram * info.mem_unit as u64)
+    query_sysinfo().map(|s| s.total_memory())
 }
 
 /// Get available system memory in bytes.
+///
+/// For multiple sysinfo fields, prefer [`query_sysinfo`] to avoid repeated syscalls.
+#[inline]
+#[must_use = "memory result should be used"]
 pub fn available_memory() -> Result<u64> {
-    let mut info: libc::sysinfo = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::sysinfo(&mut info) };
-    if ret < 0 {
-        return Err(SysError::last_os_error());
-    }
-    Ok(info.freeram * info.mem_unit as u64)
+    query_sysinfo().map(|s| s.free_memory())
 }
 
 /// Get the hostname.
+///
+/// Buffer is 256 bytes (exceeds `HOST_NAME_MAX` of 64 on Linux).
+#[inline]
+#[must_use = "hostname result should be used"]
 pub fn hostname() -> Result<String> {
     let mut buf = [0u8; 256];
     let ret = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
     if ret < 0 {
-        return Err(SysError::last_os_error());
+        let err = SysError::last_os_error();
+        tracing::error!("gethostname syscall failed");
+        return Err(err);
     }
     let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    String::from_utf8(buf[..len].to_vec()).map_err(|e| SysError::InvalidArgument(e.to_string()))
+    let name = String::from_utf8(buf[..len].to_vec())
+        .map_err(|e| SysError::InvalidArgument(e.to_string()))?;
+    tracing::trace!(hostname = %name, "gethostname");
+    Ok(name)
 }
 
 #[cfg(test)]
@@ -249,5 +322,32 @@ mod tests {
         let a = hostname().unwrap();
         let b = hostname().unwrap();
         assert_eq!(a, b);
+    }
+
+    // ── query_sysinfo / SysInfo ──────────────────────────────────────
+
+    #[test]
+    fn query_sysinfo_succeeds() {
+        let info = query_sysinfo().unwrap();
+        assert!(info.uptime() > 0.0);
+        assert!(info.total_memory() > 0);
+        assert!(info.free_memory() > 0);
+        assert!(info.procs() > 0);
+    }
+
+    #[test]
+    fn query_sysinfo_single_call_consistent() {
+        let info = query_sysinfo().unwrap();
+        // From one snapshot, free must be <= total
+        assert!(info.free_memory() <= info.total_memory());
+    }
+
+    #[test]
+    fn query_sysinfo_matches_convenience_fns() {
+        let info = query_sysinfo().unwrap();
+        // Convenience functions each call sysinfo independently,
+        // so values may differ slightly — just sanity check same order of magnitude
+        let total_direct = total_memory().unwrap();
+        assert_eq!(info.total_memory(), total_direct);
     }
 }

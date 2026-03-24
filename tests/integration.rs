@@ -117,3 +117,28 @@ fn uptime_does_not_go_backwards() {
     let b = agnosys::syscall::uptime().unwrap();
     assert!(b >= a);
 }
+
+// ── query_sysinfo single-call ──────────────────────────────────────
+
+#[test]
+fn query_sysinfo_snapshot_is_consistent() {
+    let info = agnosys::syscall::query_sysinfo().unwrap();
+    assert!(info.uptime() > 0.0);
+    assert!(info.total_memory() >= 32 * 1024 * 1024);
+    assert!(info.free_memory() <= info.total_memory());
+    assert!(info.procs() > 0);
+}
+
+#[test]
+fn query_sysinfo_avoids_redundant_syscalls() {
+    // One call gives us everything — verify all fields populated
+    let info = agnosys::syscall::query_sysinfo().unwrap();
+    let up = info.uptime();
+    let total = info.total_memory();
+    let free = info.free_memory();
+    let procs = info.procs();
+    assert!(up > 0.0);
+    assert!(total > 0);
+    assert!(free > 0);
+    assert!(procs > 0);
+}

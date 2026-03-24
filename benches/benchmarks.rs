@@ -16,6 +16,18 @@ fn bench_syscall(c: &mut Criterion) {
     group.bench_function("checked_syscall", |b| {
         b.iter(|| checked_syscall("getpid", unsafe { libc::syscall(libc::SYS_getpid) }))
     });
+    group.bench_function("query_sysinfo", |b| b.iter(query_sysinfo));
+    group.bench_function("query_sysinfo_all_fields", |b| {
+        b.iter(|| {
+            let info = query_sysinfo().unwrap();
+            black_box((
+                info.uptime(),
+                info.total_memory(),
+                info.free_memory(),
+                info.procs(),
+            ))
+        })
+    });
 
     group.finish();
 }
