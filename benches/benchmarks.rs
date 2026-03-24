@@ -234,12 +234,40 @@ fn bench_udev(c: &mut Criterion) {
 #[cfg(not(feature = "udev"))]
 fn bench_udev(_c: &mut Criterion) {}
 
+#[cfg(feature = "drm")]
+fn bench_drm(c: &mut Criterion) {
+    let mut group = c.benchmark_group("drm");
+
+    group.bench_function("enumerate_cards", |b| b.iter(agnosys::drm::enumerate_cards));
+    group.bench_function("enumerate_render_nodes", |b| {
+        b.iter(agnosys::drm::enumerate_render_nodes)
+    });
+
+    // Conditional GPU benchmarks
+    if let Ok(cards) = agnosys::drm::enumerate_cards()
+        && let Some(path) = cards.first()
+        && let Ok(dev) = agnosys::drm::Device::open(path)
+    {
+        let dev = Box::leak(Box::new(dev));
+        group.bench_function("device_version", |b| b.iter(|| dev.version()));
+        group.bench_function("get_cap_dumb_buffer", |b| {
+            b.iter(|| dev.get_cap(agnosys::drm::Cap::DumbBuffer))
+        });
+    }
+
+    group.finish();
+}
+
+#[cfg(not(feature = "drm"))]
+fn bench_drm(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
     bench_error,
     bench_landlock,
     bench_seccomp,
-    bench_udev
+    bench_udev,
+    bench_drm
 );
 criterion_main!(benches);

@@ -56,7 +56,8 @@ pub mod seccomp;
 // #[cfg(feature = "secureboot")] pub mod secureboot;
 // #[cfg(feature = "update")] pub mod update;
 // #[cfg(feature = "agent")] pub mod agent;
-// #[cfg(feature = "drm")] pub mod drm;
+#[cfg(feature = "drm")]
+pub mod drm;
 
 #[cfg(feature = "logging")]
 pub mod logging;
