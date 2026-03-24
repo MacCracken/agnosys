@@ -48,15 +48,19 @@ pub mod seccomp;
 
 #[cfg(feature = "dmverity")]
 pub mod dmverity;
-// #[cfg(feature = "ima")] pub mod ima;
+#[cfg(feature = "ima")]
+pub mod ima;
 // #[cfg(feature = "tpm")] pub mod tpm;
 #[cfg(feature = "certpin")]
 pub mod certpin;
 // #[cfg(feature = "fuse")] pub mod fuse;
-// #[cfg(feature = "pam")] pub mod pam;
-// #[cfg(feature = "mac")] pub mod mac;
+#[cfg(feature = "pam")]
+pub mod pam;
+
 #[cfg(feature = "audit")]
 pub mod audit;
+#[cfg(feature = "mac")]
+pub mod mac;
 // #[cfg(feature = "journald")] pub mod journald;
 // #[cfg(feature = "bootloader")] pub mod bootloader;
 // #[cfg(feature = "secureboot")] pub mod secureboot;

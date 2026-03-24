@@ -464,6 +464,56 @@ fn bench_audit(c: &mut Criterion) {
 #[cfg(not(feature = "audit"))]
 fn bench_audit(_c: &mut Criterion) {}
 
+#[cfg(feature = "pam")]
+fn bench_pam(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pam");
+    group.bench_function("is_available", |b| b.iter(agnosys::pam::is_available));
+    group.bench_function("list_services", |b| b.iter(agnosys::pam::list_services));
+    group.bench_function("service_exists", |b| {
+        b.iter(|| agnosys::pam::service_exists(black_box("login")))
+    });
+    group.bench_function("parse_pam_config", |b| {
+        let config = "auth required pam_unix.so\naccount required pam_unix.so\nsession optional pam_systemd.so";
+        b.iter(|| agnosys::pam::parse_pam_config(black_box(config)))
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "pam"))]
+fn bench_pam(_c: &mut Criterion) {}
+
+#[cfg(feature = "mac")]
+fn bench_mac(c: &mut Criterion) {
+    let mut group = c.benchmark_group("mac");
+    group.bench_function("selinux_available", |b| {
+        b.iter(agnosys::mac::selinux_available)
+    });
+    group.bench_function("apparmor_available", |b| {
+        b.iter(agnosys::mac::apparmor_available)
+    });
+    group.bench_function("list_lsms", |b| b.iter(agnosys::mac::list_lsms));
+    group.bench_function("current_context", |b| b.iter(agnosys::mac::current_context));
+    group.finish();
+}
+
+#[cfg(not(feature = "mac"))]
+fn bench_mac(_c: &mut Criterion) {}
+
+#[cfg(feature = "ima")]
+fn bench_ima(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ima");
+    group.bench_function("is_available", |b| b.iter(agnosys::ima::is_available));
+    group.bench_function("parse_policy", |b| {
+        let policy =
+            "measure func=FILE_CHECK\ndont_measure fsmagic=0x9fa0\nappraise func=FILE_CHECK";
+        b.iter(|| agnosys::ima::parse_policy(black_box(policy)))
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "ima"))]
+fn bench_ima(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
@@ -478,6 +528,9 @@ criterion_group!(
     bench_logging,
     bench_luks,
     bench_dmverity,
-    bench_audit
+    bench_audit,
+    bench_pam,
+    bench_mac,
+    bench_ima
 );
 criterion_main!(benches);

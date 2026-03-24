@@ -12,6 +12,9 @@
 - luks: LUKS encrypted storage — header parsing, key slot inspection, dm-crypt volume management
 - dmverity: dm-verity integrity — superblock parsing, root hash validation (constant-time), volume status
 - audit: Kernel audit subsystem — netlink audit socket, status queries, log parsing, audit line parser
+- pam: PAM service inspection — list services, parse PAM stacks, read service configs
+- mac: Mandatory Access Control — LSM detection, SELinux/AppArmor/Smack queries, security contexts
+- ima: Integrity Measurement Architecture — runtime measurements, policy parsing, violation count
 - SysInfo struct: Single sysinfo(2) call for uptime/memory/procs
 - query_sysinfo() convenience function
 - Send+Sync compile-time assertions on all public types
