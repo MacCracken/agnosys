@@ -1,0 +1,69 @@
+[package]
+name = "agnosys"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "GPL-3.0"
+description = "AGNOS kernel interface — safe Rust bindings for Linux syscalls, Landlock, seccomp, udev, TPM, LUKS, dm-verity"
+homepage = "https://github.com/MacCracken/agnosys"
+repository = "https://github.com/MacCracken/agnosys"
+readme = "README.md"
+documentation = "https://docs.rs/agnosys"
+keywords = ["linux", "kernel", "syscall", "security", "sandboxing"]
+categories = ["os", "api-bindings"]
+exclude = [".claude/", ".github/", "docs/", "scripts/"]
+
+[features]
+default = ["syscall", "error"]
+syscall = []
+error = []
+udev = []
+landlock = []
+seccomp = []
+netns = []
+luks = []
+dmverity = []
+ima = []
+tpm = []
+certpin = []
+fuse = []
+pam = []
+mac = []
+audit = []
+journald = []
+bootloader = []
+secureboot = []
+update = []
+agent = []
+drm = []
+logging = ["dep:tracing-subscriber"]
+full = [
+    "syscall", "error", "udev", "landlock", "seccomp", "netns",
+    "luks", "dmverity", "ima", "tpm", "certpin", "fuse", "pam",
+    "mac", "audit", "journald", "bootloader", "secureboot",
+    "update", "agent", "drm", "logging",
+]
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tracing = "0.1"
+
+# Optional
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[[test]]
+name = "integration"
+
+[[example]]
+name = "detect_hardware"
+required-features = ["udev"]
