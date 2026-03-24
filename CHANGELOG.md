@@ -9,6 +9,9 @@
 - netns: Network namespaces — create, enter, list, current ns fd/inode
 - certpin: Certificate pinning — SHA-256 pin computation (zero-dep), base64, SPKI extraction, PinSet validation
 - agent: Agent runtime support — process naming, OOM score, cgroup inspection, capability check, systemd watchdog
+- luks: LUKS encrypted storage — header parsing, key slot inspection, dm-crypt volume management
+- dmverity: dm-verity integrity — superblock parsing, root hash validation (constant-time), volume status
+- audit: Kernel audit subsystem — netlink audit socket, status queries, log parsing, audit line parser
 - SysInfo struct: Single sysinfo(2) call for uptime/memory/procs
 - query_sysinfo() convenience function
 - Send+Sync compile-time assertions on all public types

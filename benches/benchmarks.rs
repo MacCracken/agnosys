@@ -390,6 +390,68 @@ fn bench_logging(c: &mut Criterion) {
 #[cfg(not(feature = "logging"))]
 fn bench_logging(_c: &mut Criterion) {}
 
+#[cfg(feature = "luks")]
+fn bench_luks(c: &mut Criterion) {
+    let mut group = c.benchmark_group("luks");
+    group.bench_function("dm_available", |b| b.iter(agnosys::luks::dm_available));
+    group.bench_function("list_dm_devices", |b| {
+        b.iter(agnosys::luks::list_dm_devices)
+    });
+    group.bench_function("volume_exists", |b| {
+        b.iter(|| agnosys::luks::volume_exists(black_box("nonexistent")))
+    });
+    group.bench_function("volume_path", |b| {
+        b.iter(|| agnosys::luks::volume_path(black_box("test")))
+    });
+    group.bench_function("volume_status", |b| {
+        b.iter(|| agnosys::luks::volume_status(black_box("nonexistent")))
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "luks"))]
+fn bench_luks(_c: &mut Criterion) {}
+
+#[cfg(feature = "dmverity")]
+fn bench_dmverity(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dmverity");
+    group.bench_function("volume_active", |b| {
+        b.iter(|| agnosys::dmverity::volume_active(black_box("nonexistent")))
+    });
+    group.bench_function("volume_path", |b| {
+        b.iter(|| agnosys::dmverity::volume_path(black_box("system")))
+    });
+    group.bench_function("validate_root_hash_match", |b| {
+        let a = agnosys::dmverity::RootHash::from_bytes(&[0xAB; 32]);
+        let bb = agnosys::dmverity::RootHash::from_bytes(&[0xAB; 32]);
+        b.iter(|| agnosys::dmverity::validate_root_hash(black_box(&a), black_box(&bb)))
+    });
+    group.bench_function("root_hash_from_hex", |b| {
+        b.iter(|| agnosys::dmverity::RootHash::from_hex(black_box("abcdef0123456789")))
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "dmverity"))]
+fn bench_dmverity(_c: &mut Criterion) {}
+
+#[cfg(feature = "audit")]
+fn bench_audit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("audit");
+    group.bench_function("is_available", |b| b.iter(agnosys::audit::is_available));
+    group.bench_function("parse_audit_line_simple", |b| {
+        b.iter(|| agnosys::audit::parse_audit_line(black_box("key1=val1 key2=val2")))
+    });
+    group.bench_function("parse_audit_line_real", |b| {
+        let line = "type=SYSCALL msg=audit(1234567890.123:42): arch=c000003e syscall=59 success=yes pid=1234 ppid=1 uid=0";
+        b.iter(|| agnosys::audit::parse_audit_line(black_box(line)))
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "audit"))]
+fn bench_audit(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
@@ -401,6 +463,9 @@ criterion_group!(
     bench_netns,
     bench_certpin,
     bench_agent,
-    bench_logging
+    bench_logging,
+    bench_luks,
+    bench_dmverity,
+    bench_audit
 );
 criterion_main!(benches);
