@@ -545,6 +545,31 @@ fn bench_update(c: &mut Criterion) {
 #[cfg(not(feature = "update"))]
 fn bench_update(_c: &mut Criterion) {}
 
+#[cfg(feature = "tpm")]
+fn bench_tpm(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tpm");
+    group.bench_function("is_available", |b| b.iter(agnosys::tpm::is_available));
+    group.bench_function("list_devices", |b| b.iter(agnosys::tpm::list_devices));
+    group.finish();
+}
+
+#[cfg(not(feature = "tpm"))]
+fn bench_tpm(_c: &mut Criterion) {}
+
+#[cfg(feature = "secureboot")]
+fn bench_secureboot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("secureboot");
+    group.bench_function("is_efi", |b| b.iter(agnosys::secureboot::is_efi));
+    group.bench_function("efivars_available", |b| {
+        b.iter(agnosys::secureboot::efivars_available)
+    });
+    group.bench_function("state", |b| b.iter(agnosys::secureboot::state));
+    group.finish();
+}
+
+#[cfg(not(feature = "secureboot"))]
+fn bench_secureboot(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
@@ -564,6 +589,8 @@ criterion_group!(
     bench_mac,
     bench_ima,
     bench_fuse,
-    bench_update
+    bench_update,
+    bench_tpm,
+    bench_secureboot
 );
 criterion_main!(benches);
