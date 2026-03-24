@@ -19,6 +19,8 @@
 - update: Atomic update primitives — atomic_write, atomic_copy, atomic_swap, fsync, directory sync
 - tpm: TPM2 interface — device detection, PCR banks/values, capabilities, event log access
 - secureboot: Secure Boot — EFI variable reading, SecureBoot/SetupMode state, PK/KEK/db/dbx inspection
+- journald: Systemd journal — structured log sending via native socket, journal file listing, disk usage
+- bootloader: Bootloader interface — systemd-boot/GRUB detection, boot entry parsing, loader.conf, kernel listing
 - SysInfo struct: Single sysinfo(2) call for uptime/memory/procs
 - query_sysinfo() convenience function
 - Send+Sync compile-time assertions on all public types

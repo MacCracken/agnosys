@@ -61,12 +61,15 @@ pub mod tpm;
 
 #[cfg(feature = "audit")]
 pub mod audit;
+#[cfg(feature = "journald")]
+pub mod journald;
 #[cfg(feature = "mac")]
 pub mod mac;
-// #[cfg(feature = "journald")] pub mod journald;
-// #[cfg(feature = "bootloader")] pub mod bootloader;
+
 #[cfg(feature = "agent")]
 pub mod agent;
+#[cfg(feature = "bootloader")]
+pub mod bootloader;
 #[cfg(feature = "drm")]
 pub mod drm;
 #[cfg(feature = "secureboot")]

@@ -570,6 +570,33 @@ fn bench_secureboot(c: &mut Criterion) {
 #[cfg(not(feature = "secureboot"))]
 fn bench_secureboot(_c: &mut Criterion) {}
 
+#[cfg(feature = "journald")]
+fn bench_journald(c: &mut Criterion) {
+    let mut group = c.benchmark_group("journald");
+    group.bench_function("is_available", |b| b.iter(agnosys::journald::is_available));
+    group.bench_function("machine_id", |b| b.iter(agnosys::journald::machine_id));
+    group.finish();
+}
+
+#[cfg(not(feature = "journald"))]
+fn bench_journald(_c: &mut Criterion) {}
+
+#[cfg(feature = "bootloader")]
+fn bench_bootloader(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bootloader");
+    group.bench_function("detect", |b| b.iter(agnosys::bootloader::detect));
+    group.bench_function("boot_mounted", |b| {
+        b.iter(agnosys::bootloader::boot_mounted)
+    });
+    group.bench_function("list_kernels", |b| {
+        b.iter(agnosys::bootloader::list_kernels)
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "bootloader"))]
+fn bench_bootloader(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     bench_syscall,
@@ -591,6 +618,8 @@ criterion_group!(
     bench_fuse,
     bench_update,
     bench_tpm,
-    bench_secureboot
+    bench_secureboot,
+    bench_journald,
+    bench_bootloader
 );
 criterion_main!(benches);
