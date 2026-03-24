@@ -183,6 +183,23 @@ mod tests {
     }
 
     #[test]
+    fn checked_syscall_failure_returns_syserror() {
+        // Force a known errno (EBADF) then call checked_syscall with -1
+        unsafe { libc::close(-1) }; // sets errno to EBADF
+        let ret = checked_syscall("close", -1);
+        assert!(ret.is_err());
+        // The error should be a valid SysError variant
+        let msg = ret.unwrap_err().to_string();
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn checked_syscall_preserves_positive_value() {
+        let ret = checked_syscall("test", 42);
+        assert_eq!(ret.unwrap(), 42);
+    }
+
+    #[test]
     fn checked_syscall_zero_is_ok() {
         let ret = checked_syscall("zero", 0);
         assert!(ret.is_ok());
@@ -349,5 +366,33 @@ mod tests {
         // so values may differ slightly — just sanity check same order of magnitude
         let total_direct = total_memory().unwrap();
         assert_eq!(info.total_memory(), total_direct);
+    }
+
+    #[test]
+    fn sysinfo_uptime_positive() {
+        let info = query_sysinfo().unwrap();
+        assert!(info.uptime() > 0.0);
+    }
+
+    #[test]
+    fn sysinfo_total_memory_reasonable() {
+        let info = query_sysinfo().unwrap();
+        assert!(info.total_memory() >= 32 * 1024 * 1024);
+        assert!(info.total_memory() < 256 * 1024 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn sysinfo_procs_reasonable() {
+        let info = query_sysinfo().unwrap();
+        // Any running system has at least 1 process, upper bound sanity
+        assert!(info.procs() >= 1);
+        assert!(info.procs() < 65535);
+    }
+
+    #[test]
+    fn sysinfo_uptime_monotonic() {
+        let a = query_sysinfo().unwrap();
+        let b = query_sysinfo().unwrap();
+        assert!(b.uptime() >= a.uptime());
     }
 }

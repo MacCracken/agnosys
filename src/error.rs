@@ -124,6 +124,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn from_errno_zero() {
+        // errno 0 means "no error" but from_errno should still produce a value
+        let e = SysError::from_errno(0);
+        assert!(matches!(e, SysError::SyscallFailed { errno: 0, .. }));
+    }
+
+    #[test]
+    fn from_errno_negative() {
+        let e = SysError::from_errno(-1);
+        assert!(matches!(e, SysError::SyscallFailed { errno: -1, .. }));
+    }
+
     // ── last_os_error ───────────────────────────────────────────────
 
     #[test]
@@ -136,6 +149,18 @@ mod tests {
             e,
             SysError::SyscallFailed { .. } | SysError::InvalidArgument(_)
         ));
+    }
+
+    #[test]
+    fn last_os_error_ebadf() {
+        unsafe { libc::close(-1) };
+        let e = SysError::last_os_error();
+        // EBADF = 9, which falls into the SyscallFailed catch-all
+        if let SysError::SyscallFailed { errno, message } = e {
+            assert_eq!(errno, libc::EBADF);
+            assert!(!message.is_empty());
+        }
+        // else it matched another variant, which is fine
     }
 
     // ── Display for all variants ────────────────────────────────────
@@ -223,13 +248,64 @@ mod tests {
         assert!(SysError::from_errno(libc::EPERM).source().is_none());
     }
 
-    // ── Debug ───────────────────────────────────────────────────────
+    // ── Debug for all variants ────────────────────────────────────
 
     #[test]
-    fn debug_format_is_not_empty() {
-        let e = SysError::WouldBlock;
-        let dbg = format!("{e:?}");
+    fn debug_would_block() {
+        let dbg = format!("{:?}", SysError::WouldBlock);
         assert!(dbg.contains("WouldBlock"));
+    }
+
+    #[test]
+    fn debug_syscall_failed() {
+        let e = SysError::SyscallFailed {
+            errno: 2,
+            message: "no such file".into(),
+        };
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("SyscallFailed"));
+        assert!(dbg.contains("no such file"));
+    }
+
+    #[test]
+    fn debug_invalid_argument() {
+        let dbg = format!("{:?}", SysError::InvalidArgument("bad".into()));
+        assert!(dbg.contains("InvalidArgument"));
+    }
+
+    #[test]
+    fn debug_permission_denied() {
+        let e = SysError::PermissionDenied {
+            operation: "write".into(),
+        };
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("PermissionDenied"));
+    }
+
+    #[test]
+    fn debug_module_not_loaded() {
+        let e = SysError::ModuleNotLoaded {
+            module: "vfio".into(),
+        };
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("ModuleNotLoaded"));
+        assert!(dbg.contains("vfio"));
+    }
+
+    #[test]
+    fn debug_not_supported() {
+        let e = SysError::NotSupported {
+            feature: "landlock".into(),
+        };
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("NotSupported"));
+    }
+
+    #[test]
+    fn debug_io() {
+        let e = SysError::Io(std::io::Error::other("test"));
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("Io"));
     }
 
     // ── Result alias ────────────────────────────────────────────────

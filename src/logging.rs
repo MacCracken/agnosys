@@ -28,8 +28,18 @@ mod tests {
     }
 
     #[test]
-    fn init_with_level_does_not_panic() {
+    fn init_with_level_trace() {
+        init_with_level("trace");
+    }
+
+    #[test]
+    fn init_with_level_debug() {
         init_with_level("debug");
+    }
+
+    #[test]
+    fn init_with_level_info() {
+        init_with_level("info");
     }
 
     #[test]
@@ -38,8 +48,24 @@ mod tests {
     }
 
     #[test]
+    fn init_with_level_error() {
+        init_with_level("error");
+    }
+
+    #[test]
+    fn init_with_level_off() {
+        init_with_level("off");
+    }
+
+    #[test]
     fn double_init_is_safe() {
         init();
         init(); // second call should be a no-op (try_init)
+    }
+
+    #[test]
+    fn init_with_invalid_level_does_not_panic() {
+        // Invalid level should fall back gracefully via EnvFilter::new
+        init_with_level("not_a_real_level");
     }
 }

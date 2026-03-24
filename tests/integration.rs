@@ -80,7 +80,25 @@ fn error_from_errno_round_trip() {
     }
 }
 
-// ── Serde round-trip ────────────────────────────────────────────────
+// ── checked_syscall cross-module ─────────────────────────────────────
+
+#[test]
+fn checked_syscall_success_via_getpid() {
+    let ret =
+        agnosys::syscall::checked_syscall("getpid", unsafe { libc::syscall(libc::SYS_getpid) });
+    assert!(ret.unwrap() > 0);
+}
+
+#[test]
+fn checked_syscall_failure_produces_syserror() {
+    unsafe { libc::close(-1) };
+    let ret = agnosys::syscall::checked_syscall("close", -1);
+    let err = ret.unwrap_err();
+    // Should produce a displayable error
+    assert!(!err.to_string().is_empty());
+}
+
+// ── Debug format ────────────────────────────────────────────────────
 
 #[test]
 fn syserror_debug_contains_variant_name() {
