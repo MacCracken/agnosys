@@ -1,157 +1,152 @@
 //! Integration tests for agnosys.
 
-// ── Cross-function consistency ──────────────────────────────────────
+// ── Error types (always available) ──────────────────────────────────
 
-#[test]
-fn system_info_consistent() {
-    let pid = agnosys::syscall::getpid();
-    let pid2 = agnosys::syscall::getpid();
-    assert_eq!(pid, pid2);
+#[cfg(feature = "error")]
+mod error_integration {
+    #[test]
+    fn error_display_includes_context() {
+        let e = agnosys::error::SysError::PermissionDenied {
+            operation: "seccomp_load".into(),
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("seccomp_load"));
+        assert!(msg.contains("permission denied"));
+    }
 
-    let total = agnosys::syscall::total_memory().unwrap();
-    let avail = agnosys::syscall::available_memory().unwrap();
-    assert!(avail <= total);
-}
-
-#[test]
-fn hostname_is_valid_utf8() {
-    let name = agnosys::syscall::hostname().unwrap();
-    assert!(!name.is_empty());
-    assert!(name.len() <= 255);
-}
-
-#[test]
-fn uptime_positive() {
-    let up = agnosys::syscall::uptime().unwrap();
-    assert!(up > 0.0);
-}
-
-// ── Identity consistency ────────────────────────────────────────────
-
-#[test]
-fn uid_euid_are_consistent() {
-    let uid = agnosys::syscall::getuid();
-    let euid = agnosys::syscall::geteuid();
-    let _ = uid;
-    let _ = euid;
-}
-
-#[test]
-fn is_root_matches_euid() {
-    let is_root = agnosys::syscall::is_root();
-    let euid = agnosys::syscall::geteuid();
-    assert_eq!(is_root, euid == 0);
-}
-
-#[test]
-fn gettid_positive_integration() {
-    let tid = agnosys::syscall::gettid();
-    assert!(tid > 0);
-}
-
-// ── Error types from syscall module ─────────────────────────────────
-
-#[test]
-fn error_display_includes_context() {
-    let e = agnosys::error::SysError::PermissionDenied {
-        operation: "seccomp_load".into(),
-    };
-    let msg = e.to_string();
-    assert!(msg.contains("seccomp_load"));
-    assert!(msg.contains("permission denied"));
-}
-
-#[test]
-fn error_from_errno_round_trip() {
-    let e = agnosys::error::SysError::from_errno(libc::EPERM);
-    assert!(matches!(
-        e,
-        agnosys::error::SysError::PermissionDenied { .. }
-    ));
-    let e2 = agnosys::error::SysError::from_errno(libc::ENOENT);
-    match e2 {
-        agnosys::error::SysError::SyscallFailed { errno, message } => {
-            assert_eq!(errno, libc::ENOENT);
-            assert!(!message.is_empty());
+    #[test]
+    fn error_from_errno_round_trip() {
+        let e = agnosys::error::SysError::from_errno(libc::EPERM);
+        assert!(matches!(
+            e,
+            agnosys::error::SysError::PermissionDenied { .. }
+        ));
+        let e2 = agnosys::error::SysError::from_errno(libc::ENOENT);
+        match e2 {
+            agnosys::error::SysError::SyscallFailed { errno, message } => {
+                assert_eq!(errno, libc::ENOENT);
+                assert!(!message.is_empty());
+            }
+            _ => panic!("ENOENT should map to SyscallFailed"),
         }
-        _ => panic!("ENOENT should map to SyscallFailed"),
+    }
+
+    #[test]
+    fn syserror_debug_contains_variant_name() {
+        let e = agnosys::error::SysError::WouldBlock;
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("WouldBlock"));
+
+        let e2 = agnosys::error::SysError::ModuleNotLoaded {
+            module: "vfio".into(),
+        };
+        let dbg2 = format!("{e2:?}");
+        assert!(dbg2.contains("vfio"));
     }
 }
 
-// ── checked_syscall cross-module ─────────────────────────────────────
+// ── Syscall integration ─────────────────────────────────────────────
 
-#[test]
-fn checked_syscall_success_via_getpid() {
-    let ret =
-        agnosys::syscall::checked_syscall("getpid", unsafe { libc::syscall(libc::SYS_getpid) });
-    assert!(ret.unwrap() > 0);
-}
+#[cfg(feature = "syscall")]
+mod syscall_integration {
+    #[test]
+    fn system_info_consistent() {
+        let pid = agnosys::syscall::getpid();
+        let pid2 = agnosys::syscall::getpid();
+        assert_eq!(pid, pid2);
 
-#[test]
-fn checked_syscall_failure_produces_syserror() {
-    unsafe { libc::close(-1) };
-    let ret = agnosys::syscall::checked_syscall("close", -1);
-    let err = ret.unwrap_err();
-    assert!(!err.to_string().is_empty());
-}
+        let total = agnosys::syscall::total_memory().unwrap();
+        let avail = agnosys::syscall::available_memory().unwrap();
+        assert!(avail <= total);
+    }
 
-// ── Debug format ────────────────────────────────────────────────────
+    #[test]
+    fn hostname_is_valid_utf8() {
+        let name = agnosys::syscall::hostname().unwrap();
+        assert!(!name.is_empty());
+        assert!(name.len() <= 255);
+    }
 
-#[test]
-fn syserror_debug_contains_variant_name() {
-    let e = agnosys::error::SysError::WouldBlock;
-    let dbg = format!("{e:?}");
-    assert!(dbg.contains("WouldBlock"));
+    #[test]
+    fn uptime_positive() {
+        let up = agnosys::syscall::uptime().unwrap();
+        assert!(up > 0.0);
+    }
 
-    let e2 = agnosys::error::SysError::ModuleNotLoaded {
-        module: "vfio".into(),
-    };
-    let dbg2 = format!("{e2:?}");
-    assert!(dbg2.contains("vfio"));
-}
+    #[test]
+    fn uid_euid_are_consistent() {
+        let uid = agnosys::syscall::getuid();
+        let euid = agnosys::syscall::geteuid();
+        let _ = uid;
+        let _ = euid;
+    }
 
-// ── Memory sanity ───────────────────────────────────────────────────
+    #[test]
+    fn is_root_matches_euid() {
+        let is_root = agnosys::syscall::is_root();
+        let euid = agnosys::syscall::geteuid();
+        assert_eq!(is_root, euid == 0);
+    }
 
-#[test]
-fn memory_values_in_reasonable_range() {
-    let total = agnosys::syscall::total_memory().unwrap();
-    let avail = agnosys::syscall::available_memory().unwrap();
-    assert!(total >= 32 * 1024 * 1024);
-    assert!(avail > 0);
-    assert!(avail <= total);
-}
+    #[test]
+    fn gettid_positive_integration() {
+        let tid = agnosys::syscall::gettid();
+        assert!(tid > 0);
+    }
 
-// ── Uptime monotonicity ────────────────────────────────────────────
+    #[test]
+    fn checked_syscall_success_via_getpid() {
+        let ret = agnosys::syscall::checked_syscall("getpid", unsafe {
+            libc::syscall(libc::SYS_getpid)
+        });
+        assert!(ret.unwrap() > 0);
+    }
 
-#[test]
-fn uptime_does_not_go_backwards() {
-    let a = agnosys::syscall::uptime().unwrap();
-    let b = agnosys::syscall::uptime().unwrap();
-    assert!(b >= a);
-}
+    #[test]
+    fn checked_syscall_failure_produces_syserror() {
+        unsafe { libc::close(-1) };
+        let ret = agnosys::syscall::checked_syscall("close", -1);
+        let err = ret.unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
 
-// ── query_sysinfo single-call ──────────────────────────────────────
+    #[test]
+    fn memory_values_in_reasonable_range() {
+        let total = agnosys::syscall::total_memory().unwrap();
+        let avail = agnosys::syscall::available_memory().unwrap();
+        assert!(total >= 32 * 1024 * 1024);
+        assert!(avail > 0);
+        assert!(avail <= total);
+    }
 
-#[test]
-fn query_sysinfo_snapshot_is_consistent() {
-    let info = agnosys::syscall::query_sysinfo().unwrap();
-    assert!(info.uptime() > 0.0);
-    assert!(info.total_memory() >= 32 * 1024 * 1024);
-    assert!(info.free_memory() <= info.total_memory());
-    assert!(info.procs() > 0);
-}
+    #[test]
+    fn uptime_does_not_go_backwards() {
+        let a = agnosys::syscall::uptime().unwrap();
+        let b = agnosys::syscall::uptime().unwrap();
+        assert!(b >= a);
+    }
 
-#[test]
-fn query_sysinfo_avoids_redundant_syscalls() {
-    let info = agnosys::syscall::query_sysinfo().unwrap();
-    let up = info.uptime();
-    let total = info.total_memory();
-    let free = info.free_memory();
-    let procs = info.procs();
-    assert!(up > 0.0);
-    assert!(total > 0);
-    assert!(free > 0);
-    assert!(procs > 0);
+    #[test]
+    fn query_sysinfo_snapshot_is_consistent() {
+        let info = agnosys::syscall::query_sysinfo().unwrap();
+        assert!(info.uptime() > 0.0);
+        assert!(info.total_memory() >= 32 * 1024 * 1024);
+        assert!(info.free_memory() <= info.total_memory());
+        assert!(info.procs() > 0);
+    }
+
+    #[test]
+    fn query_sysinfo_avoids_redundant_syscalls() {
+        let info = agnosys::syscall::query_sysinfo().unwrap();
+        let up = info.uptime();
+        let total = info.total_memory();
+        let free = info.free_memory();
+        let procs = info.procs();
+        assert!(up > 0.0);
+        assert!(total > 0);
+        assert!(free > 0);
+        assert!(procs > 0);
+    }
 }
 
 // ── udev integration ────────────────────────────────────────────────
