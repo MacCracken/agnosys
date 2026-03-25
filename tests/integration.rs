@@ -96,9 +96,8 @@ mod syscall_integration {
 
     #[test]
     fn checked_syscall_success_via_getpid() {
-        let ret = agnosys::syscall::checked_syscall("getpid", unsafe {
-            libc::syscall(libc::SYS_getpid)
-        });
+        let ret =
+            agnosys::syscall::checked_syscall("getpid", unsafe { libc::syscall(libc::SYS_getpid) });
         assert!(ret.unwrap() > 0);
     }
 
