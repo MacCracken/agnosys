@@ -282,15 +282,11 @@ mod netns_integration {
     }
 
     #[test]
-    fn nftables_ruleset_generation() {
-        let policy = agnosys::netns::FirewallPolicy {
-            default_inbound: agnosys::netns::FirewallAction::Drop,
-            default_outbound: agnosys::netns::FirewallAction::Accept,
-            rules: vec![],
-        };
-        let ruleset = agnosys::netns::generate_nftables_ruleset(&policy, "veth0");
-        assert!(ruleset.contains("drop"));
-        assert!(ruleset.contains("accept"));
+    fn namespace_config_defaults() {
+        let config = agnosys::netns::NetNamespaceConfig::for_agent("integration");
+        assert_eq!(config.prefix_len, 30);
+        assert!(config.enable_nat);
+        assert_eq!(config.dns_servers.len(), 2);
     }
 }
 

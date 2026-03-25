@@ -1,8 +1,11 @@
-//! Per-Agent Network Namespace and Firewall Interface
+//! Per-Agent Network Namespace Interface
 //!
-//! Creates isolated network namespaces with veth pairs and nftables firewall
-//! rules for AGNOS agents. Shells out to `ip` and `nft` (standard practice —
-//! avoids ~1000 LOC of raw netlink code).
+//! Creates isolated network namespaces with veth pairs for AGNOS agents.
+//! Shells out to `ip` (standard practice — avoids ~1000 LOC of raw netlink code).
+//!
+//! Firewall policy (nftables rule generation) is handled by the `nein` crate.
+//! Use [`apply_nftables_ruleset`] to apply a pre-rendered ruleset (from nein)
+//! inside a namespace.
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
 
@@ -22,8 +25,6 @@ pub struct NetNamespaceConfig {
     pub host_ip: String,
     /// CIDR prefix length (typically 30 for a /30 point-to-point link)
     pub prefix_len: u8,
-    /// Firewall policy applied inside the namespace
-    pub firewall_policy: FirewallPolicy,
     /// Whether to enable NAT (masquerade) for outbound traffic
     pub enable_nat: bool,
     /// DNS servers to configure inside the namespace
@@ -40,7 +41,6 @@ impl NetNamespaceConfig {
             agent_ip,
             host_ip,
             prefix_len: 30,
-            firewall_policy: FirewallPolicy::default(),
             enable_nat: true,
             dns_servers: vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()],
         }
@@ -76,97 +76,6 @@ impl NetNamespaceConfig {
             SysError::InvalidArgument(format!("Invalid host IP: {}", self.host_ip).into())
         })?;
         Ok(())
-    }
-}
-
-/// Firewall policy for an agent namespace.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FirewallPolicy {
-    /// Default action for inbound traffic
-    pub default_inbound: FirewallAction,
-    /// Default action for outbound traffic
-    pub default_outbound: FirewallAction,
-    /// Specific rules (evaluated before defaults)
-    pub rules: Vec<FirewallRule>,
-}
-
-impl Default for FirewallPolicy {
-    fn default() -> Self {
-        Self {
-            default_inbound: FirewallAction::Drop,
-            default_outbound: FirewallAction::Accept,
-            rules: Vec::new(),
-        }
-    }
-}
-
-/// A specific firewall rule.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FirewallRule {
-    /// Traffic direction
-    pub direction: TrafficDirection,
-    /// Protocol to match
-    pub protocol: Protocol,
-    /// Port to match (0 = any)
-    pub port: u16,
-    /// Remote address to match (empty = any)
-    pub remote_addr: String,
-    /// Action to take
-    pub action: FirewallAction,
-    /// Human-readable comment
-    pub comment: String,
-}
-
-/// Traffic direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TrafficDirection {
-    Inbound,
-    Outbound,
-}
-
-/// Network protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Protocol {
-    Tcp,
-    Udp,
-    Icmp,
-    Any,
-}
-
-impl Protocol {
-    /// Return the nftables protocol string.
-    pub fn as_nft_str(&self) -> &str {
-        match self {
-            Protocol::Tcp => "tcp",
-            Protocol::Udp => "udp",
-            Protocol::Icmp => "icmp",
-            Protocol::Any => "ip",
-        }
-    }
-}
-
-/// Firewall action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FirewallAction {
-    Accept,
-    Drop,
-    Reject,
-}
-
-impl FirewallAction {
-    /// Return the nftables action string.
-    pub fn as_nft_str(&self) -> &str {
-        match self {
-            FirewallAction::Accept => "accept",
-            FirewallAction::Drop => "drop",
-            FirewallAction::Reject => "reject",
-        }
-    }
-}
-
-impl std::fmt::Display for FirewallAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_nft_str())
     }
 }
 
@@ -334,19 +243,28 @@ pub fn create_agent_netns(config: &NetNamespaceConfig) -> Result<NetNamespaceHan
     }
 }
 
-/// Apply firewall rules to an agent's network namespace using nftables.
-pub fn apply_firewall_rules(handle: &NetNamespaceHandle, policy: &FirewallPolicy) -> Result<()> {
+/// Apply a pre-rendered nftables ruleset inside an agent's network namespace.
+///
+/// The `ruleset` should be a complete nftables script (as produced by
+/// `nein::Firewall::render()`). It is written to a temp file and executed
+/// via `ip netns exec <ns> nft -f <path>`.
+///
+/// Requires root or `CAP_NET_ADMIN`.
+pub fn apply_nftables_ruleset(handle: &NetNamespaceHandle, ruleset: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        let ruleset = generate_nftables_ruleset(policy, &handle.veth_agent);
-
         // Write ruleset to a unique temp file under /run to avoid predictable paths
         let run_dir = std::path::Path::new("/run/agnos");
         let _ = std::fs::create_dir_all(run_dir);
-        let tmp_name = format!("nft-{}.conf", uuid::Uuid::new_v4());
+        let pid = std::process::id();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let tmp_name = format!("nft-{}-{}.conf", pid, ts);
         let tmp_path = run_dir.join(&tmp_name);
         let tmp_path_str = tmp_path.to_string_lossy().to_string();
-        std::fs::write(&tmp_path, &ruleset)
+        std::fs::write(&tmp_path, ruleset)
             .map_err(|e| SysError::Unknown(format!("Failed to write nft rules: {}", e).into()))?;
 
         let result = run_cmd(
@@ -358,8 +276,8 @@ pub fn apply_firewall_rules(handle: &NetNamespaceHandle, policy: &FirewallPolicy
         result?;
 
         tracing::info!(
-            "Applied {} firewall rules to namespace '{}'",
-            policy.rules.len(),
+            "Applied nftables ruleset ({} bytes) to namespace '{}'",
+            ruleset.len(),
             handle.name
         );
         Ok(())
@@ -367,7 +285,7 @@ pub fn apply_firewall_rules(handle: &NetNamespaceHandle, policy: &FirewallPolicy
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (handle, policy);
+        let _ = (handle, ruleset);
         Err(SysError::NotSupported {
             feature: "netns".into(),
         })
@@ -439,138 +357,6 @@ pub fn list_agent_netns() -> Result<Vec<String>> {
     }
 }
 
-/// Generate a complete nftables ruleset string from a firewall policy.
-///
-/// This is a **pure function** — fully testable without root or network namespaces.
-pub fn generate_nftables_ruleset(policy: &FirewallPolicy, veth_name: &str) -> String {
-    let mut lines = Vec::new();
-
-    lines.push("#!/usr/sbin/nft -f".to_string());
-    lines.push(String::new());
-    lines.push("# AGNOS agent firewall rules (auto-generated)".to_string());
-    lines.push(format!("# Interface: {}", veth_name));
-    lines.push(String::new());
-
-    // Flush existing rules
-    lines.push("flush ruleset".to_string());
-    lines.push(String::new());
-
-    // Create table and chains
-    lines.push("table inet agnos_agent {".to_string());
-
-    // Input chain (inbound)
-    lines.push("    chain input {".to_string());
-    lines.push(format!(
-        "        type filter hook input priority 0; policy {};",
-        policy.default_inbound.as_nft_str()
-    ));
-    lines.push(String::new());
-
-    // Allow established/related connections
-    lines.push("        ct state established,related accept".to_string());
-
-    // Allow loopback
-    lines.push("        iifname \"lo\" accept".to_string());
-
-    // Specific inbound rules
-    for rule in &policy.rules {
-        if rule.direction == TrafficDirection::Inbound {
-            lines.push(format!("        {}", format_nft_rule(rule)));
-        }
-    }
-
-    lines.push("    }".to_string());
-    lines.push(String::new());
-
-    // Output chain (outbound)
-    lines.push("    chain output {".to_string());
-    lines.push(format!(
-        "        type filter hook output priority 0; policy {};",
-        policy.default_outbound.as_nft_str()
-    ));
-    lines.push(String::new());
-
-    // Allow established/related
-    lines.push("        ct state established,related accept".to_string());
-
-    // Allow loopback
-    lines.push("        oifname \"lo\" accept".to_string());
-
-    // Allow DNS (UDP 53) for resolution
-    lines.push("        udp dport 53 accept".to_string());
-
-    // Specific outbound rules
-    for rule in &policy.rules {
-        if rule.direction == TrafficDirection::Outbound {
-            lines.push(format!("        {}", format_nft_rule(rule)));
-        }
-    }
-
-    lines.push("    }".to_string());
-    lines.push("}".to_string());
-
-    lines.join("\n")
-}
-
-/// Format a single firewall rule as an nftables rule string.
-fn format_nft_rule(rule: &FirewallRule) -> String {
-    let mut parts = Vec::new();
-
-    // Protocol
-    match rule.protocol {
-        Protocol::Tcp => parts.push("tcp".to_string()),
-        Protocol::Udp => parts.push("udp".to_string()),
-        Protocol::Icmp => parts.push("meta l4proto icmp".to_string()),
-        Protocol::Any => {}
-    }
-
-    // Port
-    if rule.port > 0 {
-        match rule.direction {
-            TrafficDirection::Inbound => parts.push(format!("dport {}", rule.port)),
-            TrafficDirection::Outbound => parts.push(format!("dport {}", rule.port)),
-        }
-    }
-
-    // Remote address — validate to prevent nftables rule injection
-    if !rule.remote_addr.is_empty() {
-        let addr = &rule.remote_addr;
-        // Reject shell metacharacters
-        const SHELL_METACHAR: &[char] = &[
-            ';', '|', '&', '`', '$', '(', ')', '{', '}', '<', '>', '\n', '\r', '\\', '"', '\'',
-        ];
-        if addr.chars().any(|c| SHELL_METACHAR.contains(&c)) {
-            // Skip this rule — contains dangerous characters
-            return String::new();
-        }
-        // Validate as IP address or CIDR (addr/prefix)
-        let valid = if let Some((ip_part, prefix_part)) = addr.split_once('/') {
-            ip_part.parse::<std::net::IpAddr>().is_ok() && prefix_part.parse::<u8>().is_ok()
-        } else {
-            addr.parse::<std::net::IpAddr>().is_ok()
-        };
-        if !valid {
-            // Skip this rule — invalid remote address
-            return String::new();
-        }
-        match rule.direction {
-            TrafficDirection::Inbound => parts.push(format!("ip saddr {}", addr)),
-            TrafficDirection::Outbound => parts.push(format!("ip daddr {}", addr)),
-        }
-    }
-
-    // Action
-    parts.push(rule.action.as_nft_str().to_string());
-
-    // Comment
-    if !rule.comment.is_empty() {
-        let escaped = rule.comment.replace('\\', "\\\\").replace('"', "\\\"");
-        parts.push(format!("comment \"{}\"", escaped));
-    }
-
-    parts.join(" ")
-}
-
 /// Run an `ip` command with the given arguments.
 #[cfg(target_os = "linux")]
 fn run_ip_cmd(args: &[&str]) -> Result<()> {
@@ -635,8 +421,6 @@ mod tests {
     fn test_generate_agent_ips_different() {
         let (h1, _) = generate_agent_ips("agent-a");
         let (h2, _) = generate_agent_ips("agent-b");
-        // Different agents should (likely) get different IPs
-        // This could theoretically collide but is extremely unlikely
         assert_ne!(h1, h2);
     }
 
@@ -685,96 +469,6 @@ mod tests {
     }
 
     #[test]
-    fn test_firewall_policy_default() {
-        let policy = FirewallPolicy::default();
-        assert_eq!(policy.default_inbound, FirewallAction::Drop);
-        assert_eq!(policy.default_outbound, FirewallAction::Accept);
-        assert!(policy.rules.is_empty());
-    }
-
-    #[test]
-    fn test_firewall_action_as_nft_str() {
-        assert_eq!(FirewallAction::Accept.as_nft_str(), "accept");
-        assert_eq!(FirewallAction::Drop.as_nft_str(), "drop");
-        assert_eq!(FirewallAction::Reject.as_nft_str(), "reject");
-    }
-
-    #[test]
-    fn test_protocol_as_nft_str() {
-        assert_eq!(Protocol::Tcp.as_nft_str(), "tcp");
-        assert_eq!(Protocol::Udp.as_nft_str(), "udp");
-        assert_eq!(Protocol::Icmp.as_nft_str(), "icmp");
-        assert_eq!(Protocol::Any.as_nft_str(), "ip");
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_default() {
-        let policy = FirewallPolicy::default();
-        let ruleset = generate_nftables_ruleset(&policy, "veth-test-a");
-
-        assert!(ruleset.contains("flush ruleset"));
-        assert!(ruleset.contains("table inet agnos_agent"));
-        assert!(ruleset.contains("chain input"));
-        assert!(ruleset.contains("chain output"));
-        assert!(ruleset.contains("policy drop"));
-        assert!(ruleset.contains("policy accept"));
-        assert!(ruleset.contains("ct state established,related accept"));
-        assert!(ruleset.contains("udp dport 53 accept"));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_with_rules() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Drop,
-            default_outbound: FirewallAction::Drop,
-            rules: vec![
-                FirewallRule {
-                    direction: TrafficDirection::Outbound,
-                    protocol: Protocol::Tcp,
-                    port: 443,
-                    remote_addr: String::new(),
-                    action: FirewallAction::Accept,
-                    comment: "Allow HTTPS".to_string(),
-                },
-                FirewallRule {
-                    direction: TrafficDirection::Inbound,
-                    protocol: Protocol::Tcp,
-                    port: 8080,
-                    remote_addr: "10.100.0.1".to_string(),
-                    action: FirewallAction::Accept,
-                    comment: "Allow API from host".to_string(),
-                },
-            ],
-        };
-
-        let ruleset = generate_nftables_ruleset(&policy, "veth-test-a");
-
-        assert!(ruleset.contains("tcp dport 443"));
-        assert!(ruleset.contains("Allow HTTPS"));
-        assert!(ruleset.contains("tcp dport 8080"));
-        assert!(ruleset.contains("ip saddr 10.100.0.1"));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_icmp_rule() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Drop,
-            default_outbound: FirewallAction::Accept,
-            rules: vec![FirewallRule {
-                direction: TrafficDirection::Outbound,
-                protocol: Protocol::Icmp,
-                port: 0,
-                remote_addr: String::new(),
-                action: FirewallAction::Accept,
-                comment: "Allow ping".to_string(),
-            }],
-        };
-
-        let ruleset = generate_nftables_ruleset(&policy, "veth-test-a");
-        assert!(ruleset.contains("meta l4proto icmp"));
-    }
-
-    #[test]
     fn test_net_namespace_handle_serialization() {
         let handle = NetNamespaceHandle {
             name: "agnos-agent-test".to_string(),
@@ -790,38 +484,6 @@ mod tests {
     }
 
     #[test]
-    fn test_format_nft_rule_tcp_outbound() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Tcp,
-            port: 443,
-            remote_addr: String::new(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert_eq!(formatted, "tcp dport 443 accept");
-    }
-
-    #[test]
-    fn test_format_nft_rule_with_addr_and_comment() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Udp,
-            port: 5353,
-            remote_addr: "192.168.1.0/24".to_string(),
-            action: FirewallAction::Drop,
-            comment: "Block mDNS".to_string(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.contains("udp"));
-        assert!(formatted.contains("dport 5353"));
-        assert!(formatted.contains("ip saddr 192.168.1.0/24"));
-        assert!(formatted.contains("drop"));
-        assert!(formatted.contains("Block mDNS"));
-    }
-
-    #[test]
     #[ignore = "Requires root and ip/nft tools"]
     fn test_create_and_destroy_netns() {
         let config = NetNamespaceConfig::for_agent("integration-test");
@@ -833,8 +495,6 @@ mod tests {
 
         destroy_agent_netns(&handle).unwrap();
     }
-
-    // --- Additional coverage tests ---
 
     #[test]
     fn test_net_namespace_config_validate_long_name() {
@@ -923,101 +583,6 @@ mod tests {
     }
 
     #[test]
-    fn test_firewall_policy_clone() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Reject,
-            default_outbound: FirewallAction::Drop,
-            rules: vec![FirewallRule {
-                direction: TrafficDirection::Inbound,
-                protocol: Protocol::Tcp,
-                port: 80,
-                remote_addr: "1.2.3.4".to_string(),
-                action: FirewallAction::Accept,
-                comment: "test".to_string(),
-            }],
-        };
-        let cloned = policy.clone();
-        assert_eq!(cloned.default_inbound, FirewallAction::Reject);
-        assert_eq!(cloned.default_outbound, FirewallAction::Drop);
-        assert_eq!(cloned.rules.len(), 1);
-    }
-
-    #[test]
-    fn test_firewall_policy_serialization_roundtrip() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Reject,
-            default_outbound: FirewallAction::Accept,
-            rules: vec![FirewallRule {
-                direction: TrafficDirection::Outbound,
-                protocol: Protocol::Udp,
-                port: 53,
-                remote_addr: String::new(),
-                action: FirewallAction::Accept,
-                comment: "DNS".to_string(),
-            }],
-        };
-        let json = serde_json::to_string(&policy).unwrap();
-        let back: FirewallPolicy = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.default_inbound, FirewallAction::Reject);
-        assert_eq!(back.rules.len(), 1);
-        assert_eq!(back.rules[0].comment, "DNS");
-    }
-
-    #[test]
-    fn test_firewall_rule_debug_and_clone() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Icmp,
-            port: 0,
-            remote_addr: String::new(),
-            action: FirewallAction::Accept,
-            comment: "ping".to_string(),
-        };
-        let dbg = format!("{:?}", rule);
-        assert!(dbg.contains("FirewallRule"));
-        let cloned = rule.clone();
-        assert_eq!(cloned.comment, "ping");
-    }
-
-    #[test]
-    fn test_traffic_direction_serde_roundtrip() {
-        for d in &[TrafficDirection::Inbound, TrafficDirection::Outbound] {
-            let json = serde_json::to_string(d).unwrap();
-            let back: TrafficDirection = serde_json::from_str(&json).unwrap();
-            assert_eq!(*d, back);
-        }
-    }
-
-    #[test]
-    fn test_protocol_serde_roundtrip() {
-        for p in &[Protocol::Tcp, Protocol::Udp, Protocol::Icmp, Protocol::Any] {
-            let json = serde_json::to_string(p).unwrap();
-            let back: Protocol = serde_json::from_str(&json).unwrap();
-            assert_eq!(*p, back);
-        }
-    }
-
-    #[test]
-    fn test_firewall_action_serde_roundtrip() {
-        for a in &[
-            FirewallAction::Accept,
-            FirewallAction::Drop,
-            FirewallAction::Reject,
-        ] {
-            let json = serde_json::to_string(a).unwrap();
-            let back: FirewallAction = serde_json::from_str(&json).unwrap();
-            assert_eq!(*a, back);
-        }
-    }
-
-    #[test]
-    fn test_firewall_action_display() {
-        assert_eq!(format!("{}", FirewallAction::Accept), "accept");
-        assert_eq!(format!("{}", FirewallAction::Drop), "drop");
-        assert_eq!(format!("{}", FirewallAction::Reject), "reject");
-    }
-
-    #[test]
     fn test_net_namespace_handle_clone_and_debug() {
         let handle = NetNamespaceHandle {
             name: "agnos-agent-test".to_string(),
@@ -1034,14 +599,12 @@ mod tests {
 
     #[test]
     fn test_generate_agent_ips_range() {
-        // Verify the IPs are in valid 10.100.x.{1,2} range
         for name in &["a", "bb", "ccc", "dddd", "eeeeee"] {
             let (host, agent) = generate_agent_ips(name);
             assert!(host.starts_with("10.100."));
             assert!(host.ends_with(".1"));
             assert!(agent.starts_with("10.100."));
             assert!(agent.ends_with(".2"));
-            // Third octet is 0..254
             let parts: Vec<&str> = host.split('.').collect();
             let third: u8 = parts[2].parse().unwrap();
             assert!(third <= 254);
@@ -1050,225 +613,19 @@ mod tests {
 
     #[test]
     fn test_truncate_veth_name_exact_15() {
-        let name = "123456789012345"; // exactly 15
+        let name = "123456789012345";
         assert_eq!(truncate_veth_name(name), name);
     }
 
     #[test]
     fn test_truncate_veth_name_16() {
-        let name = "1234567890123456"; // 16 chars
+        let name = "1234567890123456";
         assert_eq!(truncate_veth_name(name), "123456789012345");
     }
 
     #[test]
     fn test_truncate_veth_name_empty() {
         assert_eq!(truncate_veth_name(""), "");
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_contains_interface_comment() {
-        let policy = FirewallPolicy::default();
-        let ruleset = generate_nftables_ruleset(&policy, "veth-myagent-a");
-        assert!(ruleset.contains("# Interface: veth-myagent-a"));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_shebang() {
-        let policy = FirewallPolicy::default();
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        assert!(ruleset.starts_with("#!/usr/sbin/nft -f"));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_loopback_rules() {
-        let policy = FirewallPolicy::default();
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        assert!(ruleset.contains("iifname \"lo\" accept"));
-        assert!(ruleset.contains("oifname \"lo\" accept"));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_reject_policy() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Reject,
-            default_outbound: FirewallAction::Reject,
-            rules: Vec::new(),
-        };
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        // Both chains should have reject policy
-        let input_policy = "policy reject;";
-        assert!(ruleset.contains(input_policy));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_multiple_inbound_rules() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Drop,
-            default_outbound: FirewallAction::Accept,
-            rules: vec![
-                FirewallRule {
-                    direction: TrafficDirection::Inbound,
-                    protocol: Protocol::Tcp,
-                    port: 22,
-                    remote_addr: String::new(),
-                    action: FirewallAction::Accept,
-                    comment: "SSH".to_string(),
-                },
-                FirewallRule {
-                    direction: TrafficDirection::Inbound,
-                    protocol: Protocol::Tcp,
-                    port: 80,
-                    remote_addr: String::new(),
-                    action: FirewallAction::Accept,
-                    comment: "HTTP".to_string(),
-                },
-                FirewallRule {
-                    direction: TrafficDirection::Inbound,
-                    protocol: Protocol::Tcp,
-                    port: 443,
-                    remote_addr: String::new(),
-                    action: FirewallAction::Accept,
-                    comment: "HTTPS".to_string(),
-                },
-            ],
-        };
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        assert!(ruleset.contains("tcp dport 22 accept"));
-        assert!(ruleset.contains("tcp dport 80 accept"));
-        assert!(ruleset.contains("tcp dport 443 accept"));
-        assert!(ruleset.contains("SSH"));
-        assert!(ruleset.contains("HTTP"));
-        assert!(ruleset.contains("HTTPS"));
-    }
-
-    #[test]
-    fn test_format_nft_rule_any_protocol_no_port() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Any,
-            port: 0,
-            remote_addr: String::new(),
-            action: FirewallAction::Drop,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert_eq!(formatted, "drop");
-    }
-
-    #[test]
-    fn test_format_nft_rule_any_protocol_with_addr() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Any,
-            port: 0,
-            remote_addr: "10.0.0.0/8".to_string(),
-            action: FirewallAction::Reject,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert_eq!(formatted, "ip daddr 10.0.0.0/8 reject");
-    }
-
-    #[test]
-    fn test_format_nft_rule_inbound_with_addr() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Any,
-            port: 0,
-            remote_addr: "192.168.1.1".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert_eq!(formatted, "ip saddr 192.168.1.1 accept");
-    }
-
-    #[test]
-    fn test_format_nft_rule_udp_outbound_with_comment() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Udp,
-            port: 123,
-            remote_addr: String::new(),
-            action: FirewallAction::Accept,
-            comment: "NTP".to_string(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert_eq!(formatted, "udp dport 123 accept comment \"NTP\"");
-    }
-
-    #[test]
-    fn test_format_nft_rule_icmp_inbound() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Icmp,
-            port: 0,
-            remote_addr: String::new(),
-            action: FirewallAction::Drop,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert_eq!(formatted, "meta l4proto icmp drop");
-    }
-
-    #[test]
-    fn test_format_nft_rule_full_rule() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 8080,
-            remote_addr: "172.16.0.0/12".to_string(),
-            action: FirewallAction::Accept,
-            comment: "Private API".to_string(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.contains("tcp"));
-        assert!(formatted.contains("dport 8080"));
-        assert!(formatted.contains("ip saddr 172.16.0.0/12"));
-        assert!(formatted.contains("accept"));
-        assert!(formatted.contains("comment \"Private API\""));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_no_rules_structure() {
-        let policy = FirewallPolicy::default();
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        // Verify structural elements
-        assert!(ruleset.contains("table inet agnos_agent {"));
-        assert!(ruleset.contains("chain input {"));
-        assert!(ruleset.contains("chain output {"));
-        // Ends with closing brace
-        assert!(ruleset.trim().ends_with('}'));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_mixed_directions() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Drop,
-            default_outbound: FirewallAction::Drop,
-            rules: vec![
-                FirewallRule {
-                    direction: TrafficDirection::Inbound,
-                    protocol: Protocol::Tcp,
-                    port: 22,
-                    remote_addr: String::new(),
-                    action: FirewallAction::Accept,
-                    comment: "SSH in".to_string(),
-                },
-                FirewallRule {
-                    direction: TrafficDirection::Outbound,
-                    protocol: Protocol::Tcp,
-                    port: 443,
-                    remote_addr: String::new(),
-                    action: FirewallAction::Accept,
-                    comment: "HTTPS out".to_string(),
-                },
-            ],
-        };
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        // Inbound rule should appear in input chain, outbound in output chain
-        assert!(ruleset.contains("SSH in"));
-        assert!(ruleset.contains("HTTPS out"));
     }
 
     #[test]
@@ -1284,39 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn test_firewall_policy_debug() {
-        let policy = FirewallPolicy::default();
-        let dbg = format!("{:?}", policy);
-        assert!(dbg.contains("FirewallPolicy"));
-        assert!(dbg.contains("Drop"));
-        assert!(dbg.contains("Accept"));
-    }
-
-    #[test]
-    fn test_traffic_direction_eq() {
-        assert_eq!(TrafficDirection::Inbound, TrafficDirection::Inbound);
-        assert_ne!(TrafficDirection::Inbound, TrafficDirection::Outbound);
-    }
-
-    #[test]
-    fn test_protocol_eq() {
-        assert_eq!(Protocol::Tcp, Protocol::Tcp);
-        assert_ne!(Protocol::Tcp, Protocol::Udp);
-        assert_ne!(Protocol::Icmp, Protocol::Any);
-    }
-
-    #[test]
-    fn test_firewall_action_eq() {
-        assert_eq!(FirewallAction::Accept, FirewallAction::Accept);
-        assert_ne!(FirewallAction::Accept, FirewallAction::Drop);
-        assert_ne!(FirewallAction::Drop, FirewallAction::Reject);
-    }
-
-    // --- New coverage tests ---
-
-    #[test]
     fn test_generate_agent_ips_empty_name() {
-        // Should not panic, just return some valid IPs
         let (host, agent) = generate_agent_ips("");
         assert!(host.starts_with("10.100."));
         assert!(agent.starts_with("10.100."));
@@ -1361,43 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_nft_rule_reject_action() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 22,
-            remote_addr: String::new(),
-            action: FirewallAction::Reject,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.contains("reject"));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_accept_inbound_policy() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Accept,
-            default_outbound: FirewallAction::Drop,
-            rules: Vec::new(),
-        };
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        // Input chain should have accept policy
-        assert!(ruleset.contains("hook input priority 0; policy accept;"));
-        // Output chain should have drop policy
-        assert!(ruleset.contains("hook output priority 0; policy drop;"));
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_contains_dns_rule() {
-        let policy = FirewallPolicy::default();
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        assert!(ruleset.contains("udp dport 53 accept"));
-    }
-
-    #[test]
     fn test_net_namespace_config_for_agent_ip_determinism() {
-        // Same name always produces same IPs
         let c1 = NetNamespaceConfig::for_agent("deterministic");
         let c2 = NetNamespaceConfig::for_agent("deterministic");
         assert_eq!(c1.agent_ip, c2.agent_ip);
@@ -1410,153 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn test_firewall_rule_serialization_roundtrip() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Tcp,
-            port: 443,
-            remote_addr: "1.2.3.4".to_string(),
-            action: FirewallAction::Accept,
-            comment: "HTTPS".to_string(),
-        };
-        let json = serde_json::to_string(&rule).unwrap();
-        let de: FirewallRule = serde_json::from_str(&json).unwrap();
-        assert_eq!(de.port, 443);
-        assert_eq!(de.remote_addr, "1.2.3.4");
-        assert_eq!(de.comment, "HTTPS");
-    }
-
-    // ---- Security: nft rule injection via remote_addr ----
-
-    #[test]
-    fn test_format_nft_rule_shell_metachar_in_addr_returns_empty() {
-        // Semicolon injection attempt
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 80,
-            remote_addr: "1.2.3.4; drop table".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.is_empty(), "Should reject addr with semicolons");
-    }
-
-    #[test]
-    fn test_format_nft_rule_pipe_in_addr_returns_empty() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 80,
-            remote_addr: "1.2.3.4|malicious".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        assert!(format_nft_rule(&rule).is_empty());
-    }
-
-    #[test]
-    fn test_format_nft_rule_backtick_in_addr_returns_empty() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 80,
-            remote_addr: "`whoami`".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        assert!(format_nft_rule(&rule).is_empty());
-    }
-
-    #[test]
-    fn test_format_nft_rule_non_ip_addr_returns_empty() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Tcp,
-            port: 443,
-            remote_addr: "not-an-ip".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        assert!(format_nft_rule(&rule).is_empty());
-    }
-
-    #[test]
-    fn test_format_nft_rule_ipv6_addr() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Tcp,
-            port: 443,
-            remote_addr: "::1".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.contains("::1"));
-        assert!(formatted.contains("ip daddr"));
-    }
-
-    #[test]
-    fn test_format_nft_rule_cidr_valid() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Any,
-            port: 0,
-            remote_addr: "10.0.0.0/8".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.contains("10.0.0.0/8"));
-    }
-
-    #[test]
-    fn test_format_nft_rule_cidr_invalid_prefix() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Outbound,
-            protocol: Protocol::Any,
-            port: 0,
-            remote_addr: "10.0.0.0/abc".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        assert!(format_nft_rule(&rule).is_empty());
-    }
-
-    #[test]
-    fn test_format_nft_rule_comment_with_quotes_escaped() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 22,
-            remote_addr: String::new(),
-            action: FirewallAction::Accept,
-            comment: r#"Allow "admin" SSH"#.to_string(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.contains(r#"Allow \"admin\" SSH"#));
-    }
-
-    #[test]
-    fn test_format_nft_rule_comment_with_backslash_escaped() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 22,
-            remote_addr: String::new(),
-            action: FirewallAction::Accept,
-            comment: r"path\to\thing".to_string(),
-        };
-        let formatted = format_nft_rule(&rule);
-        assert!(formatted.contains(r"path\\to\\thing"));
-    }
-
-    // ---- Edge case: generate_agent_ips hash collisions ----
-
-    #[test]
     fn test_generate_agent_ips_all_valid_ipv4() {
-        // Test many names, all should produce parseable IPv4 addresses
         for i in 0..100 {
             let name = format!("agent-{}", i);
             let (host, agent) = generate_agent_ips(&name);
@@ -1573,64 +716,10 @@ mod tests {
         }
     }
 
-    // ---- Ruleset generation: outbound-only rules appear in output chain ----
-
-    #[test]
-    fn test_generate_nftables_ruleset_outbound_only() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Drop,
-            default_outbound: FirewallAction::Drop,
-            rules: vec![FirewallRule {
-                direction: TrafficDirection::Outbound,
-                protocol: Protocol::Tcp,
-                port: 443,
-                remote_addr: String::new(),
-                action: FirewallAction::Accept,
-                comment: "HTTPS out".to_string(),
-            }],
-        };
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        // The HTTPS rule should appear after "chain output" not after "chain input"
-        let input_pos = ruleset.find("chain input").unwrap();
-        let output_pos = ruleset.find("chain output").unwrap();
-        let https_pos = ruleset.find("HTTPS out").unwrap();
-        assert!(
-            https_pos > output_pos,
-            "Outbound rule should be in output chain"
-        );
-        assert!(https_pos > input_pos);
-    }
-
-    #[test]
-    fn test_generate_nftables_ruleset_inbound_only() {
-        let policy = FirewallPolicy {
-            default_inbound: FirewallAction::Drop,
-            default_outbound: FirewallAction::Accept,
-            rules: vec![FirewallRule {
-                direction: TrafficDirection::Inbound,
-                protocol: Protocol::Tcp,
-                port: 22,
-                remote_addr: String::new(),
-                action: FirewallAction::Accept,
-                comment: "SSH in".to_string(),
-            }],
-        };
-        let ruleset = generate_nftables_ruleset(&policy, "veth0");
-        let output_pos = ruleset.find("chain output").unwrap();
-        let ssh_pos = ruleset.find("SSH in").unwrap();
-        assert!(
-            ssh_pos < output_pos,
-            "Inbound rule should be in input chain"
-        );
-    }
-
-    // ---- Validate config edge cases ----
-
     #[test]
     fn test_net_namespace_config_validate_ipv6_rejected() {
         let mut config = NetNamespaceConfig::for_agent("test");
         config.agent_ip = "::1".to_string();
-        // validate() parses as Ipv4Addr, so IPv6 should fail
         assert!(config.validate().is_err());
     }
 
@@ -1645,31 +734,5 @@ mod tests {
                 pl
             );
         }
-    }
-
-    #[test]
-    fn test_format_nft_rule_newline_in_addr_returns_empty() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 80,
-            remote_addr: "1.2.3.4\n; flush ruleset".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        assert!(format_nft_rule(&rule).is_empty());
-    }
-
-    #[test]
-    fn test_format_nft_rule_dollar_in_addr_returns_empty() {
-        let rule = FirewallRule {
-            direction: TrafficDirection::Inbound,
-            protocol: Protocol::Tcp,
-            port: 80,
-            remote_addr: "$HOME".to_string(),
-            action: FirewallAction::Accept,
-            comment: String::new(),
-        };
-        assert!(format_nft_rule(&rule).is_empty());
     }
 }

@@ -198,14 +198,6 @@ fn bench_netns(c: &mut Criterion) {
     group.bench_function("list_agent_netns", |b| {
         b.iter(agnosys::netns::list_agent_netns)
     });
-    group.bench_function("nftables_ruleset", |b| {
-        let policy = agnosys::netns::FirewallPolicy {
-            default_inbound: agnosys::netns::FirewallAction::Drop,
-            default_outbound: agnosys::netns::FirewallAction::Accept,
-            rules: vec![],
-        };
-        b.iter(|| agnosys::netns::generate_nftables_ruleset(black_box(&policy), "veth0"))
-    });
     group.bench_function("config_for_agent", |b| {
         b.iter(|| agnosys::netns::NetNamespaceConfig::for_agent(black_box("bench")))
     });
