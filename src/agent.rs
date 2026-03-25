@@ -851,7 +851,6 @@ macro_rules! agent_main {
             let config = AgentConfig {
                 name: env!("CARGO_PKG_NAME").to_string(),
                 agent_type: AgentType::Service,
-                ..Default::default()
             };
 
             let runtime = AgentRuntime::new(config);

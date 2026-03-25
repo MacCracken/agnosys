@@ -346,7 +346,6 @@ mod agent_integration {
         let config = agnosys::agent::AgentConfig {
             name: "test-agent".to_string(),
             agent_type: agnosys::agent::AgentType::Service,
-            ..Default::default()
         };
         assert_eq!(config.name, "test-agent");
     }

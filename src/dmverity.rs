@@ -1268,7 +1268,7 @@ mod tests {
 
     #[test]
     fn test_validate_root_hash_space_in_hash() {
-        let hash = format!("{}{}a", "a".repeat(32), " ".repeat(1));
+        let hash = format!("{} a", "a".repeat(32));
         // Length won't match, but if it did, space is not hex
         let err = validate_root_hash(&hash, VerityHashAlgorithm::Sha256).unwrap_err();
         // Might fail on length or non-hex

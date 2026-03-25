@@ -250,7 +250,6 @@ fn bench_agent(c: &mut Criterion) {
         b.iter(|| agnosys::agent::AgentConfig {
             name: "bench".to_string(),
             agent_type: agnosys::agent::AgentType::Service,
-            ..Default::default()
         })
     });
 
