@@ -105,10 +105,10 @@ pub fn get_secureboot_status() -> Result<SecureBootState> {
 
         // Try reading from efivars
         let efivars_dir = Path::new("/sys/firmware/efi/efivars");
-        if efivars_dir.exists() {
-            if let Some(state) = read_secureboot_efivar(efivars_dir) {
-                return Ok(state);
-            }
+        if efivars_dir.exists()
+            && let Some(state) = read_secureboot_efivar(efivars_dir)
+        {
+            return Ok(state);
         }
 
         // Fallback: mokutil --sb-state
@@ -162,10 +162,11 @@ fn read_secureboot_efivar(efivars_dir: &Path) -> Option<SecureBootState> {
     if value == 1 {
         // Check SetupMode
         let setup_path = efivars_dir.join(format!("SetupMode-{}", sb_guid));
-        if let Ok(setup_data) = std::fs::read(&setup_path) {
-            if setup_data.len() >= 5 && setup_data[4] == 1 {
-                return Some(SecureBootState::SetupMode);
-            }
+        if let Ok(setup_data) = std::fs::read(&setup_path)
+            && setup_data.len() >= 5
+            && setup_data[4] == 1
+        {
+            return Some(SecureBootState::SetupMode);
         }
         Some(SecureBootState::Enabled)
     } else {

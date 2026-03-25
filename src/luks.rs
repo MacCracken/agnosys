@@ -644,12 +644,12 @@ pub fn teardown_agent_volume(name: &str) -> Result<()> {
         );
         if Path::new(&backing_path).exists() {
             let loop_info = run_cmd_with_output("losetup", &["-j", &backing_path]);
-            if let Ok(info) = loop_info {
-                if let Some(loop_dev) = info.split(':').next() {
-                    let loop_dev = loop_dev.trim();
-                    if !loop_dev.is_empty() {
-                        let _ = run_cmd_checked("losetup", &["-d", loop_dev]);
-                    }
+            if let Ok(info) = loop_info
+                && let Some(loop_dev) = info.split(':').next()
+            {
+                let loop_dev = loop_dev.trim();
+                if !loop_dev.is_empty() {
+                    let _ = run_cmd_checked("losetup", &["-d", loop_dev]);
                 }
             }
         }

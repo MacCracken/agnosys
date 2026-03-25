@@ -197,10 +197,10 @@ pub fn parse_journal_json(json_line: &str) -> Result<JournalEntry> {
     ];
     let mut fields = HashMap::new();
     for (k, v) in obj.iter() {
-        if !known_keys.contains(&k.as_str()) {
-            if let Some(s) = v.as_str() {
-                fields.insert(k.clone(), s.to_string());
-            }
+        if !known_keys.contains(&k.as_str())
+            && let Some(s) = v.as_str()
+        {
+            fields.insert(k.clone(), s.to_string());
         }
     }
 
@@ -479,10 +479,10 @@ fn parse_header_entry_count(text: &str) -> u64 {
     let mut total: u64 = 0;
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Number of entries:") {
-            if let Ok(n) = rest.trim().parse::<u64>() {
-                total += n;
-            }
+        if let Some(rest) = trimmed.strip_prefix("Number of entries:")
+            && let Ok(n) = rest.trim().parse::<u64>()
+        {
+            total += n;
         }
     }
     total

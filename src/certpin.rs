@@ -187,12 +187,12 @@ pub fn verify_pin(host: &str, actual_spki_pin: &str, pin_set: &CertPinSet) -> Ce
     };
 
     // Check expiry
-    if let Some(expires) = entry.expires {
-        if Utc::now() > expires {
-            return CertPinResult::Expired {
-                host: host.to_string(),
-            };
-        }
+    if let Some(expires) = entry.expires
+        && Utc::now() > expires
+    {
+        return CertPinResult::Expired {
+            host: host.to_string(),
+        };
     }
 
     // Check primary and backup pins using constant-time comparison

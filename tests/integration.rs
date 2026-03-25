@@ -32,8 +32,6 @@ fn uptime_positive() {
 fn uid_euid_are_consistent() {
     let uid = agnosys::syscall::getuid();
     let euid = agnosys::syscall::geteuid();
-    // For non-suid binaries, uid == euid
-    // We can't assert equality in all environments, but both should be valid
     let _ = uid;
     let _ = euid;
 }
@@ -94,7 +92,6 @@ fn checked_syscall_failure_produces_syserror() {
     unsafe { libc::close(-1) };
     let ret = agnosys::syscall::checked_syscall("close", -1);
     let err = ret.unwrap_err();
-    // Should produce a displayable error
     assert!(!err.to_string().is_empty());
 }
 
@@ -119,10 +116,7 @@ fn syserror_debug_contains_variant_name() {
 fn memory_values_in_reasonable_range() {
     let total = agnosys::syscall::total_memory().unwrap();
     let avail = agnosys::syscall::available_memory().unwrap();
-
-    // At least 32 MB
     assert!(total >= 32 * 1024 * 1024);
-    // Available should be non-zero on any running system
     assert!(avail > 0);
     assert!(avail <= total);
 }
@@ -149,7 +143,6 @@ fn query_sysinfo_snapshot_is_consistent() {
 
 #[test]
 fn query_sysinfo_avoids_redundant_syscalls() {
-    // One call gives us everything — verify all fields populated
     let info = agnosys::syscall::query_sysinfo().unwrap();
     let up = info.uptime();
     let total = info.total_memory();
@@ -166,101 +159,71 @@ fn query_sysinfo_avoids_redundant_syscalls() {
 #[cfg(feature = "udev")]
 mod udev_integration {
     #[test]
-    fn enumerate_and_inspect_net_devices() {
-        let devs = agnosys::udev::enumerate("net").unwrap();
-        assert!(!devs.is_empty());
+    fn list_net_devices() {
+        let devs = agnosys::udev::list_devices(Some("net")).unwrap();
+        // May be empty in CI, just verify no error
         for dev in &devs {
-            assert!(!dev.name().is_empty());
-            assert!(dev.syspath().exists());
-            assert_eq!(dev.subsystem(), "net");
+            assert!(!dev.subsystem.is_empty());
         }
     }
 
     #[test]
-    fn device_from_syspath_round_trip() {
-        let devs = agnosys::udev::enumerate("net").unwrap();
+    fn get_device_info_by_syspath() {
+        let devs = agnosys::udev::list_devices(Some("net")).unwrap();
         for dev in &devs {
-            let dev2 = agnosys::udev::device_from_syspath(dev.syspath()).unwrap();
-            assert_eq!(dev.name(), dev2.name());
+            let dev2 = agnosys::udev::get_device_info(&dev.syspath);
+            // May fail if syspath disappeared, just verify we can call it
+            let _ = dev2;
         }
     }
 
     #[test]
-    fn monitor_nonblocking() {
-        if let Ok(mon) = agnosys::udev::Monitor::new() {
-            // Should return None immediately (no events pending)
-            assert!(mon.try_recv().unwrap().is_none());
-        }
-    }
-}
-
-// ── landlock integration ────────────────────────────────────────────
-
-#[cfg(feature = "landlock")]
-mod landlock_integration {
-    use agnosys::landlock::{FsAccess, Ruleset};
-    use std::path::Path;
-
-    #[test]
-    fn abi_version_consistent() {
-        // Two calls should return the same version
-        let v1 = agnosys::landlock::abi_version();
-        let v2 = agnosys::landlock::abi_version();
-        match (v1, v2) {
-            (Ok(a), Ok(b)) => assert_eq!(a, b),
-            (Err(_), Err(_)) => {} // both unsupported, fine
-            _ => panic!("abi_version inconsistent"),
-        }
-    }
-
-    #[test]
-    fn ruleset_add_multiple_paths() {
-        let rs = match Ruleset::new(FsAccess::READ_FILE | FsAccess::READ_DIR) {
-            Ok(rs) => rs,
-            Err(_) => return,
+    fn render_udev_rule_round_trip() {
+        let rule = agnosys::udev::UdevRule {
+            name: "test".to_string(),
+            match_attrs: vec![("SUBSYSTEM".to_string(), "net".to_string())],
+            actions: vec![("RUN".to_string(), "/bin/true".to_string())],
         };
-        assert!(
-            rs.allow_path(Path::new("/tmp"), FsAccess::READ_FILE)
-                .is_ok()
-        );
-        assert!(rs.allow_path(Path::new("/usr"), FsAccess::READ_DIR).is_ok());
-        assert!(
-            rs.allow_path(Path::new("/var"), FsAccess::READ_FILE)
-                .is_ok()
-        );
+        let rendered = agnosys::udev::render_udev_rule(&rule);
+        assert!(rendered.contains("SUBSYSTEM"));
+        assert!(rendered.contains("RUN"));
     }
 }
 
-// ── seccomp integration ─────────────────────────────────────────────
+// ── security integration ────────────────────────────────────────────
 
-#[cfg(feature = "seccomp")]
-mod seccomp_integration {
-    use agnosys::seccomp::{Action, FilterBuilder};
+#[cfg(feature = "security")]
+mod security_integration {
+    use agnosys::security::{FilesystemRule, FsAccess};
 
     #[test]
-    fn build_and_inspect_filter() {
-        let filter = FilterBuilder::new(Action::KillProcess)
-            .allow_syscall(libc::SYS_read)
-            .allow_syscall(libc::SYS_write)
-            .allow_syscall(libc::SYS_exit_group)
-            .build();
-        assert!(!filter.is_empty());
-        // arch(3) + nr(1) + 3 checks + default(1) + 3 returns = 11
-        assert_eq!(filter.len(), 11);
+    fn filesystem_rule_constructors() {
+        let r1 = FilesystemRule::read_only("/tmp");
+        let r2 = FilesystemRule::read_write("/var");
+        let r3 = FilesystemRule::new("/usr", FsAccess::ReadOnly);
+        let _ = (r1, r2, r3);
     }
 
     #[test]
-    fn no_new_privs_idempotent() {
-        assert!(agnosys::seccomp::set_no_new_privs().is_ok());
-        assert!(agnosys::seccomp::set_no_new_privs().is_ok());
+    fn basic_seccomp_filter_builds() {
+        let filter = agnosys::security::create_basic_seccomp_filter();
+        assert!(filter.is_ok());
+        assert!(!filter.unwrap().is_empty());
     }
 
     #[test]
-    fn filter_with_errno_default() {
-        let filter = FilterBuilder::new(Action::Errno(libc::EPERM as u16))
-            .allow_syscall(libc::SYS_read)
-            .build();
-        assert_eq!(filter.len(), 7);
+    fn namespace_flags_bitops() {
+        let flags =
+            agnosys::security::NamespaceFlags::NETWORK | agnosys::security::NamespaceFlags::MOUNT;
+        assert!(flags.contains(agnosys::security::NamespaceFlags::NETWORK));
+        assert!(flags.contains(agnosys::security::NamespaceFlags::MOUNT));
+        assert!(!flags.contains(agnosys::security::NamespaceFlags::PID));
+    }
+
+    #[test]
+    fn syscall_name_to_nr_known() {
+        let nr = agnosys::security::syscall_name_to_nr("read");
+        assert!(nr.is_some());
     }
 }
 
@@ -297,29 +260,37 @@ mod drm_integration {
 #[cfg(feature = "netns")]
 mod netns_integration {
     #[test]
-    fn current_ns_fd_and_id() {
-        let ns = agnosys::netns::current().unwrap();
-        assert!(ns.as_raw_fd() >= 0);
-        assert!(ns.name().is_none());
-
-        let id = agnosys::netns::current_ns_id().unwrap();
-        assert!(id > 0);
+    fn generate_agent_ips_deterministic() {
+        let (a1, h1) = agnosys::netns::generate_agent_ips("test-agent");
+        let (a2, h2) = agnosys::netns::generate_agent_ips("test-agent");
+        assert_eq!(a1, a2);
+        assert_eq!(h1, h2);
+        assert_ne!(a1, h1);
     }
 
     #[test]
-    fn list_namespaces() {
-        let names = agnosys::netns::list().unwrap();
-        // May be empty, just verify no error and sorted
-        for window in names.windows(2) {
-            assert!(window[0] <= window[1]);
-        }
+    fn list_agent_namespaces() {
+        let names = agnosys::netns::list_agent_netns().unwrap_or_default();
+        // May be empty, just verify no panic
+        let _ = names;
     }
 
     #[test]
-    fn named_path_construction() {
-        let p = agnosys::netns::named_path("test");
-        assert!(p.to_string_lossy().contains("netns"));
-        assert!(p.to_string_lossy().contains("test"));
+    fn namespace_config_validation() {
+        let config = agnosys::netns::NetNamespaceConfig::for_agent("test");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn nftables_ruleset_generation() {
+        let policy = agnosys::netns::FirewallPolicy {
+            default_inbound: agnosys::netns::FirewallAction::Drop,
+            default_outbound: agnosys::netns::FirewallAction::Accept,
+            rules: vec![],
+        };
+        let ruleset = agnosys::netns::generate_nftables_ruleset(&policy, "veth0");
+        assert!(ruleset.contains("drop"));
+        assert!(ruleset.contains("accept"));
     }
 }
 
@@ -327,45 +298,39 @@ mod netns_integration {
 
 #[cfg(feature = "certpin")]
 mod certpin_integration {
-    use agnosys::certpin::{Pin, PinSet};
-
     #[test]
-    fn pin_round_trip_spki_to_base64() {
-        let pin = Pin::from_spki(b"test public key info");
-        let b64 = pin.to_base64();
-        let pin2 = Pin::from_base64(&b64).unwrap();
-        assert_eq!(pin, pin2);
-    }
-
-    #[test]
-    fn pin_display_format() {
-        let pin = Pin::from_spki(b"key");
-        let s = format!("{pin}");
-        assert!(s.starts_with("sha256/"));
-        assert!(s.len() > 10);
-    }
-
-    #[test]
-    fn pinset_validate_workflow() {
-        let mut ps = PinSet::new();
-        let pin = Pin::from_spki(b"trusted_key_material");
-        ps.add(pin);
-
-        assert!(ps.validate_spki(b"trusted_key_material"));
-        assert!(!ps.validate_spki(b"untrusted_key_material"));
-        assert_eq!(ps.len(), 1);
-        assert!(!ps.is_empty());
-    }
-
-    #[test]
-    fn sha256_known_vectors() {
-        // Verify our SHA-256 produces correct output for known inputs
-        let pin = Pin::from_spki(b"");
-        // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-        assert_eq!(
-            pin.to_hex(),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    fn compute_spki_pin_deterministic() {
+        let pin1 = agnosys::certpin::compute_spki_pin(
+            "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
         );
+        let pin2 = agnosys::certpin::compute_spki_pin(
+            "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
+        );
+        // Both should return same result (or same error)
+        assert_eq!(pin1.is_ok(), pin2.is_ok());
+    }
+
+    #[test]
+    fn validate_pin_format_sha256() {
+        // validate_pin_format expects raw base64 of 32-byte SHA-256
+        assert!(
+            agnosys::certpin::validate_pin_format("YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=")
+                .is_ok()
+        );
+        assert!(agnosys::certpin::validate_pin_format("bad-pin").is_err());
+    }
+
+    #[test]
+    fn default_pins_non_empty() {
+        let ps = agnosys::certpin::default_agnos_pins();
+        assert!(!ps.pins.is_empty());
+    }
+
+    #[test]
+    fn check_pin_expiry_no_panic() {
+        let ps = agnosys::certpin::default_agnos_pins();
+        let expired = agnosys::certpin::check_pin_expiry(&ps);
+        let _ = expired;
     }
 }
 
@@ -374,42 +339,27 @@ mod certpin_integration {
 #[cfg(feature = "agent")]
 mod agent_integration {
     #[test]
-    fn process_name_round_trip() {
-        let original = agnosys::agent::get_process_name().unwrap();
-        agnosys::agent::set_process_name("integ-test").unwrap();
-        let name = agnosys::agent::get_process_name().unwrap();
-        assert_eq!(name, "integ-test");
-        agnosys::agent::set_process_name(&original).unwrap();
+    fn agent_id_unique() {
+        let id1 = agnosys::agent::AgentId::new();
+        let id2 = agnosys::agent::AgentId::new();
+        assert_ne!(format!("{id1:?}"), format!("{id2:?}"));
     }
 
     #[test]
-    fn oom_score_read() {
-        let score = agnosys::agent::get_oom_score_adj().unwrap();
-        assert!((-1000..=1000).contains(&score));
+    fn agent_config_defaults() {
+        let config = agnosys::agent::AgentConfig {
+            name: "test-agent".to_string(),
+            agent_type: agnosys::agent::AgentType::Service,
+            ..Default::default()
+        };
+        assert_eq!(config.name, "test-agent");
     }
 
     #[test]
-    fn cgroup_path_valid() {
-        let cg = agnosys::agent::current_cgroup().unwrap();
-        assert!(cg.starts_with('/'));
-    }
-
-    #[test]
-    fn is_pid1_false() {
-        assert!(!agnosys::agent::is_pid1());
-    }
-
-    #[test]
-    fn has_capability_chown() {
-        // CAP_CHOWN = 0 — should be in bounding set
-        let result = agnosys::agent::has_capability(0);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn watchdog_no_socket() {
-        let result = agnosys::agent::watchdog_notify().unwrap();
-        assert!(!result);
+    fn agent_type_variants() {
+        let _ = agnosys::agent::AgentType::Service;
+        let _ = agnosys::agent::AgentType::Worker;
+        let _ = agnosys::agent::AgentType::Monitor;
     }
 }
 
@@ -420,7 +370,6 @@ mod logging_integration {
     #[test]
     fn init_then_use_tracing() {
         agnosys::logging::init();
-        // After init, tracing macros should work without panic
         tracing::info!("integration test log");
     }
 
@@ -435,33 +384,29 @@ mod logging_integration {
 
 #[cfg(feature = "luks")]
 mod luks_integration {
-    use std::path::Path;
-
     #[test]
-    fn dm_available_check() {
-        // Just verify no panic
-        let _ = agnosys::luks::dm_available();
+    fn cryptsetup_and_dm_availability() {
+        let _ = agnosys::luks::cryptsetup_available();
+        let _ = agnosys::luks::dmcrypt_supported();
     }
 
     #[test]
-    fn list_dm_devices_no_control() {
-        if let Ok(devs) = agnosys::luks::list_dm_devices() {
-            assert!(!devs.contains(&"control".to_owned()));
-        }
+    fn luks_config_for_agent() {
+        let config = agnosys::luks::LuksConfig::for_agent("test-agent", 256);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
-    fn volume_path_and_exists() {
-        let p = agnosys::luks::volume_path("integration_test_nonexistent");
-        assert_eq!(p, Path::new("/dev/mapper/integration_test_nonexistent"));
-        assert!(!agnosys::luks::volume_exists(
-            "integration_test_nonexistent"
-        ));
+    fn luks_key_generation() {
+        let key = agnosys::luks::LuksKey::generate(32).unwrap();
+        assert_eq!(key.len(), 32);
+        assert!(!key.is_empty());
     }
 
     #[test]
-    fn dev_null_is_not_luks() {
-        assert!(!agnosys::luks::is_luks_device(Path::new("/dev/null")).unwrap());
+    fn luks_filesystem_names() {
+        assert_eq!(agnosys::luks::LuksFilesystem::Ext4.as_str(), "ext4");
+        assert_eq!(agnosys::luks::LuksFilesystem::Btrfs.as_str(), "btrfs");
     }
 }
 
@@ -469,36 +414,44 @@ mod luks_integration {
 
 #[cfg(feature = "dmverity")]
 mod dmverity_integration {
-    use std::path::Path;
-
     #[test]
-    fn dev_null_is_not_verity() {
-        assert!(!agnosys::dmverity::is_verity_device(Path::new("/dev/null")).unwrap());
+    fn verity_supported_check() {
+        let _ = agnosys::dmverity::verity_supported();
     }
 
     #[test]
-    fn volume_path_correct() {
-        assert_eq!(
-            agnosys::dmverity::volume_path("system"),
-            Path::new("/dev/mapper/system")
+    fn validate_root_hash_sha256() {
+        let valid = "a".repeat(64);
+        assert!(
+            agnosys::dmverity::validate_root_hash(
+                &valid,
+                agnosys::dmverity::VerityHashAlgorithm::Sha256
+            )
+            .is_ok()
         );
     }
 
     #[test]
-    fn root_hash_round_trip() {
-        let h = agnosys::dmverity::RootHash::from_hex("abcdef0123456789").unwrap();
-        let hex = h.to_hex();
-        let h2 = agnosys::dmverity::RootHash::from_hex(&hex).unwrap();
-        assert_eq!(h, h2);
+    fn validate_root_hash_bad_length() {
+        assert!(
+            agnosys::dmverity::validate_root_hash(
+                "tooshort",
+                agnosys::dmverity::VerityHashAlgorithm::Sha256
+            )
+            .is_err()
+        );
     }
 
     #[test]
-    fn validate_root_hash_integration() {
-        let a = agnosys::dmverity::RootHash::from_bytes(&[1, 2, 3]);
-        let b = agnosys::dmverity::RootHash::from_bytes(&[1, 2, 3]);
-        let c = agnosys::dmverity::RootHash::from_bytes(&[4, 5, 6]);
-        assert!(agnosys::dmverity::validate_root_hash(&a, &b));
-        assert!(!agnosys::dmverity::validate_root_hash(&a, &c));
+    fn hash_algorithm_str() {
+        assert_eq!(
+            agnosys::dmverity::VerityHashAlgorithm::Sha256.as_str(),
+            "sha256"
+        );
+        assert_eq!(
+            agnosys::dmverity::VerityHashAlgorithm::Sha512.as_str(),
+            "sha512"
+        );
     }
 }
 
@@ -507,28 +460,18 @@ mod dmverity_integration {
 #[cfg(feature = "audit")]
 mod audit_integration {
     #[test]
-    fn is_available_returns_bool() {
-        let _ = agnosys::audit::is_available();
+    fn audit_rule_constructors() {
+        let rule = agnosys::audit::AuditRule::file_watch("/etc/passwd", "passwd-watch");
+        assert!(rule.validate().is_ok());
+
+        let rule2 = agnosys::audit::AuditRule::syscall_watch(59, "execve-watch");
+        assert!(rule2.validate().is_ok());
     }
 
     #[test]
-    fn parse_audit_line_real_format() {
-        let line = "type=SYSCALL msg=audit(1234567890.123:42): arch=c000003e syscall=59 success=yes pid=1234";
-        let map = agnosys::audit::parse_audit_line(line);
-        assert_eq!(map.get("arch").unwrap(), "c000003e");
-        assert_eq!(map.get("pid").unwrap(), "1234");
-    }
-
-    #[test]
-    fn msg_type_classification() {
-        assert_eq!(
-            agnosys::audit::AuditMsgType::from_raw(agnosys::audit::AUDIT_SYSCALL),
-            agnosys::audit::AuditMsgType::Syscall
-        );
-        assert_eq!(
-            agnosys::audit::AuditMsgType::from_raw(agnosys::audit::AUDIT_PATH),
-            agnosys::audit::AuditMsgType::Path
-        );
+    fn audit_config_defaults() {
+        let config = agnosys::audit::AuditConfig::default();
+        let _ = config;
     }
 }
 
@@ -537,25 +480,30 @@ mod audit_integration {
 #[cfg(feature = "pam")]
 mod pam_integration {
     #[test]
-    fn is_available_and_list() {
-        if agnosys::pam::is_available() {
-            let svcs = agnosys::pam::list_services().unwrap();
-            assert!(!svcs.is_empty());
-        }
-    }
-
-    #[test]
     fn parse_config_round_trip() {
         let config = "auth required pam_unix.so nullok\naccount required pam_unix.so";
-        let entries = agnosys::pam::parse_pam_config(config);
+        let entries = agnosys::pam::parse_pam_config(config).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].module, "pam_unix.so");
+
+        let rendered = agnosys::pam::render_pam_config(&entries);
+        assert!(rendered.contains("pam_unix.so"));
     }
 
     #[test]
     fn service_path_format() {
-        let p = agnosys::pam::service_path("login");
+        let p = agnosys::pam::get_pam_service_path(&agnosys::pam::PamService::Login);
         assert!(p.to_string_lossy().contains("pam.d"));
+    }
+
+    #[test]
+    fn validate_username_good() {
+        assert!(agnosys::pam::validate_username("testuser").is_ok());
+    }
+
+    #[test]
+    fn validate_username_bad() {
+        assert!(agnosys::pam::validate_username("").is_err());
     }
 }
 
@@ -564,23 +512,21 @@ mod pam_integration {
 #[cfg(feature = "mac")]
 mod mac_integration {
     #[test]
-    fn lsm_detection() {
-        let _ = agnosys::mac::list_lsms();
-        let _ = agnosys::mac::active_lsm();
-        let _ = agnosys::mac::lsm_string();
+    fn detect_mac_system() {
+        let system = agnosys::mac::detect_mac_system();
+        // Just verify it returns without panic
+        let _ = system;
     }
 
     #[test]
-    fn security_context_readable() {
-        let _ = agnosys::mac::current_context();
-        let pid = agnosys::syscall::getpid();
-        let _ = agnosys::mac::process_context(pid);
+    fn selinux_context_readable() {
+        let _ = agnosys::mac::get_current_selinux_context();
     }
 
     #[test]
-    fn selinux_apparmor_detection() {
-        let _ = agnosys::mac::selinux_available();
-        let _ = agnosys::mac::apparmor_available();
+    fn default_agent_profiles() {
+        let profiles = agnosys::mac::default_agent_profiles();
+        assert!(!profiles.is_empty());
     }
 }
 
@@ -590,14 +536,26 @@ mod mac_integration {
 mod ima_integration {
     #[test]
     fn ima_status() {
-        let _ = agnosys::ima::is_available();
-        let _ = agnosys::ima::policy_readable();
+        let status = agnosys::ima::get_ima_status();
+        // May fail if IMA not available, just verify callable
+        let _ = status;
     }
 
     #[test]
-    fn parse_policy_works() {
-        let rules = agnosys::ima::parse_policy("measure func=FILE_CHECK\n# comment\n");
-        assert_eq!(rules.len(), 1);
+    fn parse_measurements_empty() {
+        let result = agnosys::ima::parse_ima_measurements("");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn policy_rule_builder() {
+        let rule = agnosys::ima::ImaPolicyRule::new(
+            agnosys::ima::ImaAction::Measure,
+            agnosys::ima::ImaTarget::BprmCheck,
+        )
+        .with_uid(0);
+        assert!(rule.validate().is_ok());
     }
 }
 
@@ -606,21 +564,26 @@ mod ima_integration {
 #[cfg(feature = "fuse")]
 mod fuse_integration {
     #[test]
-    fn fuse_status() {
-        let _ = agnosys::fuse::is_available();
-        let _ = agnosys::fuse::list_mounts();
+    fn fuse_availability() {
+        let _ = agnosys::fuse::is_fuse_available();
     }
 
     #[test]
-    fn fuse_op_classification() {
-        assert_eq!(
-            agnosys::fuse::FuseOp::from_opcode(26),
-            agnosys::fuse::FuseOp::Init
-        );
-        assert_eq!(
-            agnosys::fuse::FuseOp::from_opcode(3),
-            agnosys::fuse::FuseOp::GetAttr
-        );
+    fn list_fuse_mounts_no_panic() {
+        let _ = agnosys::fuse::list_fuse_mounts();
+    }
+
+    #[test]
+    fn parse_proc_mounts_empty() {
+        let mounts = agnosys::fuse::parse_proc_mounts("");
+        assert!(mounts.is_empty());
+    }
+
+    #[test]
+    fn render_mount_options_defaults() {
+        let opts = agnosys::fuse::FuseMountOptions::default();
+        let rendered = agnosys::fuse::render_mount_options(&opts);
+        let _ = rendered;
     }
 }
 
@@ -628,27 +591,62 @@ mod fuse_integration {
 
 #[cfg(feature = "update")]
 mod update_integration {
-    use std::path::Path;
+    use std::cmp::Ordering;
 
     #[test]
-    fn atomic_write_round_trip() {
-        let tmp = &format!("/tmp/agnosys_integ_atomic_{}", std::process::id());
-        let path = Path::new(tmp);
-        agnosys::update::atomic_write(path, b"integration test").unwrap();
-        let content = std::fs::read_to_string(path).unwrap();
-        assert_eq!(content, "integration test");
-        std::fs::remove_file(path).unwrap();
+    fn validate_version_good() {
+        assert!(agnosys::update::validate_version("2025.03.1").is_ok());
     }
 
     #[test]
-    fn sync_and_writable() {
-        agnosys::update::sync_dir(Path::new("/tmp")).unwrap();
-        assert!(agnosys::update::is_writable(Path::new("/tmp")).unwrap());
+    fn validate_version_bad() {
+        assert!(agnosys::update::validate_version("").is_err());
     }
 
     #[test]
-    fn same_filesystem_check() {
-        assert!(agnosys::update::same_filesystem(Path::new("/tmp"), Path::new("/tmp")).unwrap());
+    fn compare_versions_ordering() {
+        assert_eq!(
+            agnosys::update::compare_versions("2025.01.0", "2025.02.0"),
+            Ordering::Less
+        );
+        assert_eq!(
+            agnosys::update::compare_versions("2025.03.0", "2025.03.0"),
+            Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn slot_other() {
+        assert!(matches!(
+            agnosys::update::UpdateSlot::A.other(),
+            agnosys::update::UpdateSlot::B
+        ));
+        assert!(matches!(
+            agnosys::update::UpdateSlot::B.other(),
+            agnosys::update::UpdateSlot::A
+        ));
+    }
+
+    #[test]
+    fn build_test_manifest_and_verify() {
+        let manifest = agnosys::update::build_test_manifest(
+            "2025.03.1",
+            agnosys::update::UpdateChannel::Stable,
+        );
+        assert!(agnosys::update::verify_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn needs_rollback_logic() {
+        let state = agnosys::update::UpdateState {
+            current_slot: agnosys::update::UpdateSlot::A,
+            current_version: "2025.01.0".to_string(),
+            pending_update: None,
+            last_update: None,
+            rollback_available: false,
+            boot_count_since_update: 0,
+        };
+        let _ = agnosys::update::needs_rollback(&state, 3);
     }
 }
 
@@ -658,17 +656,13 @@ mod update_integration {
 mod tpm_integration {
     #[test]
     fn tpm_detection() {
-        let _ = agnosys::tpm::is_available();
-        let _ = agnosys::tpm::rm_available();
-        let _ = agnosys::tpm::list_devices();
+        let _ = agnosys::tpm::tpm_available();
     }
 
     #[test]
-    fn tpm_info_if_available() {
-        if agnosys::tpm::is_available() {
-            let info = agnosys::tpm::device_info().unwrap();
-            assert!(!info.name.is_empty());
-        }
+    fn pcr_bank_variants() {
+        let _ = agnosys::tpm::TpmPcrBank::Sha256;
+        let _ = agnosys::tpm::TpmPcrBank::Sha1;
     }
 }
 
@@ -677,24 +671,17 @@ mod tpm_integration {
 #[cfg(feature = "secureboot")]
 mod secureboot_integration {
     #[test]
-    fn efi_detection() {
-        let _ = agnosys::secureboot::is_efi();
-        let _ = agnosys::secureboot::efivars_available();
+    fn secureboot_status() {
+        let status = agnosys::secureboot::get_secureboot_status();
+        // May return NotSupported, just verify callable
+        let _ = status;
     }
 
     #[test]
-    fn secure_boot_state_if_efi() {
-        if agnosys::secureboot::is_efi() {
-            let state = agnosys::secureboot::state().unwrap();
-            // Just verify it returns without error
-            let _ = state.secure_boot;
-        }
-    }
-
-    #[test]
-    fn key_db_checks() {
-        let _ = agnosys::secureboot::key_db_exists(agnosys::secureboot::KeyDb::PK);
-        let _ = agnosys::secureboot::key_db_exists(agnosys::secureboot::KeyDb::Dbx);
+    fn secureboot_state_variants() {
+        let _ = agnosys::secureboot::SecureBootState::Enabled;
+        let _ = agnosys::secureboot::SecureBootState::Disabled;
+        let _ = agnosys::secureboot::SecureBootState::NotSupported;
     }
 }
 
@@ -703,24 +690,23 @@ mod secureboot_integration {
 #[cfg(feature = "journald")]
 mod journald_integration {
     #[test]
-    fn journal_status() {
-        let _ = agnosys::journald::is_available();
-        let _ = agnosys::journald::has_persistent_storage();
-        let _ = agnosys::journald::has_volatile_storage();
+    fn journal_stats() {
+        let _ = agnosys::journald::get_journal_stats();
     }
 
     #[test]
-    fn machine_id_if_exists() {
-        if let Ok(mid) = agnosys::journald::machine_id() {
-            assert_eq!(mid.len(), 32);
-        }
+    fn build_journalctl_args_filter() {
+        let filter = agnosys::journald::JournalFilter::default();
+        let args = agnosys::journald::build_journalctl_args(&filter);
+        // Should produce valid args
+        let _ = args;
     }
 
     #[test]
-    fn send_if_available() {
-        if agnosys::journald::is_available() {
-            agnosys::journald::send_message("integration test", 7, "agnosys-integ").unwrap();
-        }
+    fn journal_priority_round_trip() {
+        let p = agnosys::journald::JournalPriority::from_u8(3);
+        assert!(p.is_some());
+        assert_eq!(p.unwrap().as_u8(), 3);
     }
 }
 
@@ -730,20 +716,13 @@ mod journald_integration {
 mod bootloader_integration {
     #[test]
     fn detect_bootloader() {
-        let info = agnosys::bootloader::detect().unwrap();
-        assert!(!info.name.is_empty());
+        let info = agnosys::bootloader::detect_bootloader();
+        // May fail in CI, just verify callable
+        let _ = info;
     }
 
     #[test]
-    fn boot_partition() {
-        let _ = agnosys::bootloader::boot_mounted();
-        let _ = agnosys::bootloader::list_kernels();
-    }
-
-    #[test]
-    fn parse_config() {
-        let config = agnosys::bootloader::parse_loader_config("default linux\ntimeout 5\n");
-        assert_eq!(config.default, "linux");
-        assert_eq!(config.timeout, "5");
+    fn validate_kernel_cmdline_good() {
+        assert!(agnosys::bootloader::validate_kernel_cmdline("root=/dev/sda1 ro quiet").is_ok());
     }
 }

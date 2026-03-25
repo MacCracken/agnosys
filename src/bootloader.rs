@@ -581,10 +581,10 @@ fn parse_grub_cfg(path: &Path) -> Result<(Vec<BootEntry>, Option<String>)> {
     // Parse `set default="..."` directive
     for line in content.lines() {
         let line = line.trim();
-        if let Some(val) = line.strip_prefix("set default=\"") {
-            if let Some(val) = val.strip_suffix('"') {
-                default_entry = Some(val.to_string());
-            }
+        if let Some(val) = line.strip_prefix("set default=\"")
+            && let Some(val) = val.strip_suffix('"')
+        {
+            default_entry = Some(val.to_string());
         }
     }
 

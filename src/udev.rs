@@ -274,10 +274,10 @@ pub fn parse_udevadm_info(output: &str) -> Result<DeviceInfo> {
                 existing.push(' ');
             }
             existing.push_str(&format!("/dev/{}", val));
-        } else if let Some(val) = line.strip_prefix("E: ") {
-            if let Some((k, v)) = val.split_once('=') {
-                properties.insert(k.to_string(), v.to_string());
-            }
+        } else if let Some(val) = line.strip_prefix("E: ")
+            && let Some((k, v)) = val.split_once('=')
+        {
+            properties.insert(k.to_string(), v.to_string());
         }
     }
 
@@ -318,10 +318,10 @@ fn parse_export_db(output: &str) -> Result<Vec<DeviceInfo>> {
         if line.trim().is_empty() {
             if !current_block.is_empty() {
                 // Only include blocks that have a P: line
-                if current_block.contains("\nP: ") || current_block.starts_with("P: ") {
-                    if let Ok(dev) = parse_udevadm_info(&current_block) {
-                        devices.push(dev);
-                    }
+                if (current_block.contains("\nP: ") || current_block.starts_with("P: "))
+                    && let Ok(dev) = parse_udevadm_info(&current_block)
+                {
+                    devices.push(dev);
                 }
                 current_block.clear();
             }
@@ -336,10 +336,9 @@ fn parse_export_db(output: &str) -> Result<Vec<DeviceInfo>> {
     // Handle trailing block without final newline
     if !current_block.is_empty()
         && (current_block.contains("\nP: ") || current_block.starts_with("P: "))
+        && let Ok(dev) = parse_udevadm_info(&current_block)
     {
-        if let Ok(dev) = parse_udevadm_info(&current_block) {
-            devices.push(dev);
-        }
+        devices.push(dev);
     }
 
     Ok(devices)
