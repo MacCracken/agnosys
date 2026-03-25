@@ -27,6 +27,9 @@ pub enum SysError {
     #[error("feature not supported: {feature}")]
     NotSupported { feature: Cow<'static, str> },
 
+    #[error("unknown error: {0}")]
+    Unknown(Cow<'static, str>),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

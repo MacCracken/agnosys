@@ -1,430 +1,733 @@
-//! secureboot — Secure Boot verification.
+//! UEFI Secure Boot integration for AGNOS
 //!
-//! Read UEFI Secure Boot state from EFI variables in sysfs.
-//! Detect whether Secure Boot is enabled, check SetupMode,
-//! and inspect key databases (PK, KEK, db, dbx).
+//! Manages secure boot state, key enrollment, and kernel/module signing.
+//! Shells out to `mokutil`, `kmodsign`, and `modinfo` where needed.
 //!
-//! # Example
-//!
-//! ```no_run
-//! use agnosys::secureboot;
-//!
-//! if secureboot::is_efi() {
-//!     let state = secureboot::state().unwrap();
-//!     println!("Secure Boot: {}", if state.secure_boot { "enabled" } else { "disabled" });
-//!     println!("Setup Mode: {}", if state.setup_mode { "yes" } else { "no" });
-//! }
-//! ```
+//! On non-Linux platforms, all operations return `SysError::NotSupported`.
 
 use crate::error::{Result, SysError};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-// ── Constants ───────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
-const EFI_VARS_PATH: &str = "/sys/firmware/efi/efivars";
-const EFI_PATH: &str = "/sys/firmware/efi";
-
-// EFI variable GUIDs
-const EFI_GLOBAL_GUID: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
-const EFI_IMAGE_SECURITY_GUID: &str = "d719b2cb-3d3a-4596-a3bc-dad00e67656f";
-
-// ── Public types ────────────────────────────────────────────────────
-
-/// Secure Boot state summary.
-#[derive(Debug, Clone)]
-pub struct SecureBootState {
-    /// Whether Secure Boot is enabled.
-    pub secure_boot: bool,
-    /// Whether the system is in Setup Mode (keys can be enrolled).
-    pub setup_mode: bool,
-    /// Whether the Platform Key (PK) is enrolled.
-    pub pk_enrolled: bool,
+/// Secure Boot state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SecureBootState {
+    /// Secure Boot is enabled and enforcing.
+    Enabled,
+    /// Secure Boot is disabled.
+    Disabled,
+    /// Firmware is in Setup Mode (keys can be enrolled without authentication).
+    SetupMode,
+    /// System does not support UEFI Secure Boot (legacy BIOS, non-EFI).
+    NotSupported,
 }
 
-/// Information about an EFI variable.
-#[derive(Debug, Clone)]
-pub struct EfiVariable {
-    /// Variable name.
-    pub name: String,
-    /// Variable GUID.
-    pub guid: String,
-    /// Raw variable data (first 4 bytes are attributes, rest is data).
-    pub data: Vec<u8>,
-}
-
-/// Secure Boot key database type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum KeyDb {
-    /// Platform Key — root of trust.
-    PK,
-    /// Key Exchange Key — can update db/dbx.
-    KEK,
-    /// Signature Database — allowed signatures.
-    Db,
-    /// Forbidden Signature Database — revoked signatures.
-    Dbx,
-}
-
-impl KeyDb {
-    /// The EFI variable name for this key database.
-    #[must_use]
-    pub fn var_name(&self) -> &'static str {
+impl SecureBootState {
+    pub fn as_str(&self) -> &str {
         match self {
-            Self::PK => "PK",
-            Self::KEK => "KEK",
-            Self::Db => "db",
-            Self::Dbx => "dbx",
+            SecureBootState::Enabled => "enabled",
+            SecureBootState::Disabled => "disabled",
+            SecureBootState::SetupMode => "setup_mode",
+            SecureBootState::NotSupported => "not_supported",
         }
     }
 
-    /// The GUID for this key database's EFI variable.
-    #[must_use]
-    pub fn guid(&self) -> &'static str {
-        match self {
-            Self::PK | Self::KEK => EFI_GLOBAL_GUID,
-            Self::Db | Self::Dbx => EFI_IMAGE_SECURITY_GUID,
-        }
+    /// Whether enforcement is active.
+    pub fn is_enforcing(&self) -> bool {
+        matches!(self, SecureBootState::Enabled)
     }
 }
 
-impl std::fmt::Display for KeyDb {
+impl std::fmt::Display for SecureBootState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.var_name())
+        write!(f, "{}", self.as_str())
     }
 }
 
-// ── EFI detection ───────────────────────────────────────────────────
-
-/// Check if the system booted in EFI mode.
-#[must_use]
-pub fn is_efi() -> bool {
-    Path::new(EFI_PATH).is_dir()
+/// An enrolled MOK (Machine Owner Key).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnrolledKey {
+    /// Subject / Common Name.
+    pub subject: String,
+    /// Issuer.
+    pub issuer: String,
+    /// SHA-1 fingerprint (hex).
+    pub fingerprint: String,
+    /// Not-before date (text).
+    pub not_before: String,
+    /// Not-after date (text).
+    pub not_after: String,
 }
 
-/// Check if EFI variables are accessible.
-#[must_use]
-pub fn efivars_available() -> bool {
-    Path::new(EFI_VARS_PATH).is_dir()
+/// Information about a kernel module's signature.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModuleSignatureInfo {
+    /// Module file path.
+    pub module_path: PathBuf,
+    /// Whether the module has a signature attached.
+    pub has_signature: bool,
+    /// Signer name (if available).
+    pub signer: Option<String>,
+    /// Signature algorithm (if available).
+    pub sig_algorithm: Option<String>,
 }
 
-// ── Secure Boot state ───────────────────────────────────────────────
-
-/// Read the current Secure Boot state.
-pub fn state() -> Result<SecureBootState> {
-    let secure_boot = read_efi_bool("SecureBoot", EFI_GLOBAL_GUID).unwrap_or(false);
-    let setup_mode = read_efi_bool("SetupMode", EFI_GLOBAL_GUID).unwrap_or(false);
-    let pk_enrolled = efi_var_exists("PK", EFI_GLOBAL_GUID);
-
-    tracing::trace!(
-        secure_boot,
-        setup_mode,
-        pk_enrolled,
-        "read Secure Boot state"
-    );
-
-    Ok(SecureBootState {
-        secure_boot,
-        setup_mode,
-        pk_enrolled,
-    })
+/// An EFI variable read from sysfs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EfiVariable {
+    /// Variable name (e.g. `SecureBoot-8be4df61-...`).
+    pub name: String,
+    /// Raw hex-encoded value.
+    pub value_hex: String,
+    /// Size in bytes.
+    pub size: usize,
 }
 
-/// Check if Secure Boot is enabled.
-pub fn is_secure_boot_enabled() -> Result<bool> {
-    read_efi_bool("SecureBoot", EFI_GLOBAL_GUID)
+// ---------------------------------------------------------------------------
+// Functions
+// ---------------------------------------------------------------------------
+
+/// Get the current Secure Boot state.
+///
+/// Reads `/sys/firmware/efi/efivars/SecureBoot-*` or falls back to `mokutil`.
+pub fn get_secureboot_status() -> Result<SecureBootState> {
+    #[cfg(target_os = "linux")]
+    {
+        // First check if EFI is even available
+        let efi_dir = Path::new("/sys/firmware/efi");
+        if !efi_dir.exists() {
+            return Ok(SecureBootState::NotSupported);
+        }
+
+        // Try reading from efivars
+        let efivars_dir = Path::new("/sys/firmware/efi/efivars");
+        if efivars_dir.exists() {
+            if let Some(state) = read_secureboot_efivar(efivars_dir) {
+                return Ok(state);
+            }
+        }
+
+        // Fallback: mokutil --sb-state
+        match run_command("mokutil", &["--sb-state"]) {
+            Ok(output) => {
+                let lower = output.to_lowercase();
+                if lower.contains("secureboot enabled") {
+                    Ok(SecureBootState::Enabled)
+                } else if lower.contains("secureboot disabled") {
+                    Ok(SecureBootState::Disabled)
+                } else if lower.contains("setup mode") {
+                    Ok(SecureBootState::SetupMode)
+                } else {
+                    Ok(SecureBootState::Disabled)
+                }
+            }
+            Err(_) => {
+                // mokutil not available; can't determine
+                Ok(SecureBootState::NotSupported)
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "secureboot".into(),
+        })
+    }
 }
 
-/// Check if the system is in Setup Mode.
-pub fn is_setup_mode() -> Result<bool> {
-    read_efi_bool("SetupMode", EFI_GLOBAL_GUID)
+/// Read the SecureBoot EFI variable from sysfs.
+#[cfg(target_os = "linux")]
+fn read_secureboot_efivar(efivars_dir: &Path) -> Option<SecureBootState> {
+    // The variable is named SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
+    let sb_guid = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
+    let sb_path = efivars_dir.join(format!("SecureBoot-{}", sb_guid));
+
+    if !sb_path.exists() {
+        return None;
+    }
+
+    let data = std::fs::read(&sb_path).ok()?;
+    // EFI variable: 4-byte attributes + payload
+    if data.len() < 5 {
+        return None;
+    }
+
+    // The actual SecureBoot value is byte 4 (after the 4-byte attributes header)
+    let value = data[4];
+    if value == 1 {
+        // Check SetupMode
+        let setup_path = efivars_dir.join(format!("SetupMode-{}", sb_guid));
+        if let Ok(setup_data) = std::fs::read(&setup_path) {
+            if setup_data.len() >= 5 && setup_data[4] == 1 {
+                return Some(SecureBootState::SetupMode);
+            }
+        }
+        Some(SecureBootState::Enabled)
+    } else {
+        Some(SecureBootState::Disabled)
+    }
 }
 
-// ── EFI variable reading ────────────────────────────────────────────
+/// List enrolled MOK (Machine Owner Key) certificates.
+///
+/// Uses `mokutil --list-enrolled`.
+pub fn list_enrolled_keys() -> Result<Vec<EnrolledKey>> {
+    #[cfg(target_os = "linux")]
+    {
+        let output = run_command("mokutil", &["--list-enrolled"])?;
+        parse_mokutil_list(&output)
+    }
 
-/// Read a raw EFI variable.
-pub fn read_efi_var(name: &str, guid: &str) -> Result<EfiVariable> {
-    let path = efi_var_path(name, guid);
-    let data = std::fs::read(&path).map_err(|e| {
-        tracing::debug!(name, guid, error = %e, "failed to read EFI variable");
-        SysError::Io(e)
-    })?;
-
-    Ok(EfiVariable {
-        name: name.to_owned(),
-        guid: guid.to_owned(),
-        data,
-    })
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "secureboot".into(),
+        })
+    }
 }
 
-/// Check if an EFI variable exists.
-#[must_use]
-pub fn efi_var_exists(name: &str, guid: &str) -> bool {
-    efi_var_path(name, guid).exists()
-}
+/// Parse mokutil --list-enrolled output into EnrolledKey structs.
+///
+/// Each key block looks like:
+/// ```text
+/// [key 1]
+/// SHA1 Fingerprint: aa:bb:cc:...
+///   Subject: CN=My Key
+///   Issuer: CN=My CA
+///   Valid from: ...
+///   Valid until: ...
+/// ```
+pub fn parse_mokutil_list(output: &str) -> Result<Vec<EnrolledKey>> {
+    let mut keys = Vec::new();
+    let mut current_subject = String::new();
+    let mut current_issuer = String::new();
+    let mut current_fingerprint = String::new();
+    let mut current_not_before = String::new();
+    let mut current_not_after = String::new();
+    let mut in_key = false;
 
-/// Get the sysfs path for an EFI variable.
-#[inline]
-#[must_use]
-pub fn efi_var_path(name: &str, guid: &str) -> PathBuf {
-    Path::new(EFI_VARS_PATH).join(format!("{name}-{guid}"))
-}
+    for line in output.lines() {
+        let trimmed = line.trim();
 
-/// List all EFI variable names in efivars.
-pub fn list_efi_vars() -> Result<Vec<String>> {
-    let dir = Path::new(EFI_VARS_PATH);
-    if !dir.is_dir() {
-        return Err(SysError::NotSupported {
-            feature: std::borrow::Cow::Borrowed("EFI variables"),
+        if trimmed.starts_with("[key ") {
+            // Save previous key if any
+            if in_key && !current_fingerprint.is_empty() {
+                keys.push(EnrolledKey {
+                    subject: current_subject.clone(),
+                    issuer: current_issuer.clone(),
+                    fingerprint: current_fingerprint.clone(),
+                    not_before: current_not_before.clone(),
+                    not_after: current_not_after.clone(),
+                });
+            }
+            current_subject.clear();
+            current_issuer.clear();
+            current_fingerprint.clear();
+            current_not_before.clear();
+            current_not_after.clear();
+            in_key = true;
+            continue;
+        }
+
+        if !in_key {
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("SHA1 Fingerprint:") {
+            current_fingerprint = rest.trim().replace(':', "").to_lowercase();
+        } else if let Some(rest) = trimmed.strip_prefix("Subject:") {
+            current_subject = rest.trim().to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("Issuer:") {
+            current_issuer = rest.trim().to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("Valid from:") {
+            current_not_before = rest.trim().to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("Valid until:") {
+            current_not_after = rest.trim().to_string();
+        }
+    }
+
+    // Don't forget the last key
+    if in_key && !current_fingerprint.is_empty() {
+        keys.push(EnrolledKey {
+            subject: current_subject,
+            issuer: current_issuer,
+            fingerprint: current_fingerprint,
+            not_before: current_not_before,
+            not_after: current_not_after,
         });
     }
 
-    let mut vars = Vec::new();
-    let entries = std::fs::read_dir(dir).map_err(|e| {
-        tracing::error!(error = %e, "failed to read efivars");
-        SysError::Io(e)
-    })?;
+    Ok(keys)
+}
 
-    for entry in entries.flatten() {
-        if let Some(name) = entry.file_name().to_str() {
-            vars.push(name.to_owned());
+/// Enroll a DER-encoded certificate into the MOK list.
+///
+/// Uses `mokutil --import <path>`. A reboot is required to complete enrollment.
+pub fn enroll_key(der_path: &Path) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if !der_path.exists() {
+            return Err(SysError::InvalidArgument(
+                format!("Certificate file not found: {}", der_path.display()).into(),
+            ));
         }
+
+        let ext = der_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !["der", "cer", "crt", "pem"].contains(&ext) {
+            return Err(SysError::InvalidArgument(
+                format!(
+                    "Unexpected certificate extension '{}', expected .der/.cer/.crt/.pem",
+                    ext
+                )
+                .into(),
+            ));
+        }
+
+        run_command_checked("mokutil", &["--import", &der_path.to_string_lossy()])?;
+
+        tracing::info!(
+            "Enrolled key {} into MOK — reboot required to complete",
+            der_path.display()
+        );
+        Ok(())
     }
 
-    vars.sort();
-    tracing::trace!(count = vars.len(), "listed EFI variables");
-    Ok(vars)
-}
-
-// ── Key database inspection ─────────────────────────────────────────
-
-/// Check if a key database variable is populated.
-#[must_use]
-pub fn key_db_exists(db: KeyDb) -> bool {
-    efi_var_exists(db.var_name(), db.guid())
-}
-
-/// Read the raw data of a key database variable.
-pub fn read_key_db(db: KeyDb) -> Result<EfiVariable> {
-    read_efi_var(db.var_name(), db.guid())
-}
-
-/// Get the size of a key database variable in bytes.
-pub fn key_db_size(db: KeyDb) -> Result<u64> {
-    let path = efi_var_path(db.var_name(), db.guid());
-    let meta = std::fs::metadata(&path).map_err(|e| {
-        tracing::debug!(db = %db, error = %e, "failed to stat key db");
-        SysError::Io(e)
-    })?;
-    Ok(meta.len())
-}
-
-// ── Internal helpers ────────────────────────────────────────────────
-
-/// Read an EFI boolean variable (4 bytes attributes + 1 byte value).
-fn read_efi_bool(name: &str, guid: &str) -> Result<bool> {
-    let var = read_efi_var(name, guid)?;
-    // EFI variable format: 4 bytes attributes, then data
-    // A boolean var has 1 byte of data after the 4-byte attributes
-    if var.data.len() >= 5 {
-        Ok(var.data[4] != 0)
-    } else {
-        Ok(false)
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = der_path;
+        Err(SysError::NotSupported {
+            feature: "secureboot".into(),
+        })
     }
 }
+
+/// Sign a kernel module with a private key and certificate.
+///
+/// Uses `kmodsign` (or `/usr/src/linux-headers-*/scripts/sign-file`).
+pub fn sign_kernel_module(
+    module_path: &Path,
+    private_key: &Path,
+    certificate: &Path,
+) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if !module_path.exists() {
+            return Err(SysError::InvalidArgument(
+                format!("Module not found: {}", module_path.display()).into(),
+            ));
+        }
+        if !private_key.exists() {
+            return Err(SysError::InvalidArgument(
+                format!("Private key not found: {}", private_key.display()).into(),
+            ));
+        }
+        if !certificate.exists() {
+            return Err(SysError::InvalidArgument(
+                format!("Certificate not found: {}", certificate.display()).into(),
+            ));
+        }
+
+        // Verify it looks like a .ko file
+        let ext = module_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if ext != "ko" {
+            return Err(SysError::InvalidArgument(
+                format!("Expected .ko kernel module, got '.{}'", ext).into(),
+            ));
+        }
+
+        // Try kmodsign first, fall back to sign-file
+        let sign_result = run_command(
+            "kmodsign",
+            &[
+                "sha256",
+                &private_key.to_string_lossy(),
+                &certificate.to_string_lossy(),
+                &module_path.to_string_lossy(),
+            ],
+        );
+
+        if sign_result.is_err() {
+            // Fallback: sign-file from kernel headers
+            run_command_checked(
+                "/usr/lib/modules-load.d/../linux/scripts/sign-file",
+                &[
+                    "sha256",
+                    &private_key.to_string_lossy(),
+                    &certificate.to_string_lossy(),
+                    &module_path.to_string_lossy(),
+                ],
+            )?;
+        }
+
+        tracing::info!("Signed kernel module: {}", module_path.display());
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (module_path, private_key, certificate);
+        Err(SysError::NotSupported {
+            feature: "secureboot".into(),
+        })
+    }
+}
+
+/// Verify a kernel module's signature using `modinfo`.
+pub fn verify_module_signature(module_path: &Path) -> Result<ModuleSignatureInfo> {
+    #[cfg(target_os = "linux")]
+    {
+        if !module_path.exists() {
+            return Err(SysError::InvalidArgument(
+                format!("Module not found: {}", module_path.display()).into(),
+            ));
+        }
+
+        let output = run_command("modinfo", &[&module_path.to_string_lossy()])?;
+
+        let has_signature = output.contains("sig_id:") || output.contains("signature:");
+        let signer = output
+            .lines()
+            .find(|l| l.starts_with("signer:"))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|s| s.trim().to_string());
+        let sig_algorithm = output
+            .lines()
+            .find(|l| l.starts_with("sig_hashalgo:"))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|s| s.trim().to_string());
+
+        Ok(ModuleSignatureInfo {
+            module_path: module_path.to_path_buf(),
+            has_signature,
+            signer,
+            sig_algorithm,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = module_path;
+        Err(SysError::NotSupported {
+            feature: "secureboot".into(),
+        })
+    }
+}
+
+/// List relevant EFI variables from sysfs.
+pub fn get_efi_variables() -> Result<Vec<EfiVariable>> {
+    #[cfg(target_os = "linux")]
+    {
+        let efivars_dir = Path::new("/sys/firmware/efi/efivars");
+        if !efivars_dir.exists() {
+            return Err(SysError::Unknown(
+                "EFI variables directory not found; is this a UEFI system?".into(),
+            ));
+        }
+
+        let relevant_prefixes = [
+            "SecureBoot-",
+            "SetupMode-",
+            "PK-",
+            "KEK-",
+            "db-",
+            "dbx-",
+            "MokList",
+        ];
+
+        let mut variables = Vec::new();
+
+        let entries = std::fs::read_dir(efivars_dir)
+            .map_err(|e| SysError::Unknown(format!("Failed to read efivars: {}", e).into()))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                SysError::Unknown(format!("Failed to read efivars entry: {}", e).into())
+            })?;
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            if !relevant_prefixes.iter().any(|p| name.starts_with(p)) {
+                continue;
+            }
+
+            let data = std::fs::read(entry.path()).unwrap_or_default();
+            let value_hex = hex::encode(&data);
+            let size = data.len();
+
+            variables.push(EfiVariable {
+                name,
+                value_hex,
+                size,
+            });
+        }
+
+        variables.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(variables)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "secureboot".into(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Run a command and return its stdout.
+#[cfg(target_os = "linux")]
+fn run_command(cmd: &str, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .map_err(|e| SysError::Unknown(format!("Failed to run {}: {}", cmd, e).into()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(SysError::Unknown(
+            format!("{} {} failed: {}", cmd, args.join(" "), stderr.trim()).into(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Run a command and check for success.
+#[cfg(target_os = "linux")]
+fn run_command_checked(cmd: &str, args: &[&str]) -> Result<()> {
+    let _ = run_command(cmd, args)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── compile-time guarantees ──────────────────────────────────────
-
-    const _: () = {
-        const fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<SecureBootState>();
-        assert_send_sync::<EfiVariable>();
-        assert_send_sync::<KeyDb>();
-    };
-
-    // ── EFI detection ───────────────────────────────────────────────
+    // --- SecureBootState ---
 
     #[test]
-    fn is_efi_returns_bool() {
-        let _ = is_efi();
+    fn test_secureboot_state_as_str() {
+        assert_eq!(SecureBootState::Enabled.as_str(), "enabled");
+        assert_eq!(SecureBootState::Disabled.as_str(), "disabled");
+        assert_eq!(SecureBootState::SetupMode.as_str(), "setup_mode");
+        assert_eq!(SecureBootState::NotSupported.as_str(), "not_supported");
     }
 
     #[test]
-    fn efivars_available_returns_bool() {
-        let _ = efivars_available();
-    }
-
-    // ── Secure Boot state ───────────────────────────────────────────
-
-    #[test]
-    fn state_returns_result() {
-        let _ = state();
+    fn test_secureboot_state_display() {
+        assert_eq!(format!("{}", SecureBootState::Enabled), "enabled");
+        assert_eq!(format!("{}", SecureBootState::SetupMode), "setup_mode");
     }
 
     #[test]
-    fn is_secure_boot_enabled_returns_result() {
-        let _ = is_secure_boot_enabled();
+    fn test_secureboot_state_is_enforcing() {
+        assert!(SecureBootState::Enabled.is_enforcing());
+        assert!(!SecureBootState::Disabled.is_enforcing());
+        assert!(!SecureBootState::SetupMode.is_enforcing());
+        assert!(!SecureBootState::NotSupported.is_enforcing());
     }
 
     #[test]
-    fn is_setup_mode_returns_result() {
-        let _ = is_setup_mode();
-    }
-
-    // ── KeyDb ───────────────────────────────────────────────────────
-
-    #[test]
-    fn key_db_var_names() {
-        assert_eq!(KeyDb::PK.var_name(), "PK");
-        assert_eq!(KeyDb::KEK.var_name(), "KEK");
-        assert_eq!(KeyDb::Db.var_name(), "db");
-        assert_eq!(KeyDb::Dbx.var_name(), "dbx");
-    }
-
-    #[test]
-    fn key_db_guids() {
-        assert_eq!(KeyDb::PK.guid(), EFI_GLOBAL_GUID);
-        assert_eq!(KeyDb::KEK.guid(), EFI_GLOBAL_GUID);
-        assert_eq!(KeyDb::Db.guid(), EFI_IMAGE_SECURITY_GUID);
-        assert_eq!(KeyDb::Dbx.guid(), EFI_IMAGE_SECURITY_GUID);
+    fn test_secureboot_state_serde_roundtrip() {
+        for state in &[
+            SecureBootState::Enabled,
+            SecureBootState::Disabled,
+            SecureBootState::SetupMode,
+            SecureBootState::NotSupported,
+        ] {
+            let json = serde_json::to_string(state).unwrap();
+            let back: SecureBootState = serde_json::from_str(&json).unwrap();
+            assert_eq!(*state, back);
+        }
     }
 
     #[test]
-    fn key_db_display() {
-        assert_eq!(format!("{}", KeyDb::PK), "PK");
-        assert_eq!(format!("{}", KeyDb::Dbx), "dbx");
-    }
-
-    #[test]
-    fn key_db_debug() {
-        let dbg = format!("{:?}", KeyDb::PK);
-        assert!(dbg.contains("PK"));
-    }
-
-    #[test]
-    fn key_db_eq() {
-        assert_eq!(KeyDb::PK, KeyDb::PK);
-        assert_ne!(KeyDb::PK, KeyDb::KEK);
-    }
-
-    #[test]
-    fn key_db_copy() {
-        let a = KeyDb::Db;
+    fn test_secureboot_state_clone_copy_eq() {
+        let a = SecureBootState::Enabled;
         let b = a;
+        let c = a;
         assert_eq!(a, b);
-    }
-
-    // ── EFI variable paths ──────────────────────────────────────────
-
-    #[test]
-    fn efi_var_path_format() {
-        let p = efi_var_path("SecureBoot", EFI_GLOBAL_GUID);
-        let s = p.to_string_lossy();
-        assert!(s.contains("efivars"));
-        assert!(s.contains("SecureBoot"));
-        assert!(s.contains(EFI_GLOBAL_GUID));
+        assert_eq!(a, c);
+        assert_ne!(SecureBootState::Enabled, SecureBootState::Disabled);
     }
 
     #[test]
-    fn efi_var_exists_nonexistent() {
-        assert!(!efi_var_exists(
-            "NonExistentVar",
-            "00000000-0000-0000-0000-000000000000"
-        ));
+    fn test_secureboot_state_debug() {
+        assert_eq!(format!("{:?}", SecureBootState::Enabled), "Enabled");
+        assert_eq!(format!("{:?}", SecureBootState::SetupMode), "SetupMode");
     }
 
-    // ── Key database ────────────────────────────────────────────────
+    // --- parse_mokutil_list ---
 
     #[test]
-    fn key_db_exists_returns_bool() {
-        let _ = key_db_exists(KeyDb::PK);
-        let _ = key_db_exists(KeyDb::KEK);
-        let _ = key_db_exists(KeyDb::Db);
-        let _ = key_db_exists(KeyDb::Dbx);
+    fn test_parse_mokutil_list_single_key() {
+        let output = r#"[key 1]
+SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+        Subject: CN=AGNOS Signing Key
+        Issuer: CN=AGNOS CA
+        Valid from: Jan  1 00:00:00 2026 GMT
+        Valid until: Dec 31 23:59:59 2030 GMT
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].subject, "CN=AGNOS Signing Key");
+        assert_eq!(keys[0].issuer, "CN=AGNOS CA");
+        assert_eq!(
+            keys[0].fingerprint,
+            "aabbccddeeff00112233445566778899aabbccdd"
+        );
+        assert!(keys[0].not_before.contains("2026"));
+        assert!(keys[0].not_after.contains("2030"));
     }
 
-    // ── List EFI vars ───────────────────────────────────────────────
-
     #[test]
-    fn list_efi_vars_returns_result() {
-        let _ = list_efi_vars();
+    fn test_parse_mokutil_list_multiple_keys() {
+        let output = r#"[key 1]
+SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+        Subject: CN=Key One
+        Issuer: CN=CA One
+        Valid from: Jan 1 2026
+        Valid until: Dec 31 2030
+[key 2]
+SHA1 Fingerprint: 11:22:33:44:55:66:77:88:99:00:aa:bb:cc:dd:ee:ff:11:22:33:44
+        Subject: CN=Key Two
+        Issuer: CN=CA Two
+        Valid from: Feb 1 2026
+        Valid until: Feb 1 2031
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].subject, "CN=Key One");
+        assert_eq!(keys[1].subject, "CN=Key Two");
+        assert_eq!(
+            keys[1].fingerprint,
+            "11223344556677889900aabbccddeeff11223344"
+        );
     }
 
-    // ── SecureBootState struct ──────────────────────────────────────
+    #[test]
+    fn test_parse_mokutil_list_empty() {
+        let keys = parse_mokutil_list("").unwrap();
+        assert!(keys.is_empty());
+    }
 
     #[test]
-    fn secure_boot_state_debug() {
-        let s = SecureBootState {
-            secure_boot: true,
-            setup_mode: false,
-            pk_enrolled: true,
+    fn test_parse_mokutil_list_no_keys() {
+        let output = "MokListRT is empty\n";
+        let keys = parse_mokutil_list(output).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_partial_key() {
+        // Key header without fingerprint → not included
+        let output = "[key 1]\n        Subject: CN=Orphan\n";
+        let keys = parse_mokutil_list(output).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    // --- EnrolledKey ---
+
+    #[test]
+    fn test_enrolled_key_serde_roundtrip() {
+        let key = EnrolledKey {
+            subject: "CN=Test".to_string(),
+            issuer: "CN=CA".to_string(),
+            fingerprint: "aabb".to_string(),
+            not_before: "2026".to_string(),
+            not_after: "2030".to_string(),
         };
-        let dbg = format!("{s:?}");
-        assert!(dbg.contains("secure_boot"));
-        assert!(dbg.contains("true"));
+        let json = serde_json::to_string(&key).unwrap();
+        let back: EnrolledKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key, back);
     }
 
     #[test]
-    fn secure_boot_state_clone() {
-        let s = SecureBootState {
-            secure_boot: false,
-            setup_mode: true,
-            pk_enrolled: false,
+    fn test_enrolled_key_clone_eq() {
+        let key = EnrolledKey {
+            subject: "CN=A".to_string(),
+            issuer: "CN=B".to_string(),
+            fingerprint: "ff".to_string(),
+            not_before: "now".to_string(),
+            not_after: "later".to_string(),
         };
-        let s2 = s.clone();
-        assert_eq!(s.secure_boot, s2.secure_boot);
-        assert_eq!(s.setup_mode, s2.setup_mode);
+        let cloned = key.clone();
+        assert_eq!(key, cloned);
     }
 
-    // ── EfiVariable struct ──────────────────────────────────────────
+    // --- ModuleSignatureInfo ---
 
     #[test]
-    fn efi_variable_debug() {
-        let v = EfiVariable {
-            name: "SecureBoot".into(),
-            guid: EFI_GLOBAL_GUID.into(),
-            data: vec![0x06, 0x00, 0x00, 0x00, 0x01],
+    fn test_module_signature_info_serde() {
+        let info = ModuleSignatureInfo {
+            module_path: PathBuf::from("/lib/modules/test.ko"),
+            has_signature: true,
+            signer: Some("AGNOS".to_string()),
+            sig_algorithm: Some("sha256".to_string()),
         };
-        let dbg = format!("{v:?}");
-        assert!(dbg.contains("SecureBoot"));
+        let json = serde_json::to_string(&info).unwrap();
+        let back: ModuleSignatureInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, back);
     }
 
     #[test]
-    fn efi_variable_clone() {
-        let v = EfiVariable {
-            name: "test".into(),
-            guid: "guid".into(),
-            data: vec![1, 2, 3],
+    fn test_module_signature_info_no_sig() {
+        let info = ModuleSignatureInfo {
+            module_path: PathBuf::from("/tmp/unsigned.ko"),
+            has_signature: false,
+            signer: None,
+            sig_algorithm: None,
         };
-        let v2 = v.clone();
-        assert_eq!(v.name, v2.name);
-        assert_eq!(v.data, v2.data);
+        assert!(!info.has_signature);
+        assert!(info.signer.is_none());
     }
 
-    // ── Conditional: real EFI system ────────────────────────────────
+    // --- EfiVariable ---
 
     #[test]
-    fn state_on_efi_system() {
-        if !is_efi() {
-            return;
-        }
-        let s = state().unwrap();
-        // On a real EFI system, PK should be enrolled if SB is enabled
-        if s.secure_boot {
-            assert!(s.pk_enrolled);
-        }
+    fn test_efi_variable_serde() {
+        let var = EfiVariable {
+            name: "SecureBoot-8be4df61".to_string(),
+            value_hex: "0600000001".to_string(),
+            size: 5,
+        };
+        let json = serde_json::to_string(&var).unwrap();
+        let back: EfiVariable = serde_json::from_str(&json).unwrap();
+        assert_eq!(var, back);
     }
 
     #[test]
-    fn list_efi_vars_on_efi_system() {
-        if !efivars_available() {
-            return;
-        }
-        let vars = list_efi_vars().unwrap();
-        assert!(!vars.is_empty());
+    fn test_efi_variable_debug() {
+        let var = EfiVariable {
+            name: "PK-1234".to_string(),
+            value_hex: "ff".to_string(),
+            size: 1,
+        };
+        let dbg = format!("{:?}", var);
+        assert!(dbg.contains("EfiVariable"));
+        assert!(dbg.contains("PK-1234"));
+    }
+
+    // --- get_secureboot_status (safe to call) ---
+
+    #[test]
+    fn test_get_secureboot_status_no_crash() {
+        // This may return Enabled, Disabled, or NotSupported depending on the
+        // environment — just verify it does not panic.
+        let _ = get_secureboot_status();
     }
 }

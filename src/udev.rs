@@ -1,771 +1,967 @@
-//! udev — Device enumeration and hotplug monitoring.
+//! udev Device Management Interface
 //!
-//! Pure sysfs/netlink implementation with no libudev dependency.
-//! Enumerate devices by subsystem, read device properties from sysfs,
-//! and monitor hotplug events via the kernel uevent netlink socket.
+//! Userland wrappers for udev device enumeration, monitoring, and rule management.
+//! Shells out to `udevadm` (part of systemd/eudev).
 //!
-//! # Example
-//!
-//! ```no_run
-//! use agnosys::udev;
-//!
-//! // List all block devices
-//! for dev in udev::enumerate("block").unwrap() {
-//!     println!("{}: {}", dev.name(), dev.syspath().display());
-//!     if let Some(vendor) = dev.attr("vendor") {
-//!         println!("  vendor: {vendor}");
-//!     }
-//! }
-//! ```
+//! On non-Linux platforms, all operations return `SysError::NotSupported`.
 
 use crate::error::{Result, SysError};
-use std::borrow::Cow;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-// ── Constants ───────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
-const SYSFS_CLASS: &str = "/sys/class";
-const SYSFS_BUS: &str = "/sys/bus";
-
-/// Netlink protocol for kernel uevents.
-const NETLINK_KOBJECT_UEVENT: libc::c_int = 15;
-
-// ── Device ──────────────────────────────────────────────────────────
-
-/// A device discovered via sysfs.
-#[derive(Debug, Clone)]
-pub struct Device {
-    syspath: PathBuf,
-    subsystem: String,
-    properties: HashMap<String, String>,
-}
-
-impl Device {
-    /// The sysfs path of this device (e.g., `/sys/class/block/sda`).
-    #[inline]
-    #[must_use]
-    pub fn syspath(&self) -> &Path {
-        &self.syspath
-    }
-
-    /// The device name (last component of syspath, e.g., `sda`).
-    #[must_use]
-    pub fn name(&self) -> &str {
-        self.syspath
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-    }
-
-    /// The subsystem this device belongs to (e.g., `block`, `net`).
-    #[inline]
-    #[must_use]
-    pub fn subsystem(&self) -> &str {
-        &self.subsystem
-    }
-
-    /// The devpath (resolved real path of the sysfs entry).
-    #[must_use]
-    pub fn devpath(&self) -> Option<PathBuf> {
-        std::fs::canonicalize(&self.syspath).ok()
-    }
-
-    /// Read a sysfs attribute file for this device.
-    ///
-    /// Returns `None` if the attribute doesn't exist or can't be read.
-    #[must_use]
-    pub fn attr(&self, name: &str) -> Option<String> {
-        let path = self.syspath.join(name);
-        std::fs::read_to_string(&path)
-            .ok()
-            .map(|s| s.trim().to_owned())
-    }
-
-    /// The device properties parsed from the `uevent` file.
-    #[inline]
-    #[must_use]
-    pub fn properties(&self) -> &HashMap<String, String> {
-        &self.properties
-    }
-
-    /// Get a specific uevent property by key (e.g., `DEVNAME`, `DEVTYPE`, `MAJOR`).
-    #[must_use]
-    pub fn property(&self, key: &str) -> Option<&str> {
-        self.properties.get(key).map(|v| v.as_str())
-    }
-
-    /// The device node path (e.g., `/dev/sda`) if available.
-    #[must_use]
-    pub fn devnode(&self) -> Option<PathBuf> {
-        self.property("DEVNAME")
-            .map(|name| Path::new("/dev").join(name))
-    }
-
-    /// The device type from uevent (e.g., `disk`, `partition`).
-    #[must_use]
-    pub fn devtype(&self) -> Option<&str> {
-        self.property("DEVTYPE")
-    }
-
-    /// The driver bound to this device, if any.
-    #[must_use]
-    pub fn driver(&self) -> Option<String> {
-        let driver_link = self.syspath.join("driver");
-        std::fs::read_link(&driver_link)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-    }
-}
-
-// ── Enumeration ─────────────────────────────────────────────────────
-
-/// Parse the `uevent` file at the given sysfs path into key=value pairs.
-fn parse_uevent(syspath: &Path) -> HashMap<String, String> {
-    let uevent_path = syspath.join("uevent");
-    let mut props = HashMap::new();
-    if let Ok(content) = std::fs::read_to_string(&uevent_path) {
-        for line in content.lines() {
-            if let Some((key, val)) = line.split_once('=') {
-                props.insert(key.to_owned(), val.to_owned());
-            }
-        }
-    }
-    props
-}
-
-/// Enumerate all devices in a given subsystem (e.g., `block`, `net`, `input`).
-///
-/// Searches `/sys/class/<subsystem>` for device entries.
-pub fn enumerate(subsystem: &str) -> Result<Vec<Device>> {
-    let class_path = Path::new(SYSFS_CLASS).join(subsystem);
-
-    if !class_path.is_dir() {
-        tracing::debug!(subsystem, "subsystem not found in /sys/class");
-        return Err(SysError::NotSupported {
-            feature: Cow::Owned(format!("subsystem: {subsystem}")),
-        });
-    }
-
-    let mut devices = Vec::new();
-    let entries = std::fs::read_dir(&class_path).map_err(|e| {
-        tracing::error!(subsystem, error = %e, "failed to read sysfs class dir");
-        SysError::Io(e)
-    })?;
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let syspath = entry.path();
-        let properties = parse_uevent(&syspath);
-
-        devices.push(Device {
-            syspath,
-            subsystem: subsystem.to_owned(),
-            properties,
-        });
-    }
-
-    tracing::trace!(subsystem, count = devices.len(), "enumerated devices");
-    Ok(devices)
-}
-
-/// Enumerate devices for a bus (e.g., `pci`, `usb`, `platform`).
-///
-/// Searches `/sys/bus/<bus>/devices` for device entries.
-pub fn enumerate_bus(bus: &str) -> Result<Vec<Device>> {
-    let bus_path = Path::new(SYSFS_BUS).join(bus).join("devices");
-
-    if !bus_path.is_dir() {
-        tracing::debug!(bus, "bus not found in /sys/bus");
-        return Err(SysError::NotSupported {
-            feature: Cow::Owned(format!("bus: {bus}")),
-        });
-    }
-
-    let mut devices = Vec::new();
-    let entries = std::fs::read_dir(&bus_path).map_err(|e| {
-        tracing::error!(bus, error = %e, "failed to read sysfs bus dir");
-        SysError::Io(e)
-    })?;
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let syspath = entry.path();
-        let properties = parse_uevent(&syspath);
-
-        devices.push(Device {
-            syspath,
-            subsystem: bus.to_owned(),
-            properties,
-        });
-    }
-
-    tracing::trace!(bus, count = devices.len(), "enumerated bus devices");
-    Ok(devices)
-}
-
-/// Open a device by its sysfs path.
-pub fn device_from_syspath(syspath: &Path) -> Result<Device> {
-    if !syspath.exists() {
-        return Err(SysError::InvalidArgument(Cow::Owned(format!(
-            "syspath does not exist: {}",
-            syspath.display()
-        ))));
-    }
-
-    let subsystem = syspath
-        .join("subsystem")
-        .read_link()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_default();
-
-    let properties = parse_uevent(syspath);
-
-    Ok(Device {
-        syspath: syspath.to_owned(),
-        subsystem,
-        properties,
-    })
-}
-
-// ── Hotplug monitoring ──────────────────────────────────────────────
-
-/// A uevent action from the kernel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum UeventAction {
-    /// A device was added.
-    Add,
-    /// A device was removed.
-    Remove,
-    /// A device property changed.
-    Change,
-    /// A device was moved (renamed).
-    Move,
-    /// A device went online.
-    Online,
-    /// A device went offline.
-    Offline,
-    /// A device was bound to a driver.
-    Bind,
-    /// A device was unbound from a driver.
-    Unbind,
-}
-
-/// A parsed kernel uevent from the netlink socket.
-#[derive(Debug, Clone)]
-pub struct Uevent {
-    /// The action (add, remove, change, etc.).
-    pub action: UeventAction,
-    /// The devpath from the kernel (e.g., `/devices/pci0000:00/...`).
+/// Information about a single device as reported by udev / sysfs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    /// Kernel sysfs path (e.g. `/sys/devices/pci0000:00/...`)
+    pub syspath: String,
+    /// Kernel devpath (relative, e.g. `/devices/pci0000:00/...`)
     pub devpath: String,
-    /// The subsystem (e.g., `block`, `net`).
+    /// Subsystem the device belongs to (e.g. `block`, `net`)
     pub subsystem: String,
-    /// Additional key=value properties from the uevent.
+    /// Device type within the subsystem (optional)
+    pub devtype: Option<String>,
+    /// Kernel driver bound to this device (optional)
+    pub driver: Option<String>,
+    /// Device node path (e.g. `/dev/sda`, optional)
+    pub devnode: Option<String>,
+    /// All udev properties as key-value pairs
     pub properties: HashMap<String, String>,
 }
 
-/// A monitor for kernel uevent notifications.
-///
-/// Listens on a netlink socket for device add/remove/change events.
-pub struct Monitor {
-    fd: std::os::fd::OwnedFd,
+/// Well-known device subsystems.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DeviceSubsystem {
+    Block,
+    Net,
+    Input,
+    Usb,
+    Pci,
+    Tty,
+    Gpu,
+    Sound,
+    Other(String),
 }
 
-impl Monitor {
-    /// Create a new uevent monitor.
-    ///
-    /// Opens a `NETLINK_KOBJECT_UEVENT` socket bound to the kernel multicast group.
-    pub fn new() -> Result<Self> {
-        let fd = unsafe {
-            libc::socket(
-                libc::AF_NETLINK,
-                libc::SOCK_DGRAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
-                NETLINK_KOBJECT_UEVENT,
-            )
-        };
-        if fd < 0 {
-            let err = SysError::last_os_error();
-            tracing::error!("failed to create netlink uevent socket");
-            return Err(err);
+impl DeviceSubsystem {
+    /// Parse a subsystem string into the enum.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "block" => Self::Block,
+            "net" => Self::Net,
+            "input" => Self::Input,
+            "usb" => Self::Usb,
+            "pci" => Self::Pci,
+            "tty" => Self::Tty,
+            "drm" => Self::Gpu,
+            "sound" | "snd" => Self::Sound,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl std::fmt::Display for DeviceSubsystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Block => write!(f, "block"),
+            Self::Net => write!(f, "net"),
+            Self::Input => write!(f, "input"),
+            Self::Usb => write!(f, "usb"),
+            Self::Pci => write!(f, "pci"),
+            Self::Tty => write!(f, "tty"),
+            Self::Gpu => write!(f, "drm"),
+            Self::Sound => write!(f, "sound"),
+            Self::Other(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+/// A udev rule definition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UdevRule {
+    /// Rule file stem (e.g. `99-agnos-agent`), without `.rules` extension
+    pub name: String,
+    /// Match conditions (`SUBSYSTEM=="net"`, `ATTR{idVendor}=="1234"`, etc.)
+    pub match_attrs: Vec<(String, String)>,
+    /// Assignment actions (`MODE="0660"`, `OWNER="agnos"`, `TAG+="systemd"`, etc.)
+    pub actions: Vec<(String, String)>,
+}
+
+/// Lifecycle events emitted by the kernel / udev.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DeviceEvent {
+    Add,
+    Remove,
+    Change,
+    Bind,
+    Unbind,
+}
+
+impl std::fmt::Display for DeviceEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Add => write!(f, "add"),
+            Self::Remove => write!(f, "remove"),
+            Self::Change => write!(f, "change"),
+            Self::Bind => write!(f, "bind"),
+            Self::Unbind => write!(f, "unbind"),
+        }
+    }
+}
+
+impl DeviceEvent {
+    /// Parse a string into a `DeviceEvent`.
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "add" => Ok(Self::Add),
+            "remove" => Ok(Self::Remove),
+            "change" => Ok(Self::Change),
+            "bind" => Ok(Self::Bind),
+            "unbind" => Ok(Self::Unbind),
+            other => Err(SysError::InvalidArgument(
+                format!("Unknown device event: {}", other).into(),
+            )),
+        }
+    }
+}
+
+/// Configuration for spawning a udev monitor process.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceMonitorConfig {
+    /// Only report events for this subsystem (e.g. `"block"`)
+    pub subsystem_filter: Option<String>,
+    /// Only report events for this devtype within the subsystem
+    pub devtype_filter: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Dangerous / invalid action keys that must be rejected in rules
+// ---------------------------------------------------------------------------
+
+/// Action keys that are potentially dangerous in udev rules.
+const DANGEROUS_ACTIONS: &[&str] = &["RUN", "PROGRAM", "IMPORT{program}", "IMPORT{builtin}"];
+
+/// Valid udev assignment action keys.
+const VALID_ACTION_KEYS: &[&str] = &[
+    "MODE",
+    "OWNER",
+    "GROUP",
+    "TAG",
+    "TAG+=",
+    "SYMLINK",
+    "SYMLINK+=",
+    "ENV",
+    "ATTR",
+    "NAME",
+    "OPTIONS",
+];
+
+/// Valid udev match keys.
+const VALID_MATCH_KEYS: &[&str] = &[
+    "SUBSYSTEM",
+    "KERNEL",
+    "DRIVER",
+    "ATTR",
+    "ATTRS",
+    "ACTION",
+    "DEVPATH",
+    "ENV",
+    "TAG",
+];
+
+// ---------------------------------------------------------------------------
+// Functions
+// ---------------------------------------------------------------------------
+
+/// List devices, optionally filtered by subsystem.
+///
+/// Uses `udevadm info --export-db` and parses the output.
+pub fn list_devices(subsystem: Option<&str>) -> Result<Vec<DeviceInfo>> {
+    #[cfg(target_os = "linux")]
+    {
+        let output = std::process::Command::new("udevadm")
+            .args(["info", "--export-db"])
+            .output()
+            .map_err(|e| SysError::Unknown(format!("Failed to run udevadm: {}", e).into()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SysError::Unknown(
+                format!("udevadm info --export-db failed: {}", stderr).into(),
+            ));
         }
 
-        let mut addr: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
-        addr.nl_family = libc::AF_NETLINK as libc::sa_family_t;
-        addr.nl_groups = 1; // KOBJECT_UEVENT group
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let devices = parse_export_db(&stdout)?;
 
-        let ret = unsafe {
-            libc::bind(
-                fd,
-                &addr as *const libc::sockaddr_nl as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
-            )
-        };
-        if ret < 0 {
-            let err = SysError::last_os_error();
-            unsafe { libc::close(fd) };
-            tracing::error!("failed to bind netlink uevent socket");
-            return Err(err);
+        match subsystem {
+            Some(sub) => Ok(devices.into_iter().filter(|d| d.subsystem == sub).collect()),
+            None => Ok(devices),
         }
+    }
 
-        tracing::debug!(fd, "uevent monitor created");
-        Ok(Self {
-            fd: unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) },
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = subsystem;
+        Err(SysError::NotSupported {
+            feature: "udev".into(),
         })
     }
+}
 
-    /// Try to receive the next uevent (non-blocking).
-    ///
-    /// Returns `Ok(Some(uevent))` if an event is available,
-    /// `Ok(None)` if no events are pending (would block),
-    /// or `Err` on socket error.
-    pub fn try_recv(&self) -> Result<Option<Uevent>> {
-        use std::os::fd::AsRawFd;
-
-        let mut buf = [0u8; 8192];
-        let n = unsafe {
-            libc::recv(
-                self.fd.as_raw_fd(),
-                buf.as_mut_ptr() as *mut libc::c_void,
-                buf.len(),
-                0,
-            )
-        };
-
-        if n < 0 {
-            let errno = unsafe { *libc::__errno_location() };
-            if errno == libc::EAGAIN || errno == libc::EWOULDBLOCK {
-                return Ok(None);
-            }
-            return Err(SysError::from_errno(errno));
+/// Get detailed information about a single device by its sysfs path.
+pub fn get_device_info(syspath: &str) -> Result<DeviceInfo> {
+    #[cfg(target_os = "linux")]
+    {
+        if syspath.is_empty() {
+            return Err(SysError::InvalidArgument("syspath cannot be empty".into()));
         }
 
-        if n == 0 {
-            return Ok(None);
+        let output = std::process::Command::new("udevadm")
+            .args(["info", &format!("--path={}", syspath)])
+            .output()
+            .map_err(|e| SysError::Unknown(format!("Failed to run udevadm: {}", e).into()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SysError::Unknown(
+                format!("udevadm info failed: {}", stderr).into(),
+            ));
         }
 
-        let data = &buf[..n as usize];
-        Ok(parse_uevent_msg(data))
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_udevadm_info(&stdout)
     }
 
-    /// Get the raw file descriptor for polling (e.g., with epoll/poll).
-    #[inline]
-    #[must_use]
-    pub fn as_raw_fd(&self) -> std::os::fd::RawFd {
-        use std::os::fd::AsRawFd;
-        self.fd.as_raw_fd()
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = syspath;
+        Err(SysError::NotSupported {
+            feature: "udev".into(),
+        })
     }
 }
 
-use std::os::fd::FromRawFd;
-
-/// Parse a raw netlink uevent message into a `Uevent`.
-fn parse_uevent_msg(data: &[u8]) -> Option<Uevent> {
-    // Skip the header (null-terminated string like "add@/devices/...")
-    let header_end = data.iter().position(|&b| b == 0)?;
-    let header = std::str::from_utf8(&data[..header_end]).ok()?;
-
-    let action_str = header.split('@').next()?;
-    let action = match action_str {
-        "add" => UeventAction::Add,
-        "remove" => UeventAction::Remove,
-        "change" => UeventAction::Change,
-        "move" => UeventAction::Move,
-        "online" => UeventAction::Online,
-        "offline" => UeventAction::Offline,
-        "bind" => UeventAction::Bind,
-        "unbind" => UeventAction::Unbind,
-        _ => return None,
-    };
-
+/// Parse the output of `udevadm info` for a single device.
+///
+/// Expected line prefixes:
+/// - `P:` — devpath (sysfs path relative to `/sys`)
+/// - `N:` — device node name (relative to `/dev`)
+/// - `S:` — symlink (relative to `/dev`)
+/// - `E:` — property key=value
+pub fn parse_udevadm_info(output: &str) -> Result<DeviceInfo> {
     let mut devpath = String::new();
-    let mut subsystem = String::new();
-    let mut properties = HashMap::new();
+    let mut devnode: Option<String> = None;
+    let mut properties: HashMap<String, String> = HashMap::new();
 
-    // Parse remaining null-separated KEY=VALUE pairs
-    let rest = &data[header_end + 1..];
-    for chunk in rest.split(|&b| b == 0) {
-        if chunk.is_empty() {
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
             continue;
         }
-        if let Ok(s) = std::str::from_utf8(chunk)
-            && let Some((key, val)) = s.split_once('=')
-        {
-            match key {
-                "DEVPATH" => devpath = val.to_owned(),
-                "SUBSYSTEM" => subsystem = val.to_owned(),
-                _ => {
-                    properties.insert(key.to_owned(), val.to_owned());
-                }
+        if let Some(val) = line.strip_prefix("P: ") {
+            devpath = val.to_string();
+        } else if let Some(val) = line.strip_prefix("N: ") {
+            devnode = Some(format!("/dev/{}", val));
+        } else if let Some(val) = line.strip_prefix("S: ") {
+            // Accumulate symlinks into property
+            let existing = properties.entry("DEVLINKS".to_string()).or_default();
+            if !existing.is_empty() {
+                existing.push(' ');
+            }
+            existing.push_str(&format!("/dev/{}", val));
+        } else if let Some(val) = line.strip_prefix("E: ") {
+            if let Some((k, v)) = val.split_once('=') {
+                properties.insert(k.to_string(), v.to_string());
             }
         }
     }
 
-    Some(Uevent {
-        action,
+    if devpath.is_empty() {
+        return Err(SysError::InvalidArgument(
+            "udevadm output missing P: (devpath) line".into(),
+        ));
+    }
+
+    let syspath = format!("/sys{}", devpath);
+    let subsystem = properties.get("SUBSYSTEM").cloned().unwrap_or_default();
+    let devtype = properties.get("DEVTYPE").cloned();
+    let driver = properties.get("DRIVER").cloned();
+
+    // devnode from N: line or DEVNAME property
+    let devnode = devnode.or_else(|| properties.get("DEVNAME").cloned());
+
+    Ok(DeviceInfo {
+        syspath,
         devpath,
         subsystem,
+        devtype,
+        driver,
+        devnode,
         properties,
     })
 }
+
+/// Parse the full `udevadm info --export-db` output into a list of devices.
+///
+/// Device records are separated by blank lines. Each record uses the same
+/// P:/N:/S:/E: prefix format as single-device output.
+fn parse_export_db(output: &str) -> Result<Vec<DeviceInfo>> {
+    let mut devices = Vec::new();
+    let mut current_block = String::new();
+
+    for line in output.lines() {
+        if line.trim().is_empty() {
+            if !current_block.is_empty() {
+                // Only include blocks that have a P: line
+                if current_block.contains("\nP: ") || current_block.starts_with("P: ") {
+                    if let Ok(dev) = parse_udevadm_info(&current_block) {
+                        devices.push(dev);
+                    }
+                }
+                current_block.clear();
+            }
+        } else {
+            if !current_block.is_empty() {
+                current_block.push('\n');
+            }
+            current_block.push_str(line);
+        }
+    }
+
+    // Handle trailing block without final newline
+    if !current_block.is_empty()
+        && (current_block.contains("\nP: ") || current_block.starts_with("P: "))
+    {
+        if let Ok(dev) = parse_udevadm_info(&current_block) {
+            devices.push(dev);
+        }
+    }
+
+    Ok(devices)
+}
+
+/// Trigger a udev re-evaluation for a device.
+pub fn trigger_device(syspath: &str) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if syspath.is_empty() {
+            return Err(SysError::InvalidArgument("syspath cannot be empty".into()));
+        }
+
+        let output = std::process::Command::new("udevadm")
+            .args(["trigger", "--action=change", syspath])
+            .output()
+            .map_err(|e| {
+                SysError::Unknown(format!("Failed to run udevadm trigger: {}", e).into())
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SysError::Unknown(
+                format!("udevadm trigger failed: {}", stderr).into(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = syspath;
+        Err(SysError::NotSupported {
+            feature: "udev".into(),
+        })
+    }
+}
+
+/// Render a `UdevRule` to the string content of a `.rules` file.
+///
+/// This is a pure function with no side effects.
+pub fn render_udev_rule(rule: &UdevRule) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Match conditions use `==`
+    for (key, value) in &rule.match_attrs {
+        parts.push(format!("{}==\"{}\"", key, value));
+    }
+
+    // Assignment actions
+    for (key, value) in &rule.actions {
+        if key.ends_with("+=") {
+            // Append-style keys already include the operator
+            parts.push(format!("{}\"{}\"", key, value));
+        } else {
+            parts.push(format!("{}=\"{}\"", key, value));
+        }
+    }
+
+    let mut output = format!("# AGNOS udev rule: {}\n", rule.name);
+    output.push_str(&parts.join(", "));
+    output.push('\n');
+    output
+}
+
+/// Write a udev rule file to the specified rules directory.
+///
+/// Returns the path to the written file.
+pub fn write_udev_rule(rule: &UdevRule, rules_dir: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        validate_rule(rule)?;
+
+        let filename = format!("{}.rules", rule.name);
+        let path = rules_dir.join(&filename);
+
+        // Validate the directory exists
+        if !rules_dir.exists() {
+            return Err(SysError::InvalidArgument(
+                format!("Rules directory does not exist: {}", rules_dir.display()).into(),
+            ));
+        }
+
+        let content = render_udev_rule(rule);
+        std::fs::write(&path, &content)
+            .map_err(|e| SysError::Unknown(format!("Failed to write rule file: {}", e).into()))?;
+
+        Ok(path)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (rule, rules_dir);
+        Err(SysError::NotSupported {
+            feature: "udev".into(),
+        })
+    }
+}
+
+/// Remove a udev rule file.
+pub fn remove_udev_rule(name: &str, rules_dir: &Path) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if name.is_empty() {
+            return Err(SysError::InvalidArgument(
+                "Rule name cannot be empty".into(),
+            ));
+        }
+        // Prevent path traversal
+        if name.contains('/') || name.contains("..") {
+            return Err(SysError::InvalidArgument(
+                "Rule name contains invalid characters".into(),
+            ));
+        }
+
+        let filename = format!("{}.rules", name);
+        let path = rules_dir.join(&filename);
+
+        if !path.exists() {
+            return Err(SysError::InvalidArgument(
+                format!("Rule file does not exist: {}", path.display()).into(),
+            ));
+        }
+
+        std::fs::remove_file(&path)
+            .map_err(|e| SysError::Unknown(format!("Failed to remove rule file: {}", e).into()))?;
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (name, rules_dir);
+        Err(SysError::NotSupported {
+            feature: "udev".into(),
+        })
+    }
+}
+
+/// Reload udev rules and trigger re-evaluation.
+pub fn reload_udev_rules() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let output = std::process::Command::new("udevadm")
+            .args(["control", "--reload-rules"])
+            .output()
+            .map_err(|e| SysError::Unknown(format!("Failed to reload udev rules: {}", e).into()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SysError::Unknown(
+                format!("udevadm control --reload-rules failed: {}", stderr).into(),
+            ));
+        }
+
+        let output = std::process::Command::new("udevadm")
+            .arg("trigger")
+            .output()
+            .map_err(|e| SysError::Unknown(format!("Failed to trigger udev: {}", e).into()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SysError::Unknown(
+                format!("udevadm trigger failed: {}", stderr).into(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "udev".into(),
+        })
+    }
+}
+
+/// Spawn a `udevadm monitor` child process for real-time device events.
+///
+/// The caller is responsible for reading stdout and waiting on the child.
+pub fn monitor_devices(config: &DeviceMonitorConfig) -> Result<std::process::Child> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut cmd = std::process::Command::new("udevadm");
+        cmd.arg("monitor").arg("--udev").arg("--property");
+
+        if let Some(ref sub) = config.subsystem_filter {
+            if let Some(ref devtype) = config.devtype_filter {
+                cmd.arg(format!("--subsystem-match={}:{}", sub, devtype));
+            } else {
+                cmd.arg(format!("--subsystem-match={}", sub));
+            }
+        }
+
+        let child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                SysError::Unknown(format!("Failed to spawn udevadm monitor: {}", e).into())
+            })?;
+
+        Ok(child)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = config;
+        Err(SysError::NotSupported {
+            feature: "udev".into(),
+        })
+    }
+}
+
+/// Validate a udev rule for correctness and safety.
+///
+/// Rejects rules with:
+/// - Empty name or match conditions
+/// - Path traversal in name
+/// - Dangerous action keys (`RUN`, `PROGRAM`, `IMPORT{program}`)
+/// - Unknown match or action keys
+pub fn validate_rule(rule: &UdevRule) -> Result<()> {
+    // Name validation
+    if rule.name.is_empty() {
+        return Err(SysError::InvalidArgument(
+            "Rule name cannot be empty".into(),
+        ));
+    }
+    if rule.name.len() > 128 {
+        return Err(SysError::InvalidArgument(
+            "Rule name too long (max 128)".into(),
+        ));
+    }
+    if !rule
+        .name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(SysError::InvalidArgument(
+            format!("Rule name contains invalid characters: {}", rule.name).into(),
+        ));
+    }
+
+    // Must have at least one match condition
+    if rule.match_attrs.is_empty() {
+        return Err(SysError::InvalidArgument(
+            "Rule must have at least one match condition".into(),
+        ));
+    }
+
+    // Validate match keys
+    for (key, value) in &rule.match_attrs {
+        // Extract the base key (before any `{...}` qualifier)
+        let base_key = key.split('{').next().unwrap_or(key);
+        if !VALID_MATCH_KEYS.contains(&base_key) {
+            return Err(SysError::InvalidArgument(
+                format!("Invalid match key: {}", key).into(),
+            ));
+        }
+        if value.is_empty() {
+            return Err(SysError::InvalidArgument(
+                format!("Empty value for match key: {}", key).into(),
+            ));
+        }
+    }
+
+    // Validate action keys — reject dangerous ones
+    for (key, _value) in &rule.actions {
+        let base_key = key.split('{').next().unwrap_or(key);
+        // Strip trailing += for comparison
+        let base_key_stripped = base_key.trim_end_matches("+=");
+
+        if DANGEROUS_ACTIONS.contains(&key.as_str()) || DANGEROUS_ACTIONS.contains(&base_key) {
+            return Err(SysError::InvalidArgument(
+                format!("Dangerous action key rejected: {}", key).into(),
+            ));
+        }
+
+        // Check if it is a valid action key (check both with and without +=)
+        if !VALID_ACTION_KEYS.contains(&key.as_str())
+            && !VALID_ACTION_KEYS.contains(&base_key)
+            && !VALID_ACTION_KEYS.contains(&base_key_stripped)
+        {
+            return Err(SysError::InvalidArgument(
+                format!("Invalid action key: {}", key).into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── compile-time guarantees ──────────────────────────────────────
-
-    const _: () = {
-        const fn assert_send<T: Send>() {}
-        assert_send::<Device>();
-        assert_send::<Uevent>();
-        assert_send::<UeventAction>();
-        assert_send::<Monitor>();
-    };
-
-    // ── enumerate ───────────────────────────────────────────────────
+    // -- parse_udevadm_info ------------------------------------------------
 
     #[test]
-    fn enumerate_net_returns_devices() {
-        // /sys/class/net should exist on any Linux system (at least lo)
-        let devs = enumerate("net").unwrap();
-        assert!(!devs.is_empty());
+    fn test_parse_udevadm_info_basic() {
+        let output = "\
+P: /devices/pci0000:00/0000:00:1f.2/ata1/host0/target0:0:0/0:0:0:0/block/sda
+N: sda
+S: disk/by-id/ata-VBOX_HARDDISK_VB12345678-abcdefgh
+E: SUBSYSTEM=block
+E: DEVTYPE=disk
+E: DEVNAME=/dev/sda
+E: DRIVER=sd
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert_eq!(
+            info.devpath,
+            "/devices/pci0000:00/0000:00:1f.2/ata1/host0/target0:0:0/0:0:0:0/block/sda"
+        );
+        assert_eq!(
+            info.syspath,
+            "/sys/devices/pci0000:00/0000:00:1f.2/ata1/host0/target0:0:0/0:0:0:0/block/sda"
+        );
+        assert_eq!(info.subsystem, "block");
+        assert_eq!(info.devtype, Some("disk".into()));
+        assert_eq!(info.devnode, Some("/dev/sda".into()));
+        assert_eq!(info.driver, Some("sd".into()));
     }
 
     #[test]
-    fn enumerate_block_returns_result() {
-        // May or may not have block devices
-        let _ = enumerate("block");
+    fn test_parse_udevadm_info_devnode_from_n_line() {
+        let output = "\
+P: /devices/virtual/net/lo
+N: lo
+E: SUBSYSTEM=net
+";
+        let info = parse_udevadm_info(output).unwrap();
+        // N: line takes priority when DEVNAME is absent
+        assert_eq!(info.devnode, Some("/dev/lo".into()));
     }
 
     #[test]
-    fn enumerate_nonexistent_subsystem() {
-        let err = enumerate("nonexistent_agnosys_test");
-        assert!(err.is_err());
+    fn test_parse_udevadm_info_devnode_from_property() {
+        let output = "\
+P: /devices/virtual/tty/tty0
+E: SUBSYSTEM=tty
+E: DEVNAME=/dev/tty0
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert_eq!(info.devnode, Some("/dev/tty0".into()));
     }
 
-    // ── Device ──────────────────────────────────────────────────────
+    #[test]
+    fn test_parse_udevadm_info_missing_devpath() {
+        let output = "E: SUBSYSTEM=block\n";
+        let err = parse_udevadm_info(output).unwrap_err();
+        assert!(err.to_string().contains("devpath"));
+    }
 
     #[test]
-    fn device_name_from_net() {
-        let devs = enumerate("net").unwrap();
-        for dev in &devs {
-            assert!(!dev.name().is_empty());
-            assert_eq!(dev.subsystem(), "net");
+    fn test_parse_udevadm_info_empty_input() {
+        let err = parse_udevadm_info("").unwrap_err();
+        assert!(err.to_string().contains("devpath"));
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_symlinks_accumulated() {
+        let output = "\
+P: /devices/pci0000:00/block/sda
+N: sda
+S: disk/by-id/ata-VBOX1
+S: disk/by-path/pci-0000
+E: SUBSYSTEM=block
+";
+        let info = parse_udevadm_info(output).unwrap();
+        let devlinks = info.properties.get("DEVLINKS").unwrap();
+        assert!(devlinks.contains("/dev/disk/by-id/ata-VBOX1"));
+        assert!(devlinks.contains("/dev/disk/by-path/pci-0000"));
+    }
+
+    // -- parse_export_db ---------------------------------------------------
+
+    #[test]
+    fn test_parse_export_db_multiple_devices() {
+        let output = "\
+P: /devices/pci0000:00/block/sda
+N: sda
+E: SUBSYSTEM=block
+
+P: /devices/virtual/net/lo
+E: SUBSYSTEM=net
+
+";
+        let devices = parse_export_db(output).unwrap();
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].subsystem, "block");
+        assert_eq!(devices[1].subsystem, "net");
+    }
+
+    #[test]
+    fn test_parse_export_db_trailing_block_no_newline() {
+        let output = "P: /devices/virtual/tty/tty0\nE: SUBSYSTEM=tty";
+        let devices = parse_export_db(output).unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].subsystem, "tty");
+    }
+
+    // -- DeviceSubsystem ---------------------------------------------------
+
+    #[test]
+    fn test_subsystem_from_str_known() {
+        assert_eq!(DeviceSubsystem::parse("block"), DeviceSubsystem::Block);
+        assert_eq!(DeviceSubsystem::parse("net"), DeviceSubsystem::Net);
+        assert_eq!(DeviceSubsystem::parse("input"), DeviceSubsystem::Input);
+        assert_eq!(DeviceSubsystem::parse("usb"), DeviceSubsystem::Usb);
+        assert_eq!(DeviceSubsystem::parse("pci"), DeviceSubsystem::Pci);
+        assert_eq!(DeviceSubsystem::parse("tty"), DeviceSubsystem::Tty);
+        assert_eq!(DeviceSubsystem::parse("drm"), DeviceSubsystem::Gpu);
+        assert_eq!(DeviceSubsystem::parse("sound"), DeviceSubsystem::Sound);
+        assert_eq!(DeviceSubsystem::parse("snd"), DeviceSubsystem::Sound);
+    }
+
+    #[test]
+    fn test_subsystem_from_str_other() {
+        assert_eq!(
+            DeviceSubsystem::parse("thunderbolt"),
+            DeviceSubsystem::Other("thunderbolt".into())
+        );
+    }
+
+    #[test]
+    fn test_subsystem_display_roundtrip() {
+        let subs = [
+            DeviceSubsystem::Block,
+            DeviceSubsystem::Net,
+            DeviceSubsystem::Gpu,
+        ];
+        for sub in &subs {
+            let s = sub.to_string();
+            assert!(!s.is_empty());
         }
+        assert_eq!(DeviceSubsystem::Other("nvme".into()).to_string(), "nvme");
+    }
+
+    // -- DeviceEvent -------------------------------------------------------
+
+    #[test]
+    fn test_device_event_display() {
+        assert_eq!(DeviceEvent::Add.to_string(), "add");
+        assert_eq!(DeviceEvent::Remove.to_string(), "remove");
+        assert_eq!(DeviceEvent::Change.to_string(), "change");
+        assert_eq!(DeviceEvent::Bind.to_string(), "bind");
+        assert_eq!(DeviceEvent::Unbind.to_string(), "unbind");
     }
 
     #[test]
-    fn device_syspath_exists() {
-        let devs = enumerate("net").unwrap();
-        for dev in &devs {
-            assert!(dev.syspath().exists());
-        }
+    fn test_device_event_from_str() {
+        assert_eq!(DeviceEvent::parse("add").unwrap(), DeviceEvent::Add);
+        assert_eq!(DeviceEvent::parse("remove").unwrap(), DeviceEvent::Remove);
+        assert!(DeviceEvent::parse("invalid").is_err());
     }
 
-    #[test]
-    fn device_attr_reads_sysfs() {
-        let devs = enumerate("net").unwrap();
-        // lo should have an "address" attribute
-        for dev in &devs {
-            if dev.name() == "lo" {
-                let addr = dev.attr("address");
-                assert!(addr.is_some());
-                assert_eq!(addr.unwrap(), "00:00:00:00:00:00");
-            }
-        }
-    }
+    // -- render_udev_rule --------------------------------------------------
 
     #[test]
-    fn device_attr_nonexistent() {
-        let devs = enumerate("net").unwrap();
-        if let Some(dev) = devs.first() {
-            assert!(dev.attr("nonexistent_agnosys_attr").is_none());
-        }
-    }
-
-    #[test]
-    fn device_properties_parsed() {
-        let devs = enumerate("net").unwrap();
-        for dev in &devs {
-            // uevent should have INTERFACE key for net devices
-            if dev.name() == "lo" {
-                assert!(dev.property("INTERFACE").is_some());
-            }
-        }
-    }
-
-    #[test]
-    fn device_devpath_resolves() {
-        let devs = enumerate("net").unwrap();
-        if let Some(dev) = devs.first() {
-            // devpath resolves symlinks
-            let dp = dev.devpath();
-            assert!(dp.is_some());
-        }
-    }
-
-    #[test]
-    fn device_clone() {
-        let devs = enumerate("net").unwrap();
-        if let Some(dev) = devs.first() {
-            let cloned = dev.clone();
-            assert_eq!(cloned.name(), dev.name());
-            assert_eq!(cloned.subsystem(), dev.subsystem());
-        }
-    }
-
-    #[test]
-    fn device_debug() {
-        let devs = enumerate("net").unwrap();
-        if let Some(dev) = devs.first() {
-            let dbg = format!("{dev:?}");
-            assert!(dbg.contains("Device"));
-        }
-    }
-
-    // ── enumerate_bus ───────────────────────────────────────────────
-
-    #[test]
-    fn enumerate_bus_platform() {
-        // /sys/bus/platform/devices should exist
-        let result = enumerate_bus("platform");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn enumerate_bus_nonexistent() {
-        let err = enumerate_bus("nonexistent_agnosys_bus");
-        assert!(err.is_err());
-    }
-
-    // ── device_from_syspath ─────────────────────────────────────────
-
-    #[test]
-    fn device_from_syspath_lo() {
-        let dev = device_from_syspath(Path::new("/sys/class/net/lo"));
-        assert!(dev.is_ok());
-        let dev = dev.unwrap();
-        assert_eq!(dev.name(), "lo");
-    }
-
-    #[test]
-    fn device_from_syspath_nonexistent() {
-        let err = device_from_syspath(Path::new("/sys/class/nonexistent_agnosys"));
-        assert!(err.is_err());
-    }
-
-    // ── Monitor ─────────────────────────────────────────────────────
-
-    #[test]
-    fn monitor_new_succeeds() {
-        // Should succeed on any Linux system (may need CAP_NET_ADMIN in some configs)
-        let _ = Monitor::new();
-    }
-
-    #[test]
-    fn monitor_try_recv_no_events() {
-        let mon = match Monitor::new() {
-            Ok(m) => m,
-            Err(_) => return, // skip if can't create
+    fn test_render_udev_rule_basic() {
+        let rule = UdevRule {
+            name: "99-agnos-usb".to_string(),
+            match_attrs: vec![
+                ("SUBSYSTEM".into(), "usb".into()),
+                ("ATTR{idVendor}".into(), "1234".into()),
+            ],
+            actions: vec![
+                ("MODE".into(), "0660".into()),
+                ("GROUP".into(), "agnos".into()),
+            ],
         };
-        // Non-blocking, should return None immediately
-        let result = mon.try_recv().unwrap();
-        assert!(result.is_none());
+        let rendered = render_udev_rule(&rule);
+        assert!(rendered.contains("# AGNOS udev rule: 99-agnos-usb"));
+        assert!(rendered.contains("SUBSYSTEM==\"usb\""));
+        assert!(rendered.contains("ATTR{idVendor}==\"1234\""));
+        assert!(rendered.contains("MODE=\"0660\""));
+        assert!(rendered.contains("GROUP=\"agnos\""));
     }
 
     #[test]
-    fn monitor_raw_fd() {
-        let mon = match Monitor::new() {
-            Ok(m) => m,
-            Err(_) => return,
+    fn test_render_udev_rule_append_operator() {
+        let rule = UdevRule {
+            name: "99-test".to_string(),
+            match_attrs: vec![("SUBSYSTEM".into(), "net".into())],
+            actions: vec![("TAG+=".into(), "systemd".into())],
         };
-        assert!(mon.as_raw_fd() >= 0);
+        let rendered = render_udev_rule(&rule);
+        assert!(rendered.contains("TAG+=\"systemd\""));
     }
 
-    // ── UeventAction ────────────────────────────────────────────────
+    // -- validate_rule -----------------------------------------------------
 
     #[test]
-    fn uevent_action_eq() {
-        assert_eq!(UeventAction::Add, UeventAction::Add);
-        assert_ne!(UeventAction::Add, UeventAction::Remove);
-    }
-
-    #[test]
-    fn uevent_action_debug() {
-        let dbg = format!("{:?}", UeventAction::Add);
-        assert!(dbg.contains("Add"));
-    }
-
-    // ── parse_uevent_msg ────────────────────────────────────────────
-
-    #[test]
-    fn parse_valid_uevent() {
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"add@/devices/pci0000:00/0000:00:1f.0\0");
-        msg.extend_from_slice(b"ACTION=add\0");
-        msg.extend_from_slice(b"DEVPATH=/devices/pci0000:00/0000:00:1f.0\0");
-        msg.extend_from_slice(b"SUBSYSTEM=pci\0");
-        msg.extend_from_slice(b"PCI_ID=8086:A0A1\0");
-
-        let uevent = parse_uevent_msg(&msg).unwrap();
-        assert_eq!(uevent.action, UeventAction::Add);
-        assert_eq!(uevent.devpath, "/devices/pci0000:00/0000:00:1f.0");
-        assert_eq!(uevent.subsystem, "pci");
-        assert_eq!(uevent.properties.get("PCI_ID").unwrap(), "8086:A0A1");
+    fn test_validate_rule_valid() {
+        let rule = UdevRule {
+            name: "99-agnos-test".to_string(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![("MODE".into(), "0660".into())],
+        };
+        assert!(validate_rule(&rule).is_ok());
     }
 
     #[test]
-    fn parse_remove_uevent() {
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"remove@/devices/usb\0");
-        msg.extend_from_slice(b"DEVPATH=/devices/usb\0");
-        msg.extend_from_slice(b"SUBSYSTEM=usb\0");
-
-        let uevent = parse_uevent_msg(&msg).unwrap();
-        assert_eq!(uevent.action, UeventAction::Remove);
+    fn test_validate_rule_empty_name() {
+        let rule = UdevRule {
+            name: String::new(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![],
+        };
+        let err = validate_rule(&rule).unwrap_err();
+        assert!(err.to_string().contains("empty"));
     }
 
     #[test]
-    fn parse_all_actions() {
-        for (action_str, expected) in [
-            ("add", UeventAction::Add),
-            ("remove", UeventAction::Remove),
-            ("change", UeventAction::Change),
-            ("move", UeventAction::Move),
-            ("online", UeventAction::Online),
-            ("offline", UeventAction::Offline),
-            ("bind", UeventAction::Bind),
-            ("unbind", UeventAction::Unbind),
-        ] {
-            let msg = format!("{action_str}@/devices/test\0DEVPATH=/devices/test\0");
-            let uevent = parse_uevent_msg(msg.as_bytes()).unwrap();
-            assert_eq!(uevent.action, expected);
-        }
+    fn test_validate_rule_dangerous_run() {
+        let rule = UdevRule {
+            name: "99-bad".to_string(),
+            match_attrs: vec![("SUBSYSTEM".into(), "usb".into())],
+            actions: vec![("RUN".into(), "/bin/malicious".into())],
+        };
+        let err = validate_rule(&rule).unwrap_err();
+        assert!(err.to_string().contains("Dangerous"));
     }
 
     #[test]
-    fn parse_invalid_action() {
-        let msg = b"invalid@/devices/test\0";
-        assert!(parse_uevent_msg(msg).is_none());
+    fn test_validate_rule_dangerous_program() {
+        let rule = UdevRule {
+            name: "99-bad".to_string(),
+            match_attrs: vec![("SUBSYSTEM".into(), "usb".into())],
+            actions: vec![("PROGRAM".into(), "/bin/exploit".into())],
+        };
+        assert!(validate_rule(&rule).is_err());
     }
 
     #[test]
-    fn parse_empty_msg() {
-        assert!(parse_uevent_msg(b"").is_none());
+    fn test_validate_rule_no_match_attrs() {
+        let rule = UdevRule {
+            name: "99-empty".to_string(),
+            match_attrs: vec![],
+            actions: vec![("MODE".into(), "0660".into())],
+        };
+        let err = validate_rule(&rule).unwrap_err();
+        assert!(err.to_string().contains("match condition"));
     }
 
     #[test]
-    fn parse_header_only() {
-        let msg = b"add@/devices/test\0";
-        let uevent = parse_uevent_msg(msg).unwrap();
-        assert_eq!(uevent.action, UeventAction::Add);
-        assert!(uevent.devpath.is_empty()); // no DEVPATH KV pair
+    fn test_validate_rule_invalid_match_key() {
+        let rule = UdevRule {
+            name: "99-bad-key".to_string(),
+            match_attrs: vec![("BOGUS_KEY".into(), "value".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_err());
     }
 
     #[test]
-    fn parse_no_kv_after_header() {
-        let msg = b"change@/devices/x\0\0\0";
-        let uevent = parse_uevent_msg(msg).unwrap();
-        assert_eq!(uevent.action, UeventAction::Change);
-        assert!(uevent.properties.is_empty());
-    }
-
-    // ── Device methods ──────────────────────────────────────────────
-
-    #[test]
-    fn device_property_missing_key() {
-        let devs = enumerate("net").unwrap();
-        if let Some(dev) = devs.first() {
-            assert!(dev.property("NONEXISTENT_AGNOSYS_KEY").is_none());
-        }
+    fn test_validate_rule_empty_match_value() {
+        let rule = UdevRule {
+            name: "99-empty-val".to_string(),
+            match_attrs: vec![("SUBSYSTEM".into(), "".into())],
+            actions: vec![],
+        };
+        let err = validate_rule(&rule).unwrap_err();
+        assert!(err.to_string().contains("Empty value"));
     }
 
     #[test]
-    fn device_devnode_lo() {
-        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
-        // lo typically has no DEVNAME, so devnode returns None
-        let _ = dev.devnode();
+    fn test_validate_rule_name_path_traversal() {
+        let rule = UdevRule {
+            name: "../etc/passwd".to_string(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_err());
+    }
+
+    // -- DeviceInfo serialization ------------------------------------------
+
+    #[test]
+    fn test_device_info_serialize_deserialize() {
+        let info = DeviceInfo {
+            syspath: "/sys/devices/pci0000:00/block/sda".into(),
+            devpath: "/devices/pci0000:00/block/sda".into(),
+            subsystem: "block".into(),
+            devtype: Some("disk".into()),
+            driver: None,
+            devnode: Some("/dev/sda".into()),
+            properties: {
+                let mut m = HashMap::new();
+                m.insert("ID_SERIAL".into(), "VBOX123".into());
+                m
+            },
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: DeviceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, back);
     }
 
     #[test]
-    fn device_devtype_lo() {
-        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
-        // lo may or may not have DEVTYPE
-        let _ = dev.devtype();
+    fn test_udev_rule_serialize_deserialize() {
+        let rule = UdevRule {
+            name: "99-test".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "net".into())],
+            actions: vec![("MODE".into(), "0644".into())],
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: UdevRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, back);
     }
 
-    #[test]
-    fn device_driver_lo() {
-        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
-        // lo has no driver symlink
-        let _ = dev.driver();
-    }
+    // -- DeviceMonitorConfig -----------------------------------------------
 
     #[test]
-    fn device_properties_not_empty_for_lo() {
-        let dev = device_from_syspath(Path::new("/sys/class/net/lo")).unwrap();
-        assert!(!dev.properties().is_empty());
-    }
-
-    // ── Uevent clone/debug ──────────────────────────────────────────
-
-    #[test]
-    fn uevent_clone() {
-        let msg = b"add@/devices/test\0DEVPATH=/devices/test\0SUBSYSTEM=net\0";
-        let uevent = parse_uevent_msg(msg).unwrap();
-        let cloned = uevent.clone();
-        assert_eq!(cloned.action, uevent.action);
-        assert_eq!(cloned.devpath, uevent.devpath);
-        assert_eq!(cloned.subsystem, uevent.subsystem);
-    }
-
-    #[test]
-    fn uevent_debug() {
-        let msg = b"add@/devices/test\0DEVPATH=/devices/test\0";
-        let uevent = parse_uevent_msg(msg).unwrap();
-        let dbg = format!("{uevent:?}");
-        assert!(dbg.contains("Add"));
-    }
-
-    // ── enumerate_bus pci ───────────────────────────────────────────
-
-    #[test]
-    fn enumerate_bus_pci() {
-        // PCI bus should exist on most systems
-        let _ = enumerate_bus("pci");
-    }
-
-    // ── UeventAction clone/copy ─────────────────────────────────────
-
-    #[test]
-    fn uevent_action_clone_copy() {
-        let a = UeventAction::Add;
-        let b = a; // Copy
-        #[allow(clippy::clone_on_copy)]
-        let c = a.clone(); // Clone
-        assert_eq!(a, b);
-        assert_eq!(a, c);
-    }
-
-    #[test]
-    fn uevent_action_debug_all() {
-        assert!(format!("{:?}", UeventAction::Add).contains("Add"));
-        assert!(format!("{:?}", UeventAction::Remove).contains("Remove"));
-        assert!(format!("{:?}", UeventAction::Change).contains("Change"));
-        assert!(format!("{:?}", UeventAction::Move).contains("Move"));
-        assert!(format!("{:?}", UeventAction::Online).contains("Online"));
-        assert!(format!("{:?}", UeventAction::Offline).contains("Offline"));
-        assert!(format!("{:?}", UeventAction::Bind).contains("Bind"));
-        assert!(format!("{:?}", UeventAction::Unbind).contains("Unbind"));
+    fn test_device_monitor_config_default() {
+        let config = DeviceMonitorConfig::default();
+        assert!(config.subsystem_filter.is_none());
+        assert!(config.devtype_filter.is_none());
     }
 }

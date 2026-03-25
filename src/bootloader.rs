@@ -1,296 +1,424 @@
-//! bootloader — Bootloader interface.
+//! Bootloader Configuration Management
 //!
-//! Detect the active bootloader, read boot entries, and inspect boot
-//! configuration. Supports systemd-boot and GRUB detection via
-//! standard Linux paths.
+//! Supports both systemd-boot and GRUB2 bootloaders. Auto-detects which
+//! bootloader is installed and provides a unified interface for reading/writing
+//! boot configuration, managing boot entries, and modifying kernel command lines.
 //!
-//! # Example
-//!
-//! ```no_run
-//! use agnosys::bootloader;
-//!
-//! let bl = bootloader::detect().unwrap();
-//! println!("bootloader: {}", bl.name);
-//! for entry in bootloader::list_entries().unwrap() {
-//!     println!("  {}: {}", entry.id, entry.title);
-//! }
-//! ```
+//! On non-Linux platforms, all operations return `SysError::NotSupported`.
 
 use crate::error::{Result, SysError};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-// ── Constants ───────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
-const LOADER_ENTRIES_PATH: &str = "/boot/loader/entries";
-const LOADER_CONF_PATH: &str = "/boot/loader/loader.conf";
-const GRUB_CFG_PATH: &str = "/boot/grub/grub.cfg";
-const GRUB2_CFG_PATH: &str = "/boot/grub2/grub.cfg";
-const EFI_LOADER_PATH: &str =
-    "/sys/firmware/efi/efivars/LoaderInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f";
-
-// ── Public types ────────────────────────────────────────────────────
-
-/// Detected bootloader information.
-#[derive(Debug, Clone)]
-pub struct BootloaderInfo {
-    /// Bootloader name (e.g., "systemd-boot", "grub", "unknown").
-    pub name: String,
-    /// Bootloader type classification.
-    pub kind: BootloaderKind,
-    /// Configuration file path (if found).
-    pub config_path: Option<PathBuf>,
-}
-
-/// Bootloader type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum BootloaderKind {
-    /// systemd-boot (formerly gummiboot).
+/// Detected bootloader type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Bootloader {
     SystemdBoot,
-    /// GRUB (version 1 or 2).
-    Grub,
-    /// Unknown bootloader.
+    Grub2,
     Unknown,
 }
 
-impl std::fmt::Display for BootloaderKind {
+impl std::fmt::Display for Bootloader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SystemdBoot => write!(f, "systemd-boot"),
-            Self::Grub => write!(f, "grub"),
-            Self::Unknown => write!(f, "unknown"),
+            Bootloader::SystemdBoot => write!(f, "systemd-boot"),
+            Bootloader::Grub2 => write!(f, "GRUB2"),
+            Bootloader::Unknown => write!(f, "unknown"),
         }
     }
 }
 
-/// A boot entry (systemd-boot .conf file).
-#[derive(Debug, Clone)]
+/// A single boot entry (kernel + initrd + options).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BootEntry {
-    /// Entry ID (filename without extension).
+    /// Unique identifier (filename stem for systemd-boot, menuentry index/id for GRUB2)
     pub id: String,
-    /// Display title.
+    /// Human-readable title shown in the boot menu
     pub title: String,
-    /// Linux kernel path.
-    pub linux: String,
-    /// Initrd path(s).
-    pub initrd: Vec<String>,
-    /// Kernel command line options.
+    /// Path to the kernel image (e.g. `/boot/vmlinuz-6.6.0-agnos`)
+    pub linux: PathBuf,
+    /// Path to the initramfs image
+    pub initrd: Option<PathBuf>,
+    /// Kernel command line options
     pub options: String,
-    /// Full path to the entry file.
-    pub path: PathBuf,
+    /// Whether this entry is the current default
+    pub is_default: bool,
+    /// Kernel version string (parsed from the entry or filename)
+    pub version: Option<String>,
 }
 
-/// Parsed loader.conf settings.
-#[derive(Debug, Clone, Default)]
-pub struct LoaderConfig {
-    /// Default boot entry pattern.
-    pub default: String,
-    /// Timeout in seconds (empty = no timeout).
-    pub timeout: String,
-    /// Console mode setting.
-    pub console_mode: String,
-    /// Editor enabled/disabled.
-    pub editor: String,
+/// Aggregate boot configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootConfig {
+    /// Detected bootloader
+    pub bootloader: Bootloader,
+    /// Boot menu timeout in seconds
+    pub timeout_secs: u32,
+    /// ID of the default boot entry
+    pub default_entry: Option<String>,
+    /// All available boot entries
+    pub entries: Vec<BootEntry>,
 }
 
-// ── Detection ───────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Well-known paths
+// ---------------------------------------------------------------------------
 
-/// Detect the active bootloader.
-pub fn detect() -> Result<BootloaderInfo> {
-    // Check systemd-boot first (has loader entries dir)
-    if Path::new(LOADER_ENTRIES_PATH).is_dir() {
-        return Ok(BootloaderInfo {
-            name: "systemd-boot".into(),
-            kind: BootloaderKind::SystemdBoot,
-            config_path: if Path::new(LOADER_CONF_PATH).is_file() {
-                Some(PathBuf::from(LOADER_CONF_PATH))
-            } else {
-                None
-            },
-        });
-    }
+const SYSTEMD_BOOT_DIR: &str = "/boot/efi/EFI/systemd";
+const SYSTEMD_LOADER_CONF: &str = "/boot/loader/loader.conf";
+const SYSTEMD_ENTRIES_DIR: &str = "/boot/loader/entries";
 
-    // Check for EFI loader info variable
-    if Path::new(EFI_LOADER_PATH).exists()
-        && let Ok(data) = std::fs::read(EFI_LOADER_PATH)
-        && data.len() > 4
+const GRUB_CFG: &str = "/boot/grub/grub.cfg";
+const GRUB_DEFAULT_FILE: &str = "/etc/default/grub";
+
+/// Kernel command-line tokens that must never appear (security-sensitive).
+const DANGEROUS_CMDLINE_TOKENS: &[&str] = &[
+    "init=/bin/sh",
+    "init=/bin/bash",
+    "init=/bin/dash",
+    "init=/sbin/init.debug",
+    "single",
+    "emergency",
+    "rd.break",
+    "debug_shell",
+    "systemd.debug-shell",
+];
+
+// ---------------------------------------------------------------------------
+// Detection
+// ---------------------------------------------------------------------------
+
+/// Detect the installed bootloader by probing well-known paths.
+///
+/// Checks for systemd-boot first (presence of `/boot/efi/EFI/systemd/`),
+/// then GRUB2 (`/boot/grub/grub.cfg`). Returns `Bootloader::Unknown` if
+/// neither is found.
+pub fn detect_bootloader() -> Result<Bootloader> {
+    #[cfg(target_os = "linux")]
     {
-        let name = decode_utf16le(&data[4..]);
-        if name.to_lowercase().contains("systemd") {
-            return Ok(BootloaderInfo {
-                name,
-                kind: BootloaderKind::SystemdBoot,
-                config_path: None,
-            });
+        if Path::new(SYSTEMD_BOOT_DIR).is_dir() {
+            return Ok(Bootloader::SystemdBoot);
+        }
+        if Path::new(GRUB_CFG).is_file() {
+            return Ok(Bootloader::Grub2);
+        }
+        Ok(Bootloader::Unknown)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "bootloader".into(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reading configuration
+// ---------------------------------------------------------------------------
+
+/// Read the full boot configuration (bootloader type, timeout, default entry, and all entries).
+pub fn read_boot_config() -> Result<BootConfig> {
+    #[cfg(target_os = "linux")]
+    {
+        let bootloader = detect_bootloader()?;
+        match bootloader {
+            Bootloader::SystemdBoot => read_systemd_boot_config(),
+            Bootloader::Grub2 => read_grub2_config(),
+            Bootloader::Unknown => {
+                Err(SysError::Unknown("No supported bootloader detected".into()))
+            }
         }
     }
 
-    // Check GRUB
-    for path in [GRUB_CFG_PATH, GRUB2_CFG_PATH] {
-        if Path::new(path).is_file() {
-            return Ok(BootloaderInfo {
-                name: "grub".into(),
-                kind: BootloaderKind::Grub,
-                config_path: Some(PathBuf::from(path)),
-            });
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "bootloader".into(),
+        })
+    }
+}
+
+/// List all available boot entries for the detected bootloader.
+pub fn list_boot_entries() -> Result<Vec<BootEntry>> {
+    let config = read_boot_config()?;
+    Ok(config.entries)
+}
+
+/// Get the current default boot entry.
+pub fn get_default_entry() -> Result<BootEntry> {
+    let config = read_boot_config()?;
+    config
+        .entries
+        .into_iter()
+        .find(|e| e.is_default)
+        .or(None)
+        .ok_or_else(|| SysError::Unknown("No default boot entry found".into()))
+}
+
+/// Set the default boot entry by its ID.
+pub fn set_default_entry(id: &str) -> Result<()> {
+    validate_entry_id(id)?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let bootloader = detect_bootloader()?;
+        match bootloader {
+            Bootloader::SystemdBoot => set_systemd_boot_default(id),
+            Bootloader::Grub2 => set_grub2_default(id),
+            Bootloader::Unknown => {
+                Err(SysError::Unknown("No supported bootloader detected".into()))
+            }
         }
     }
 
-    Ok(BootloaderInfo {
-        name: "unknown".into(),
-        kind: BootloaderKind::Unknown,
-        config_path: None,
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = id;
+        Err(SysError::NotSupported {
+            feature: "bootloader".into(),
+        })
+    }
+}
+
+/// Modify the kernel command line for a specific boot entry.
+pub fn set_kernel_cmdline(entry_id: &str, options: &str) -> Result<()> {
+    validate_entry_id(entry_id)?;
+    validate_kernel_cmdline(options)?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let bootloader = detect_bootloader()?;
+        match bootloader {
+            Bootloader::SystemdBoot => set_systemd_boot_cmdline(entry_id, options),
+            Bootloader::Grub2 => set_grub2_cmdline(entry_id, options),
+            Bootloader::Unknown => {
+                Err(SysError::Unknown("No supported bootloader detected".into()))
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (entry_id, options);
+        Err(SysError::NotSupported {
+            feature: "bootloader".into(),
+        })
+    }
+}
+
+/// Set the boot menu timeout in seconds (capped at 300).
+pub fn set_timeout(seconds: u32) -> Result<()> {
+    if seconds > 300 {
+        return Err(SysError::InvalidArgument(
+            format!("Timeout {} exceeds maximum of 300 seconds", seconds).into(),
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let bootloader = detect_bootloader()?;
+        match bootloader {
+            Bootloader::SystemdBoot => set_systemd_boot_timeout(seconds),
+            Bootloader::Grub2 => set_grub2_timeout(seconds),
+            Bootloader::Unknown => {
+                Err(SysError::Unknown("No supported bootloader detected".into()))
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = seconds;
+        Err(SysError::NotSupported {
+            feature: "bootloader".into(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
+
+/// Validate kernel command-line parameters.
+///
+/// Rejects dangerous options such as `init=/bin/sh`, `single`, `rd.break`,
+/// and `debug_shell` that could bypass normal boot security.
+pub fn validate_kernel_cmdline(options: &str) -> Result<()> {
+    if options.len() > 4096 {
+        return Err(SysError::InvalidArgument(
+            "Kernel command line exceeds 4096-character limit".into(),
+        ));
+    }
+
+    let lower = options.to_lowercase();
+    for token in DANGEROUS_CMDLINE_TOKENS {
+        if lower.contains(&token.to_lowercase()) {
+            return Err(SysError::InvalidArgument(
+                format!(
+                    "Kernel command line contains dangerous parameter: {}",
+                    token
+                )
+                .into(),
+            ));
+        }
+    }
+
+    // Reject non-printable / non-ASCII characters
+    if options
+        .chars()
+        .any(|c| !c.is_ascii() || c.is_ascii_control())
+    {
+        return Err(SysError::InvalidArgument(
+            "Kernel command line contains non-printable or non-ASCII characters".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate that a boot-entry ID is well-formed.
+fn validate_entry_id(id: &str) -> Result<()> {
+    if id.is_empty() {
+        return Err(SysError::InvalidArgument(
+            "Boot entry ID cannot be empty".into(),
+        ));
+    }
+    if id.len() > 256 {
+        return Err(SysError::InvalidArgument(
+            "Boot entry ID too long (max 256)".into(),
+        ));
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(SysError::InvalidArgument(
+            format!("Boot entry ID contains invalid characters: {}", id).into(),
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// systemd-boot implementation
+// ---------------------------------------------------------------------------
+
+/// Parse `/boot/loader/loader.conf` and `/boot/loader/entries/*.conf`.
+#[cfg(target_os = "linux")]
+fn read_systemd_boot_config() -> Result<BootConfig> {
+    let (timeout, default_id) = parse_loader_conf(Path::new(SYSTEMD_LOADER_CONF))?;
+    let entries =
+        parse_systemd_boot_entries(Path::new(SYSTEMD_ENTRIES_DIR), default_id.as_deref())?;
+
+    Ok(BootConfig {
+        bootloader: Bootloader::SystemdBoot,
+        timeout_secs: timeout,
+        default_entry: default_id,
+        entries,
     })
 }
 
-// ── Boot entries (systemd-boot) ─────────────────────────────────────
-
-/// List boot entries from `/boot/loader/entries/*.conf`.
-pub fn list_entries() -> Result<Vec<BootEntry>> {
-    let dir = Path::new(LOADER_ENTRIES_PATH);
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
-
-    let mut entries = Vec::new();
-    let dir_entries = std::fs::read_dir(dir).map_err(|e| {
-        tracing::error!(error = %e, "failed to read loader entries");
-        SysError::Io(e)
+/// Parse `loader.conf` for `timeout` and `default` directives.
+#[cfg(target_os = "linux")]
+fn parse_loader_conf(path: &Path) -> Result<(u32, Option<String>)> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", path.display(), e).into())
     })?;
 
-    for entry in dir_entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "conf")
-            && let Ok(boot_entry) = parse_boot_entry(&path)
-        {
-            entries.push(boot_entry);
-        }
-    }
-
-    entries.sort_by(|a, b| a.id.cmp(&b.id));
-    tracing::trace!(count = entries.len(), "listed boot entries");
-    Ok(entries)
-}
-
-/// Read a specific boot entry by ID.
-pub fn read_entry(id: &str) -> Result<BootEntry> {
-    let path = Path::new(LOADER_ENTRIES_PATH).join(format!("{id}.conf"));
-    parse_boot_entry(&path)
-}
-
-// ── Loader config ───────────────────────────────────────────────────
-
-/// Read the systemd-boot loader.conf configuration.
-pub fn read_loader_config() -> Result<LoaderConfig> {
-    let content = std::fs::read_to_string(LOADER_CONF_PATH).map_err(|e| {
-        tracing::debug!(error = %e, "failed to read loader.conf");
-        SysError::Io(e)
-    })?;
-
-    Ok(parse_loader_config(&content))
-}
-
-/// Parse loader.conf content.
-#[must_use]
-pub fn parse_loader_config(content: &str) -> LoaderConfig {
-    let mut config = LoaderConfig::default();
+    let mut timeout: u32 = 5; // sensible default
+    let mut default_id: Option<String> = None;
 
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some((key, val)) = line.split_once(char::is_whitespace) {
+        if let Some(val) = line.strip_prefix("timeout") {
             let val = val.trim();
-            match key {
-                "default" => config.default = val.to_owned(),
-                "timeout" => config.timeout = val.to_owned(),
-                "console-mode" => config.console_mode = val.to_owned(),
-                "editor" => config.editor = val.to_owned(),
-                _ => {}
+            if let Ok(t) = val.parse::<u32>() {
+                timeout = t;
+            }
+        } else if let Some(val) = line.strip_prefix("default") {
+            let val = val.trim().trim_end_matches(".conf");
+            if !val.is_empty() {
+                default_id = Some(val.to_string());
             }
         }
     }
 
-    config
+    Ok((timeout, default_id))
 }
 
-// ── Boot partition ──────────────────────────────────────────────────
+/// Parse all `*.conf` files in the systemd-boot entries directory.
+#[cfg(target_os = "linux")]
+fn parse_systemd_boot_entries(dir: &Path, default_id: Option<&str>) -> Result<Vec<BootEntry>> {
+    let mut entries = Vec::new();
 
-/// Check if `/boot` is mounted.
-#[must_use]
-pub fn boot_mounted() -> bool {
-    // Check if /boot has its own mount (different device from /)
-    if let (Ok(root_meta), Ok(boot_meta)) = (std::fs::metadata("/"), std::fs::metadata("/boot")) {
-        use std::os::unix::fs::MetadataExt;
-        return boot_meta.dev() != root_meta.dev()
-            || Path::new("/boot/vmlinuz").exists()
-            || Path::new("/boot/loader").exists();
-    }
-    false
-}
-
-/// List kernel images in `/boot`.
-pub fn list_kernels() -> Result<Vec<PathBuf>> {
-    let boot = Path::new("/boot");
-    if !boot.is_dir() {
-        return Ok(Vec::new());
-    }
-
-    let mut kernels = Vec::new();
-    let entries = std::fs::read_dir(boot).map_err(|e| {
-        tracing::error!(error = %e, "failed to read /boot");
-        SysError::Io(e)
+    let read_dir = std::fs::read_dir(dir).map_err(|e| {
+        SysError::Unknown(format!("Failed to read entries dir {}: {}", dir.display(), e).into())
     })?;
 
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with("vmlinuz") || name_str.starts_with("bzImage") {
-            kernels.push(entry.path());
+    for entry in read_dir {
+        let entry =
+            entry.map_err(|e| SysError::Unknown(format!("Dir entry error: {}", e).into()))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("conf") {
+            continue;
+        }
+
+        if let Ok(boot_entry) = parse_systemd_boot_entry(&path, default_id) {
+            entries.push(boot_entry);
         }
     }
 
-    kernels.sort();
-    tracing::trace!(count = kernels.len(), "listed kernels in /boot");
-    Ok(kernels)
+    // Sort by ID for deterministic output
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(entries)
 }
 
-// ── Internal helpers ────────────────────────────────────────────────
-
-fn parse_boot_entry(path: &Path) -> Result<BootEntry> {
+/// Parse a single systemd-boot entry file.
+#[cfg(target_os = "linux")]
+fn parse_systemd_boot_entry(path: &Path, default_id: Option<&str>) -> Result<BootEntry> {
     let content = std::fs::read_to_string(path).map_err(|e| {
-        tracing::debug!(path = %path.display(), error = %e, "failed to read boot entry");
-        SysError::Io(e)
+        SysError::Unknown(format!("Failed to read entry {}: {}", path.display(), e).into())
     })?;
 
     let id = path
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_owned();
+        .unwrap_or("unknown")
+        .to_string();
 
     let mut title = String::new();
-    let mut linux = String::new();
-    let mut initrd = Vec::new();
+    let mut linux = PathBuf::new();
+    let mut initrd: Option<PathBuf> = None;
     let mut options = String::new();
+    let mut version: Option<String> = None;
 
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some((key, val)) = line.split_once(char::is_whitespace) {
-            let val = val.trim();
-            match key {
-                "title" => title = val.to_owned(),
-                "linux" => linux = val.to_owned(),
-                "initrd" => initrd.push(val.to_owned()),
-                "options" => options = val.to_owned(),
-                _ => {}
-            }
+        if let Some(val) = line.strip_prefix("title") {
+            title = val.trim().to_string();
+        } else if let Some(val) = line.strip_prefix("linux") {
+            linux = PathBuf::from(val.trim());
+        } else if let Some(val) = line.strip_prefix("initrd") {
+            initrd = Some(PathBuf::from(val.trim()));
+        } else if let Some(val) = line.strip_prefix("options") {
+            options = val.trim().to_string();
+        } else if let Some(val) = line.strip_prefix("version") {
+            version = Some(val.trim().to_string());
         }
     }
+
+    let is_default = default_id.is_some_and(|d| d == id);
 
     Ok(BootEntry {
         id,
@@ -298,283 +426,573 @@ fn parse_boot_entry(path: &Path) -> Result<BootEntry> {
         linux,
         initrd,
         options,
-        path: path.to_owned(),
+        is_default,
+        version,
     })
 }
 
-/// Decode a null-terminated UTF-16LE string.
-fn decode_utf16le(data: &[u8]) -> String {
-    let mut chars = Vec::new();
-    for chunk in data.chunks_exact(2) {
-        let c = u16::from_le_bytes([chunk[0], chunk[1]]);
-        if c == 0 {
-            break;
+#[cfg(target_os = "linux")]
+fn set_systemd_boot_default(id: &str) -> Result<()> {
+    let conf_path = Path::new(SYSTEMD_LOADER_CONF);
+    let content = std::fs::read_to_string(conf_path).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", conf_path.display(), e).into())
+    })?;
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut found = false;
+    for line in content.lines() {
+        if line.trim().starts_with("default") {
+            lines.push(format!("default {}.conf", id));
+            found = true;
+        } else {
+            lines.push(line.to_string());
         }
-        chars.push(c);
     }
-    String::from_utf16_lossy(&chars)
+    if !found {
+        lines.push(format!("default {}.conf", id));
+    }
+
+    let new_content = lines.join("\n") + "\n";
+    std::fs::write(conf_path, new_content).map_err(|e| {
+        SysError::Unknown(format!("Failed to write {}: {}", conf_path.display(), e).into())
+    })?;
+
+    tracing::info!("Set systemd-boot default entry to: {}", id);
+    Ok(())
 }
+
+#[cfg(target_os = "linux")]
+fn set_systemd_boot_cmdline(entry_id: &str, options: &str) -> Result<()> {
+    let entry_path = Path::new(SYSTEMD_ENTRIES_DIR).join(format!("{}.conf", entry_id));
+    if !entry_path.exists() {
+        return Err(SysError::InvalidArgument(
+            format!("Boot entry not found: {}", entry_id).into(),
+        ));
+    }
+
+    let content = std::fs::read_to_string(&entry_path).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", entry_path.display(), e).into())
+    })?;
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut found = false;
+    for line in content.lines() {
+        if line.trim().starts_with("options") {
+            lines.push(format!("options {}", options));
+            found = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    if !found {
+        lines.push(format!("options {}", options));
+    }
+
+    let new_content = lines.join("\n") + "\n";
+    std::fs::write(&entry_path, new_content).map_err(|e| {
+        SysError::Unknown(format!("Failed to write {}: {}", entry_path.display(), e).into())
+    })?;
+
+    tracing::info!("Set kernel cmdline for {} to: {}", entry_id, options);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn set_systemd_boot_timeout(seconds: u32) -> Result<()> {
+    let conf_path = Path::new(SYSTEMD_LOADER_CONF);
+    let content = std::fs::read_to_string(conf_path).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", conf_path.display(), e).into())
+    })?;
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut found = false;
+    for line in content.lines() {
+        if line.trim().starts_with("timeout") {
+            lines.push(format!("timeout {}", seconds));
+            found = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    if !found {
+        lines.push(format!("timeout {}", seconds));
+    }
+
+    let new_content = lines.join("\n") + "\n";
+    std::fs::write(conf_path, new_content).map_err(|e| {
+        SysError::Unknown(format!("Failed to write {}: {}", conf_path.display(), e).into())
+    })?;
+
+    tracing::info!("Set systemd-boot timeout to: {}s", seconds);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// GRUB2 implementation
+// ---------------------------------------------------------------------------
+
+/// Read GRUB2 configuration by parsing `grub.cfg` and `/etc/default/grub`.
+#[cfg(target_os = "linux")]
+fn read_grub2_config() -> Result<BootConfig> {
+    let timeout = parse_grub_default_timeout()?;
+    let (entries, default_id) = parse_grub_cfg(Path::new(GRUB_CFG))?;
+
+    Ok(BootConfig {
+        bootloader: Bootloader::Grub2,
+        timeout_secs: timeout,
+        default_entry: default_id.clone(),
+        entries,
+    })
+}
+
+/// Parse `GRUB_TIMEOUT` from `/etc/default/grub`.
+#[cfg(target_os = "linux")]
+fn parse_grub_default_timeout() -> Result<u32> {
+    let content = std::fs::read_to_string(GRUB_DEFAULT_FILE).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", GRUB_DEFAULT_FILE, e).into())
+    })?;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(val) = line.strip_prefix("GRUB_TIMEOUT=") {
+            let val = val.trim().trim_matches('"');
+            if let Ok(t) = val.parse::<u32>() {
+                return Ok(t);
+            }
+        }
+    }
+
+    Ok(5) // default
+}
+
+/// Parse `grub.cfg` for menuentry blocks.
+///
+/// Extracts title, linux, initrd, and options from each menuentry.
+#[cfg(target_os = "linux")]
+fn parse_grub_cfg(path: &Path) -> Result<(Vec<BootEntry>, Option<String>)> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", path.display(), e).into())
+    })?;
+
+    let mut entries = Vec::new();
+    let mut default_entry: Option<String> = None;
+    let mut entry_index: usize = 0;
+
+    // Parse `set default="..."` directive
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(val) = line.strip_prefix("set default=\"") {
+            if let Some(val) = val.strip_suffix('"') {
+                default_entry = Some(val.to_string());
+            }
+        }
+    }
+
+    // Parse menuentry blocks
+    let mut in_entry = false;
+    let mut title = String::new();
+    let mut linux = PathBuf::new();
+    let mut initrd: Option<PathBuf> = None;
+    let mut options = String::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        if line.starts_with("menuentry ") {
+            in_entry = true;
+            // Extract title from: menuentry 'Title' ... {
+            title = line
+                .split('\'')
+                .nth(1)
+                .or_else(|| line.split('"').nth(1))
+                .unwrap_or("Unknown")
+                .to_string();
+            linux = PathBuf::new();
+            initrd = None;
+            options = String::new();
+        } else if in_entry && line == "}" {
+            let id = entry_index.to_string();
+            let is_default = default_entry
+                .as_ref()
+                .map_or(entry_index == 0, |d| d == &id || d == &title);
+
+            let version = extract_version_from_path(&linux);
+
+            entries.push(BootEntry {
+                id,
+                title: title.clone(),
+                linux: linux.clone(),
+                initrd: initrd.clone(),
+                options: options.clone(),
+                is_default,
+                version,
+            });
+            entry_index += 1;
+            in_entry = false;
+        } else if in_entry {
+            if let Some(rest) = line.strip_prefix("linux") {
+                // "linux /boot/vmlinuz-... root=UUID=... quiet"
+                // or "linux16 ..."
+                let rest = rest.trim_start_matches("16").trim();
+                let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                if !parts.is_empty() {
+                    linux = PathBuf::from(parts[0]);
+                }
+                if parts.len() > 1 {
+                    options = parts[1].to_string();
+                }
+            } else if let Some(rest) = line.strip_prefix("initrd") {
+                let rest = rest.trim_start_matches("16").trim();
+                if !rest.is_empty() {
+                    initrd = Some(PathBuf::from(rest));
+                }
+            }
+        }
+    }
+
+    Ok((entries, default_entry))
+}
+
+/// Try to extract a kernel version from a path like `/boot/vmlinuz-6.6.0-agnos`.
+fn extract_version_from_path(path: &Path) -> Option<String> {
+    let filename = path.file_name()?.to_str()?;
+    let version = filename.strip_prefix("vmlinuz-")?;
+    Some(version.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn set_grub2_default(id: &str) -> Result<()> {
+    let output = std::process::Command::new("grub-set-default")
+        .arg(id)
+        .output()
+        .map_err(|e| SysError::Unknown(format!("Failed to run grub-set-default: {}", e).into()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(SysError::Unknown(
+            format!("grub-set-default failed: {}", stderr.trim()).into(),
+        ));
+    }
+
+    tracing::info!("Set GRUB2 default entry to: {}", id);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn set_grub2_cmdline(entry_id: &str, options: &str) -> Result<()> {
+    // GRUB2 kernel cmdline is typically set via /etc/default/grub
+    // For per-entry modification, we update GRUB_CMDLINE_LINUX_DEFAULT
+    // and regenerate grub.cfg.
+    let content = std::fs::read_to_string(GRUB_DEFAULT_FILE).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", GRUB_DEFAULT_FILE, e).into())
+    })?;
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut found = false;
+    for line in content.lines() {
+        if line.trim().starts_with("GRUB_CMDLINE_LINUX_DEFAULT=") {
+            lines.push(format!("GRUB_CMDLINE_LINUX_DEFAULT=\"{}\"", options));
+            found = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    if !found {
+        lines.push(format!("GRUB_CMDLINE_LINUX_DEFAULT=\"{}\"", options));
+    }
+
+    let new_content = lines.join("\n") + "\n";
+    std::fs::write(GRUB_DEFAULT_FILE, new_content).map_err(|e| {
+        SysError::Unknown(format!("Failed to write {}: {}", GRUB_DEFAULT_FILE, e).into())
+    })?;
+
+    // Regenerate grub.cfg
+    let output = std::process::Command::new("grub-mkconfig")
+        .arg("-o")
+        .arg(GRUB_CFG)
+        .output()
+        .map_err(|e| SysError::Unknown(format!("Failed to run grub-mkconfig: {}", e).into()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(SysError::Unknown(
+            format!("grub-mkconfig failed: {}", stderr.trim()).into(),
+        ));
+    }
+
+    tracing::info!(
+        "Set GRUB2 kernel cmdline for entry {} and regenerated grub.cfg",
+        entry_id
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn set_grub2_timeout(seconds: u32) -> Result<()> {
+    let content = std::fs::read_to_string(GRUB_DEFAULT_FILE).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", GRUB_DEFAULT_FILE, e).into())
+    })?;
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut found = false;
+    for line in content.lines() {
+        if line.trim().starts_with("GRUB_TIMEOUT=") {
+            lines.push(format!("GRUB_TIMEOUT={}", seconds));
+            found = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    if !found {
+        lines.push(format!("GRUB_TIMEOUT={}", seconds));
+    }
+
+    let new_content = lines.join("\n") + "\n";
+    std::fs::write(GRUB_DEFAULT_FILE, new_content).map_err(|e| {
+        SysError::Unknown(format!("Failed to write {}: {}", GRUB_DEFAULT_FILE, e).into())
+    })?;
+
+    tracing::info!("Set GRUB2 timeout to: {}s", seconds);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── compile-time guarantees ──────────────────────────────────────
-
-    const _: () = {
-        const fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<BootloaderInfo>();
-        assert_send_sync::<BootloaderKind>();
-        assert_send_sync::<BootEntry>();
-        assert_send_sync::<LoaderConfig>();
-    };
-
-    // ── Detection ───────────────────────────────────────────────────
+    // -- Bootloader enum tests --
 
     #[test]
-    fn detect_returns_result() {
-        let info = detect().unwrap();
-        assert!(!info.name.is_empty());
-    }
-
-    // ── BootloaderKind ──────────────────────────────────────────────
-
-    #[test]
-    fn bootloader_kind_display() {
-        assert_eq!(format!("{}", BootloaderKind::SystemdBoot), "systemd-boot");
-        assert_eq!(format!("{}", BootloaderKind::Grub), "grub");
-        assert_eq!(format!("{}", BootloaderKind::Unknown), "unknown");
+    fn test_bootloader_display() {
+        assert_eq!(Bootloader::SystemdBoot.to_string(), "systemd-boot");
+        assert_eq!(Bootloader::Grub2.to_string(), "GRUB2");
+        assert_eq!(Bootloader::Unknown.to_string(), "unknown");
     }
 
     #[test]
-    fn bootloader_kind_eq() {
-        assert_eq!(BootloaderKind::SystemdBoot, BootloaderKind::SystemdBoot);
-        assert_ne!(BootloaderKind::SystemdBoot, BootloaderKind::Grub);
+    fn test_bootloader_equality() {
+        assert_eq!(Bootloader::SystemdBoot, Bootloader::SystemdBoot);
+        assert_ne!(Bootloader::SystemdBoot, Bootloader::Grub2);
+        assert_ne!(Bootloader::Grub2, Bootloader::Unknown);
     }
 
     #[test]
-    fn bootloader_kind_debug() {
-        let dbg = format!("{:?}", BootloaderKind::SystemdBoot);
-        assert!(dbg.contains("SystemdBoot"));
+    fn test_bootloader_clone() {
+        let b = Bootloader::Grub2;
+        let b2 = b;
+        assert_eq!(b, b2);
+    }
+
+    // -- Validation tests --
+
+    #[test]
+    fn test_validate_cmdline_safe() {
+        assert!(validate_kernel_cmdline("root=UUID=abc quiet splash").is_ok());
     }
 
     #[test]
-    fn bootloader_kind_copy() {
-        let a = BootloaderKind::Grub;
-        let b = a;
-        assert_eq!(a, b);
-    }
-
-    // ── Boot entries ────────────────────────────────────────────────
-
-    #[test]
-    fn list_entries_returns_result() {
-        let _ = list_entries();
+    fn test_validate_cmdline_empty() {
+        assert!(validate_kernel_cmdline("").is_ok());
     }
 
     #[test]
-    fn list_entries_sorted() {
-        if let Ok(entries) = list_entries() {
-            for window in entries.windows(2) {
-                assert!(window[0].id <= window[1].id);
-            }
+    fn test_validate_cmdline_rejects_init_bin_sh() {
+        let result = validate_kernel_cmdline("root=UUID=abc init=/bin/sh");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("dangerous"), "Error: {}", err);
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_init_bin_bash() {
+        let result = validate_kernel_cmdline("root=UUID=abc init=/bin/bash quiet");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_single() {
+        assert!(validate_kernel_cmdline("root=UUID=abc single").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_rd_break() {
+        assert!(validate_kernel_cmdline("rd.break root=UUID=abc").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_debug_shell() {
+        assert!(validate_kernel_cmdline("systemd.debug-shell quiet").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_emergency() {
+        assert!(validate_kernel_cmdline("emergency").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_too_long() {
+        let long_line = "a".repeat(4097);
+        let result = validate_kernel_cmdline(&long_line);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("4096"));
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_non_ascii() {
+        let result = validate_kernel_cmdline("root=UUID=abc quiet\x00hidden");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-printable"));
+    }
+
+    #[test]
+    fn test_validate_cmdline_case_insensitive_dangerous() {
+        // The check should be case-insensitive
+        assert!(validate_kernel_cmdline("INIT=/BIN/SH").is_err());
+    }
+
+    // -- Entry ID validation --
+
+    #[test]
+    fn test_validate_entry_id_valid() {
+        assert!(validate_entry_id("agnos-6.6.0").is_ok());
+        assert!(validate_entry_id("entry_1").is_ok());
+        assert!(validate_entry_id("0").is_ok());
+    }
+
+    #[test]
+    fn test_validate_entry_id_empty() {
+        assert!(validate_entry_id("").is_err());
+    }
+
+    #[test]
+    fn test_validate_entry_id_too_long() {
+        let long_id = "a".repeat(257);
+        assert!(validate_entry_id(&long_id).is_err());
+    }
+
+    #[test]
+    fn test_validate_entry_id_invalid_chars() {
+        assert!(validate_entry_id("entry id with spaces").is_err());
+        assert!(validate_entry_id("entry;drop").is_err());
+    }
+
+    // -- Timeout validation --
+
+    #[test]
+    fn test_set_timeout_rejects_over_300() {
+        let result = set_timeout(301);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("300"));
+    }
+
+    #[test]
+    fn test_set_timeout_boundary_300_accepted() {
+        // 300 should not fail validation (will fail on actual write since no bootloader,
+        // but should pass the bounds check)
+        let result = set_timeout(300);
+        // On non-linux or without a real bootloader, this may fail for other reasons,
+        // but not the bounds check
+        if let Err(e) = result {
+            assert!(
+                !e.to_string().contains("300 exceeds"),
+                "300 should be accepted: {}",
+                e
+            );
         }
     }
 
-    // ── parse_loader_config ─────────────────────────────────────────
+    // -- Version extraction --
 
     #[test]
-    fn parse_loader_config_full() {
-        let content = "\
-default arch-*
-timeout 5
-console-mode auto
-editor yes
-";
-        let config = parse_loader_config(content);
-        assert_eq!(config.default, "arch-*");
-        assert_eq!(config.timeout, "5");
-        assert_eq!(config.console_mode, "auto");
-        assert_eq!(config.editor, "yes");
+    fn test_extract_version_from_path() {
+        let p = PathBuf::from("/boot/vmlinuz-6.6.0-agnos");
+        assert_eq!(
+            extract_version_from_path(&p),
+            Some("6.6.0-agnos".to_string())
+        );
     }
 
     #[test]
-    fn parse_loader_config_empty() {
-        let config = parse_loader_config("");
-        assert!(config.default.is_empty());
-        assert!(config.timeout.is_empty());
+    fn test_extract_version_no_prefix() {
+        let p = PathBuf::from("/boot/bzImage");
+        assert_eq!(extract_version_from_path(&p), None);
+    }
+
+    // -- Serialization round-trips --
+
+    #[test]
+    fn test_bootloader_serde_roundtrip() {
+        let b = Bootloader::SystemdBoot;
+        let json = serde_json::to_string(&b).unwrap();
+        let b2: Bootloader = serde_json::from_str(&json).unwrap();
+        assert_eq!(b, b2);
     }
 
     #[test]
-    fn parse_loader_config_comments() {
-        let content = "\
-# comment
-default linux
-# another comment
-";
-        let config = parse_loader_config(content);
-        assert_eq!(config.default, "linux");
-    }
-
-    // ── Boot entry parsing ──────────────────────────────────────────
-
-    #[test]
-    fn parse_boot_entry_synthetic() {
-        let tmp = &format!("/tmp/agnosys_test_boot_entry_{}.conf", std::process::id());
-        let content = "\
-title Arch Linux
-linux /vmlinuz-linux
-initrd /initramfs-linux.img
-options root=UUID=abc123 rw
-";
-        std::fs::write(tmp, content).unwrap();
-        let entry = parse_boot_entry(Path::new(tmp)).unwrap();
-        std::fs::remove_file(tmp).unwrap();
-
-        assert_eq!(entry.title, "Arch Linux");
-        assert_eq!(entry.linux, "/vmlinuz-linux");
-        assert_eq!(entry.initrd, vec!["/initramfs-linux.img"]);
-        assert!(entry.options.contains("root=UUID=abc123"));
+    fn test_boot_entry_serde_roundtrip() {
+        let entry = BootEntry {
+            id: "agnos-6.6.0".to_string(),
+            title: "AGNOS 6.6.0".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz-6.6.0-agnos"),
+            initrd: Some(PathBuf::from("/boot/initramfs-6.6.0-agnos.img")),
+            options: "root=UUID=abc quiet splash".to_string(),
+            is_default: true,
+            version: Some("6.6.0-agnos".to_string()),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let entry2: BootEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, entry2);
     }
 
     #[test]
-    fn parse_boot_entry_multiple_initrd() {
-        let tmp = &format!("/tmp/agnosys_test_boot_multi_{}.conf", std::process::id());
-        let content = "\
-title Test
-linux /vmlinuz
-initrd /intel-ucode.img
-initrd /initramfs.img
-options quiet
-";
-        std::fs::write(tmp, content).unwrap();
-        let entry = parse_boot_entry(Path::new(tmp)).unwrap();
-        std::fs::remove_file(tmp).unwrap();
-
-        assert_eq!(entry.initrd.len(), 2);
+    fn test_boot_config_serde_roundtrip() {
+        let config = BootConfig {
+            bootloader: Bootloader::Grub2,
+            timeout_secs: 10,
+            default_entry: Some("0".to_string()),
+            entries: vec![BootEntry {
+                id: "0".to_string(),
+                title: "AGNOS".to_string(),
+                linux: PathBuf::from("/boot/vmlinuz"),
+                initrd: None,
+                options: "quiet".to_string(),
+                is_default: true,
+                version: None,
+            }],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let config2: BootConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.bootloader, config2.bootloader);
+        assert_eq!(config.timeout_secs, config2.timeout_secs);
+        assert_eq!(config.default_entry, config2.default_entry);
+        assert_eq!(config.entries.len(), config2.entries.len());
+        assert_eq!(config.entries[0], config2.entries[0]);
     }
 
+    // -- Detection (runs on the host; result depends on environment) --
+
     #[test]
-    fn parse_boot_entry_nonexistent() {
-        assert!(parse_boot_entry(Path::new("/nonexistent_agnosys.conf")).is_err());
+    fn test_detect_bootloader_returns_ok() {
+        // Should never panic — returns Ok(Unknown) if neither bootloader is present
+        let result = detect_bootloader();
+        assert!(result.is_ok());
     }
 
-    // ── Boot partition ──────────────────────────────────────────────
+    // -- Dangerous tokens coverage --
 
     #[test]
-    fn boot_mounted_returns_bool() {
-        let _ = boot_mounted();
-    }
-
-    #[test]
-    fn list_kernels_returns_result() {
-        let _ = list_kernels();
-    }
-
-    #[test]
-    fn list_kernels_sorted() {
-        if let Ok(kernels) = list_kernels() {
-            for window in kernels.windows(2) {
-                assert!(window[0] <= window[1]);
-            }
+    fn test_all_dangerous_tokens_rejected() {
+        for token in DANGEROUS_CMDLINE_TOKENS {
+            let result = validate_kernel_cmdline(token);
+            assert!(
+                result.is_err(),
+                "Expected rejection for dangerous token: {}",
+                token
+            );
         }
-    }
-
-    // ── BootloaderInfo struct ───────────────────────────────────────
-
-    #[test]
-    fn bootloader_info_debug() {
-        let info = BootloaderInfo {
-            name: "systemd-boot".into(),
-            kind: BootloaderKind::SystemdBoot,
-            config_path: Some(PathBuf::from("/boot/loader/loader.conf")),
-        };
-        let dbg = format!("{info:?}");
-        assert!(dbg.contains("systemd-boot"));
-    }
-
-    #[test]
-    fn bootloader_info_clone() {
-        let info = BootloaderInfo {
-            name: "grub".into(),
-            kind: BootloaderKind::Grub,
-            config_path: None,
-        };
-        let info2 = info.clone();
-        assert_eq!(info.name, info2.name);
-        assert_eq!(info.kind, info2.kind);
-    }
-
-    // ── BootEntry struct ────────────────────────────────────────────
-
-    #[test]
-    fn boot_entry_debug() {
-        let e = BootEntry {
-            id: "arch".into(),
-            title: "Arch Linux".into(),
-            linux: "/vmlinuz".into(),
-            initrd: vec!["/initramfs.img".into()],
-            options: "quiet".into(),
-            path: PathBuf::from("/boot/loader/entries/arch.conf"),
-        };
-        let dbg = format!("{e:?}");
-        assert!(dbg.contains("Arch Linux"));
-    }
-
-    #[test]
-    fn boot_entry_clone() {
-        let e = BootEntry {
-            id: "test".into(),
-            title: "Test".into(),
-            linux: "/vmlinuz".into(),
-            initrd: vec![],
-            options: String::new(),
-            path: PathBuf::from("/test"),
-        };
-        let e2 = e.clone();
-        assert_eq!(e.id, e2.id);
-    }
-
-    // ── decode_utf16le ──────────────────────────────────────────────
-
-    #[test]
-    fn decode_utf16le_basic() {
-        // "ABC" in UTF-16LE + null terminator
-        let data = [0x41, 0x00, 0x42, 0x00, 0x43, 0x00, 0x00, 0x00];
-        assert_eq!(decode_utf16le(&data), "ABC");
-    }
-
-    #[test]
-    fn decode_utf16le_empty() {
-        let data = [0x00, 0x00];
-        assert_eq!(decode_utf16le(&data), "");
-    }
-
-    #[test]
-    fn decode_utf16le_no_null() {
-        let data = [0x41, 0x00, 0x42, 0x00];
-        assert_eq!(decode_utf16le(&data), "AB");
-    }
-
-    // ── LoaderConfig struct ─────────────────────────────────────────
-
-    #[test]
-    fn loader_config_debug() {
-        let c = LoaderConfig {
-            default: "arch-*".into(),
-            timeout: "5".into(),
-            ..Default::default()
-        };
-        let dbg = format!("{c:?}");
-        assert!(dbg.contains("arch-*"));
-    }
-
-    #[test]
-    fn loader_config_default() {
-        let c = LoaderConfig::default();
-        assert!(c.default.is_empty());
-        assert!(c.timeout.is_empty());
-        assert!(c.console_mode.is_empty());
-        assert!(c.editor.is_empty());
     }
 }

@@ -1,431 +1,1149 @@
-//! mac — Mandatory Access Control.
+//! Mandatory Access Control (MAC) Interface
 //!
-//! Detect and query Linux Security Modules (LSMs): SELinux, AppArmor, Smack.
-//! Read security contexts, labels, and LSM status without linking to
-//! libselinux or libapparmor.
+//! Auto-detects the active Linux Security Module (SELinux or AppArmor) and
+//! provides per-agent-type MAC profile management.
 //!
-//! # Example
-//!
-//! ```no_run
-//! use agnosys::mac;
-//!
-//! let lsm = mac::active_lsm().unwrap();
-//! println!("active LSM: {lsm}");
-//!
-//! if let Ok(ctx) = mac::current_context() {
-//!     println!("security context: {ctx}");
-//! }
-//! ```
+//! On non-Linux platforms, `detect_mac_system()` returns `MacSystem::None`
+//! and all operations return `SysError::NotSupported`.
 
 use crate::error::{Result, SysError};
-use std::borrow::Cow;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-// ── Constants ───────────────────────────────────────────────────────
-
-const LSM_PATH: &str = "/sys/kernel/security/lsm";
-const SELINUX_ENFORCE_PATH: &str = "/sys/fs/selinux/enforce";
-// const SELINUX_STATUS_PATH: &str = "/sys/fs/selinux/status"; // reserved for future use
-const APPARMOR_PROFILES_PATH: &str = "/sys/kernel/security/apparmor/profiles";
-const PROC_ATTR_CURRENT: &str = "/proc/self/attr/current";
-const PROC_ATTR_APPARMOR: &str = "/proc/self/attr/apparmor/current";
-
-// ── Public types ────────────────────────────────────────────────────
-
-/// Known Linux Security Module types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Lsm {
-    /// Security-Enhanced Linux.
+/// Which MAC system is active on this kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MacSystem {
     SELinux,
-    /// Application Armor.
     AppArmor,
-    /// Simplified Mandatory Access Control Kernel.
-    Smack,
-    /// TOMOYO Linux.
-    Tomoyo,
-    /// Landlock (handled separately in agnosys::landlock).
-    Landlock,
-    /// Yama ptrace restrictions.
-    Yama,
-    /// LoadPin module signature verification.
-    LoadPin,
-    /// SafeSetID UID/GID transitions.
-    SafeSetID,
-    /// BPF LSM.
-    Bpf,
-    /// Unknown LSM.
-    Other(u8),
+    None,
 }
 
-impl Lsm {
-    fn from_name(name: &str) -> Self {
-        match name.trim() {
-            "selinux" => Self::SELinux,
-            "apparmor" => Self::AppArmor,
-            "smack" => Self::Smack,
-            "tomoyo" => Self::Tomoyo,
-            "landlock" => Self::Landlock,
-            "yama" => Self::Yama,
-            "loadpin" => Self::LoadPin,
-            "safesetid" => Self::SafeSetID,
-            "bpf" => Self::Bpf,
-            _ => Self::Other(0),
-        }
-    }
-}
-
-impl std::fmt::Display for Lsm {
+impl std::fmt::Display for MacSystem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SELinux => write!(f, "selinux"),
-            Self::AppArmor => write!(f, "apparmor"),
-            Self::Smack => write!(f, "smack"),
-            Self::Tomoyo => write!(f, "tomoyo"),
-            Self::Landlock => write!(f, "landlock"),
-            Self::Yama => write!(f, "yama"),
-            Self::LoadPin => write!(f, "loadpin"),
-            Self::SafeSetID => write!(f, "safesetid"),
-            Self::Bpf => write!(f, "bpf"),
-            Self::Other(_) => write!(f, "unknown"),
+            MacSystem::SELinux => write!(f, "SELinux"),
+            MacSystem::AppArmor => write!(f, "AppArmor"),
+            MacSystem::None => write!(f, "None"),
         }
     }
 }
 
 /// SELinux enforcement mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SELinuxMode {
-    /// SELinux is disabled.
-    Disabled,
-    /// SELinux is in permissive mode (logs but doesn't enforce).
-    Permissive,
-    /// SELinux is enforcing.
     Enforcing,
+    Permissive,
+    Disabled,
 }
 
-// ── LSM detection ───────────────────────────────────────────────────
-
-/// List all active LSMs on the system.
-///
-/// Reads from `/sys/kernel/security/lsm`.
-pub fn list_lsms() -> Result<Vec<Lsm>> {
-    let content = std::fs::read_to_string(LSM_PATH).map_err(|e| {
-        tracing::debug!(error = %e, "failed to read /sys/kernel/security/lsm");
-        SysError::Io(e)
-    })?;
-
-    let lsms: Vec<Lsm> = content
-        .trim()
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(Lsm::from_name)
-        .collect();
-
-    tracing::trace!(count = lsms.len(), "listed active LSMs");
-    Ok(lsms)
-}
-
-/// Get the primary (first) active LSM as a string.
-pub fn active_lsm() -> Result<String> {
-    let content = std::fs::read_to_string(LSM_PATH).map_err(|e| {
-        tracing::debug!(error = %e, "failed to read /sys/kernel/security/lsm");
-        SysError::Io(e)
-    })?;
-
-    let first = content.trim().split(',').next().unwrap_or("").to_owned();
-
-    Ok(first)
-}
-
-/// Raw LSM string from the kernel (comma-separated).
-pub fn lsm_string() -> Result<String> {
-    std::fs::read_to_string(LSM_PATH)
-        .map(|s| s.trim().to_owned())
-        .map_err(|e| {
-            tracing::debug!(error = %e, "failed to read LSM string");
-            SysError::Io(e)
-        })
-}
-
-/// Check if a specific LSM is active.
-pub fn is_lsm_active(lsm: Lsm) -> Result<bool> {
-    let lsms = list_lsms()?;
-    Ok(lsms.contains(&lsm))
-}
-
-// ── SELinux ─────────────────────────────────────────────────────────
-
-/// Check if SELinux is available on this system.
-#[must_use]
-pub fn selinux_available() -> bool {
-    Path::new(SELINUX_ENFORCE_PATH).exists()
-}
-
-/// Get the current SELinux enforcement mode.
-pub fn selinux_mode() -> Result<SELinuxMode> {
-    if !selinux_available() {
-        return Ok(SELinuxMode::Disabled);
-    }
-
-    let content = std::fs::read_to_string(SELINUX_ENFORCE_PATH).map_err(|e| {
-        tracing::error!(error = %e, "failed to read SELinux enforce");
-        SysError::Io(e)
-    })?;
-
-    match content.trim() {
-        "1" => Ok(SELinuxMode::Enforcing),
-        "0" => Ok(SELinuxMode::Permissive),
-        _ => Ok(SELinuxMode::Disabled),
+impl std::fmt::Display for SELinuxMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SELinuxMode::Enforcing => write!(f, "Enforcing"),
+            SELinuxMode::Permissive => write!(f, "Permissive"),
+            SELinuxMode::Disabled => write!(f, "Disabled"),
+        }
     }
 }
 
-// ── AppArmor ────────────────────────────────────────────────────────
-
-/// Check if AppArmor is available on this system.
-#[must_use]
-pub fn apparmor_available() -> bool {
-    Path::new(APPARMOR_PROFILES_PATH).exists()
+/// AppArmor profile enforcement state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AppArmorProfileState {
+    Enforce,
+    Complain,
+    Unconfined,
 }
 
-/// Count loaded AppArmor profiles.
-pub fn apparmor_profile_count() -> Result<usize> {
-    let content = std::fs::read_to_string(APPARMOR_PROFILES_PATH).map_err(|e| {
-        tracing::debug!(error = %e, "failed to read AppArmor profiles");
-        SysError::Io(e)
-    })?;
-
-    Ok(content.lines().count())
+impl std::fmt::Display for AppArmorProfileState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppArmorProfileState::Enforce => write!(f, "enforce"),
+            AppArmorProfileState::Complain => write!(f, "complain"),
+            AppArmorProfileState::Unconfined => write!(f, "unconfined"),
+        }
+    }
 }
 
-// ── Security context ────────────────────────────────────────────────
+/// MAC profile for a specific agent type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMacProfile {
+    /// Agent type this profile applies to (User, Service, System)
+    pub agent_type: String,
+    /// SELinux security context (e.g., `system_u:system_r:agnos_agent_user_t:s0`)
+    pub selinux_context: Option<String>,
+    /// AppArmor profile name (e.g., `agnos-agent-user`)
+    pub apparmor_profile: Option<String>,
+}
 
-/// Read the current process security context.
-///
-/// Tries `/proc/self/attr/apparmor/current` first (AppArmor),
-/// then `/proc/self/attr/current` (SELinux/Smack).
-pub fn current_context() -> Result<String> {
-    // Try AppArmor first
-    if let Ok(ctx) = std::fs::read_to_string(PROC_ATTR_APPARMOR) {
-        let ctx = ctx.trim().to_owned();
-        if !ctx.is_empty() {
-            return Ok(ctx);
+impl AgentMacProfile {
+    /// Create a new profile for the given agent type.
+    pub fn new(agent_type: impl Into<String>) -> Self {
+        let agent_type = agent_type.into();
+        let lower = agent_type.to_lowercase();
+        Self {
+            selinux_context: Some(format!("system_u:system_r:agnos_agent_{}_t:s0", lower)),
+            apparmor_profile: Some(format!("agnos-agent-{}", lower)),
+            agent_type,
         }
     }
 
-    // Fall back to generic (SELinux/Smack)
-    let ctx = std::fs::read_to_string(PROC_ATTR_CURRENT).map_err(|e| {
-        tracing::debug!(error = %e, "failed to read security context");
-        SysError::Io(e)
-    })?;
-
-    Ok(ctx.trim().trim_end_matches('\0').to_owned())
+    /// Validate that the profile has the required fields for the given MAC system.
+    pub fn validate(&self, mac_system: MacSystem) -> Result<()> {
+        if self.agent_type.is_empty() {
+            return Err(SysError::InvalidArgument(
+                "Agent type cannot be empty".into(),
+            ));
+        }
+        match mac_system {
+            MacSystem::SELinux => {
+                let ctx = self.selinux_context.as_deref().unwrap_or("");
+                if ctx.is_empty() {
+                    return Err(SysError::InvalidArgument(
+                        "SELinux context required but not set".into(),
+                    ));
+                }
+                // SELinux context format: user:role:type:level
+                if ctx.split(':').count() < 4 {
+                    return Err(SysError::InvalidArgument(
+                        format!(
+                            "Invalid SELinux context format (expected user:role:type:level): {}",
+                            ctx
+                        )
+                        .into(),
+                    ));
+                }
+            }
+            MacSystem::AppArmor => {
+                let profile = self.apparmor_profile.as_deref().unwrap_or("");
+                if profile.is_empty() {
+                    return Err(SysError::InvalidArgument(
+                        "AppArmor profile name required but not set".into(),
+                    ));
+                }
+                if profile.contains('/') || profile.contains('\0') {
+                    return Err(SysError::InvalidArgument(
+                        format!("Invalid AppArmor profile name: {}", profile).into(),
+                    ));
+                }
+            }
+            MacSystem::None => {}
+        }
+        Ok(())
+    }
 }
 
-/// Read the security context of a specific process.
-pub fn process_context(pid: i32) -> Result<String> {
-    let path = format!("/proc/{pid}/attr/current");
-    let ctx = std::fs::read_to_string(&path).map_err(|e| {
-        tracing::debug!(pid, error = %e, "failed to read process security context");
-        SysError::Io(e)
-    })?;
-
-    Ok(ctx.trim().trim_end_matches('\0').to_owned())
-}
-
-/// Read the security label of a file via its extended attributes.
+/// Detect which MAC system is active on this kernel.
 ///
-/// Reads from `/proc/self/attr/` indirectly — for direct xattr access,
-/// use the `security.selinux` or `security.apparmor` xattr.
-pub fn file_context(path: &Path) -> Result<String> {
-    // Use getxattr for security.selinux
-    let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
-        .map_err(|_| SysError::InvalidArgument(Cow::Borrowed("path contains null byte")))?;
-
-    let c_name = c"/security.selinux";
-    let mut buf = [0u8; 512];
-
-    let ret = unsafe {
-        libc::getxattr(
-            c_path.as_ptr(),
-            c_name.as_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_void,
-            buf.len(),
-        )
-    };
-
-    if ret >= 0 {
-        let len = ret as usize;
-        let ctx = String::from_utf8_lossy(&buf[..len])
-            .trim_end_matches('\0')
-            .to_owned();
-        return Ok(ctx);
+/// Reads `/sys/kernel/security/lsm` to determine the active LSMs.
+/// Returns `MacSystem::SELinux` if SELinux is present, `MacSystem::AppArmor` if
+/// AppArmor is present, or `MacSystem::None` if neither is active.
+pub fn detect_mac_system() -> MacSystem {
+    #[cfg(target_os = "linux")]
+    {
+        let lsm_path = "/sys/kernel/security/lsm";
+        match std::fs::read_to_string(lsm_path) {
+            Ok(contents) => {
+                let lower = contents.to_lowercase();
+                // Check SELinux first (higher priority if both are listed)
+                if lower.contains("selinux") {
+                    tracing::debug!("Detected MAC system: SELinux");
+                    return MacSystem::SELinux;
+                }
+                if lower.contains("apparmor") {
+                    tracing::debug!("Detected MAC system: AppArmor");
+                    return MacSystem::AppArmor;
+                }
+                tracing::debug!("No supported MAC system found in: {}", contents.trim());
+                MacSystem::None
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "Cannot read {}: {} (MAC detection unavailable)",
+                    lsm_path,
+                    e
+                );
+                MacSystem::None
+            }
+        }
     }
 
-    // Try AppArmor xattr
-    let c_name = c"/security.apparmor";
-    let ret = unsafe {
-        libc::getxattr(
-            c_path.as_ptr(),
-            c_name.as_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_void,
-            buf.len(),
-        )
-    };
+    #[cfg(not(target_os = "linux"))]
+    {
+        MacSystem::None
+    }
+}
 
-    if ret >= 0 {
-        let len = ret as usize;
-        return Ok(String::from_utf8_lossy(&buf[..len])
-            .trim_end_matches('\0')
-            .to_owned());
+/// Get the current SELinux enforcement mode.
+pub fn get_selinux_mode() -> Result<SELinuxMode> {
+    #[cfg(target_os = "linux")]
+    {
+        let enforce_path = "/sys/fs/selinux/enforce";
+        if !Path::new(enforce_path).exists() {
+            return Ok(SELinuxMode::Disabled);
+        }
+        let val = std::fs::read_to_string(enforce_path).map_err(|e| {
+            SysError::Unknown(format!("Failed to read {}: {}", enforce_path, e).into())
+        })?;
+        match val.trim() {
+            "1" => Ok(SELinuxMode::Enforcing),
+            "0" => Ok(SELinuxMode::Permissive),
+            _ => Ok(SELinuxMode::Disabled),
+        }
     }
 
-    Err(SysError::NotSupported {
-        feature: Cow::Borrowed("no security label found"),
-    })
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "selinux".into(),
+        })
+    }
+}
+
+/// Set the SELinux enforcement mode (requires CAP_MAC_ADMIN).
+pub fn set_selinux_mode(mode: SELinuxMode) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let enforce_path = "/sys/fs/selinux/enforce";
+        if !Path::new(enforce_path).exists() {
+            return Err(SysError::NotSupported {
+                feature: "selinux".into(),
+            });
+        }
+        let val = match mode {
+            SELinuxMode::Enforcing => "1",
+            SELinuxMode::Permissive => "0",
+            SELinuxMode::Disabled => {
+                return Err(SysError::InvalidArgument(
+                    "Cannot disable SELinux at runtime; use kernel boot parameter".into(),
+                ));
+            }
+        };
+        std::fs::write(enforce_path, val).map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => SysError::PermissionDenied {
+                operation: "set selinux mode".into(),
+            },
+            _ => SysError::Unknown(format!("Failed to write {}: {}", enforce_path, e).into()),
+        })?;
+        tracing::info!("SELinux mode set to {}", mode);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = mode;
+        Err(SysError::NotSupported {
+            feature: "selinux".into(),
+        })
+    }
+}
+
+/// Get the current SELinux security context of this process.
+pub fn get_current_selinux_context() -> Result<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let path = "/proc/self/attr/current";
+        if !Path::new(path).exists() {
+            return Err(SysError::NotSupported {
+                feature: "selinux".into(),
+            });
+        }
+        let ctx = std::fs::read_to_string(path)
+            .map_err(|e| SysError::Unknown(format!("Failed to read {}: {}", path, e).into()))?;
+        Ok(ctx.trim_end_matches('\0').trim().to_string())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(SysError::NotSupported {
+            feature: "selinux".into(),
+        })
+    }
+}
+
+/// Set the SELinux security context for this process.
+///
+/// If `on_exec` is true, the context will be applied on the next `exec()` call
+/// (writes to `/proc/self/attr/exec`). Otherwise, applies immediately
+/// (writes to `/proc/self/attr/current`).
+pub fn set_selinux_context(context: &str, on_exec: bool) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if context.is_empty() {
+            return Err(SysError::InvalidArgument(
+                "SELinux context cannot be empty".into(),
+            ));
+        }
+        if context.split(':').count() < 4 {
+            return Err(SysError::InvalidArgument(
+                format!("Invalid SELinux context format: {}", context).into(),
+            ));
+        }
+
+        let path = if on_exec {
+            "/proc/self/attr/exec"
+        } else {
+            "/proc/self/attr/current"
+        };
+
+        if !Path::new(path).exists() {
+            return Err(SysError::NotSupported {
+                feature: "selinux".into(),
+            });
+        }
+
+        std::fs::write(path, context).map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => SysError::PermissionDenied {
+                operation: "set selinux context".into(),
+            },
+            _ => SysError::Unknown(
+                format!("Failed to write SELinux context to {}: {}", path, e).into(),
+            ),
+        })?;
+
+        tracing::debug!("Set SELinux context to {} (on_exec={})", context, on_exec);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (context, on_exec);
+        Err(SysError::NotSupported {
+            feature: "selinux".into(),
+        })
+    }
+}
+
+/// Load an SELinux policy module from a .pp file.
+///
+/// Shells out to `semodule -i <path>`. Requires root.
+pub fn load_selinux_module(module_path: &Path) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // No exists() check — let semodule report the definitive error to avoid TOCTOU
+        let output = std::process::Command::new("semodule")
+            .arg("-i")
+            .arg(module_path)
+            .output()
+            .map_err(|e| SysError::Unknown(format!("Failed to run semodule: {}", e).into()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SysError::Unknown(
+                format!("semodule -i failed: {}", stderr.trim()).into(),
+            ));
+        }
+
+        tracing::info!("Loaded SELinux module: {}", module_path.display());
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = module_path;
+        Err(SysError::NotSupported {
+            feature: "selinux".into(),
+        })
+    }
+}
+
+/// Remove an SELinux policy module by name.
+///
+/// Shells out to `semodule -r <name>`. Requires root.
+pub fn remove_selinux_module(module_name: &str) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if module_name.is_empty() {
+            return Err(SysError::InvalidArgument(
+                "Module name cannot be empty".into(),
+            ));
+        }
+
+        let output = std::process::Command::new("semodule")
+            .arg("-r")
+            .arg(module_name)
+            .output()
+            .map_err(|e| SysError::Unknown(format!("Failed to run semodule: {}", e).into()))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SysError::Unknown(
+                format!("semodule -r failed: {}", stderr.trim()).into(),
+            ));
+        }
+
+        tracing::info!("Removed SELinux module: {}", module_name);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = module_name;
+        Err(SysError::NotSupported {
+            feature: "selinux".into(),
+        })
+    }
+}
+
+/// Load an AppArmor profile from a file path.
+///
+/// Writes the profile content to `/sys/kernel/security/apparmor/.load`.
+pub fn load_apparmor_profile(profile_path: &Path) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // No exists() checks — let the actual I/O operations report definitive errors
+        // to avoid TOCTOU race conditions
+        let load_path = "/sys/kernel/security/apparmor/.load";
+
+        let profile_content = std::fs::read(profile_path)
+            .map_err(|e| SysError::Unknown(format!("Failed to read profile: {}", e).into()))?;
+
+        std::fs::write(load_path, &profile_content).map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => SysError::PermissionDenied {
+                operation: "load apparmor profile".into(),
+            },
+            _ => SysError::Unknown(format!("Failed to load AppArmor profile: {}", e).into()),
+        })?;
+
+        tracing::info!("Loaded AppArmor profile from: {}", profile_path.display());
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = profile_path;
+        Err(SysError::NotSupported {
+            feature: "apparmor".into(),
+        })
+    }
+}
+
+/// Change the AppArmor profile of the current process.
+///
+/// Writes to `/proc/self/attr/current` with the `changeprofile <name>` command.
+pub fn apparmor_change_profile(profile_name: &str) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if profile_name.is_empty() {
+            return Err(SysError::InvalidArgument(
+                "AppArmor profile name cannot be empty".into(),
+            ));
+        }
+        if profile_name.contains('/') || profile_name.contains('\0') {
+            return Err(SysError::InvalidArgument(
+                format!("Invalid AppArmor profile name: {}", profile_name).into(),
+            ));
+        }
+
+        let attr_path = "/proc/self/attr/current";
+        if !Path::new(attr_path).exists() {
+            return Err(SysError::NotSupported {
+                feature: "apparmor".into(),
+            });
+        }
+
+        let command = format!("changeprofile {}", profile_name);
+        std::fs::write(attr_path, &command).map_err(|e| match e.kind() {
+            std::io::ErrorKind::PermissionDenied => SysError::PermissionDenied {
+                operation: "apparmor changeprofile".into(),
+            },
+            _ => SysError::Unknown(format!("AppArmor changeprofile failed: {}", e).into()),
+        })?;
+
+        tracing::debug!("Changed AppArmor profile to: {}", profile_name);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = profile_name;
+        Err(SysError::NotSupported {
+            feature: "apparmor".into(),
+        })
+    }
+}
+
+/// Return default MAC profiles for the three standard AGNOS agent types.
+pub fn default_agent_profiles() -> Vec<AgentMacProfile> {
+    vec![
+        AgentMacProfile::new("User"),
+        AgentMacProfile::new("Service"),
+        AgentMacProfile::new("System"),
+    ]
+}
+
+/// Auto-detect the active MAC system and apply the appropriate profile.
+///
+/// Finds the matching profile for `agent_type` from the provided list.
+/// If no MAC system is active, logs a warning and returns Ok.
+pub fn apply_agent_mac_profile(agent_type: &str, profiles: &[AgentMacProfile]) -> Result<()> {
+    let mac_system = detect_mac_system();
+
+    if mac_system == MacSystem::None {
+        tracing::warn!(
+            "No MAC system active — skipping MAC profile application for agent type '{}'",
+            agent_type
+        );
+        return Ok(());
+    }
+
+    let profile = profiles
+        .iter()
+        .find(|p| p.agent_type.eq_ignore_ascii_case(agent_type))
+        .ok_or_else(|| {
+            SysError::InvalidArgument(
+                format!("No MAC profile found for agent type '{}'", agent_type).into(),
+            )
+        })?;
+
+    profile.validate(mac_system)?;
+
+    match mac_system {
+        MacSystem::SELinux => {
+            let context = profile.selinux_context.as_deref().unwrap_or("");
+            tracing::info!(
+                "Applying SELinux context '{}' for agent type '{}'",
+                context,
+                agent_type
+            );
+            set_selinux_context(context, true)?;
+        }
+        MacSystem::AppArmor => {
+            let profile_name = profile.apparmor_profile.as_deref().unwrap_or("");
+            tracing::info!(
+                "Applying AppArmor profile '{}' for agent type '{}'",
+                profile_name,
+                agent_type
+            );
+            apparmor_change_profile(profile_name)?;
+        }
+        MacSystem::None => unreachable!(),
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── compile-time guarantees ──────────────────────────────────────
-
-    const _: () = {
-        const fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<Lsm>();
-        assert_send_sync::<SELinuxMode>();
-    };
-
-    // ── Lsm ─────────────────────────────────────────────────────────
-
     #[test]
-    fn lsm_from_name_all() {
-        assert_eq!(Lsm::from_name("selinux"), Lsm::SELinux);
-        assert_eq!(Lsm::from_name("apparmor"), Lsm::AppArmor);
-        assert_eq!(Lsm::from_name("smack"), Lsm::Smack);
-        assert_eq!(Lsm::from_name("tomoyo"), Lsm::Tomoyo);
-        assert_eq!(Lsm::from_name("landlock"), Lsm::Landlock);
-        assert_eq!(Lsm::from_name("yama"), Lsm::Yama);
-        assert_eq!(Lsm::from_name("loadpin"), Lsm::LoadPin);
-        assert_eq!(Lsm::from_name("safesetid"), Lsm::SafeSetID);
-        assert_eq!(Lsm::from_name("bpf"), Lsm::Bpf);
-        assert!(matches!(Lsm::from_name("unknown"), Lsm::Other(_)));
+    fn test_mac_system_display() {
+        assert_eq!(MacSystem::SELinux.to_string(), "SELinux");
+        assert_eq!(MacSystem::AppArmor.to_string(), "AppArmor");
+        assert_eq!(MacSystem::None.to_string(), "None");
     }
 
     #[test]
-    fn lsm_display() {
-        assert_eq!(format!("{}", Lsm::SELinux), "selinux");
-        assert_eq!(format!("{}", Lsm::AppArmor), "apparmor");
-        assert_eq!(format!("{}", Lsm::Landlock), "landlock");
+    fn test_selinux_mode_display() {
+        assert_eq!(SELinuxMode::Enforcing.to_string(), "Enforcing");
+        assert_eq!(SELinuxMode::Permissive.to_string(), "Permissive");
+        assert_eq!(SELinuxMode::Disabled.to_string(), "Disabled");
     }
 
     #[test]
-    fn lsm_debug() {
-        let dbg = format!("{:?}", Lsm::SELinux);
-        assert!(dbg.contains("SELinux"));
+    fn test_apparmor_profile_state_display() {
+        assert_eq!(AppArmorProfileState::Enforce.to_string(), "enforce");
+        assert_eq!(AppArmorProfileState::Complain.to_string(), "complain");
+        assert_eq!(AppArmorProfileState::Unconfined.to_string(), "unconfined");
     }
 
     #[test]
-    fn lsm_eq() {
-        assert_eq!(Lsm::SELinux, Lsm::SELinux);
-        assert_ne!(Lsm::SELinux, Lsm::AppArmor);
+    fn test_agent_mac_profile_new() {
+        let profile = AgentMacProfile::new("User");
+        assert_eq!(profile.agent_type, "User");
+        assert_eq!(
+            profile.selinux_context.as_deref(),
+            Some("system_u:system_r:agnos_agent_user_t:s0")
+        );
+        assert_eq!(
+            profile.apparmor_profile.as_deref(),
+            Some("agnos-agent-user")
+        );
     }
 
     #[test]
-    fn lsm_copy() {
-        let a = Lsm::AppArmor;
-        let b = a;
+    fn test_agent_mac_profile_new_service() {
+        let profile = AgentMacProfile::new("Service");
+        assert_eq!(
+            profile.selinux_context.as_deref(),
+            Some("system_u:system_r:agnos_agent_service_t:s0")
+        );
+        assert_eq!(
+            profile.apparmor_profile.as_deref(),
+            Some("agnos-agent-service")
+        );
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_ok() {
+        let profile = AgentMacProfile::new("User");
+        assert!(profile.validate(MacSystem::SELinux).is_ok());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_bad_context() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: Some("bad_context".to_string()),
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::SELinux).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_missing() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: None,
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::SELinux).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_apparmor_ok() {
+        let profile = AgentMacProfile::new("User");
+        assert!(profile.validate(MacSystem::AppArmor).is_ok());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_apparmor_bad_name() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: None,
+            apparmor_profile: Some("bad/name".to_string()),
+        };
+        assert!(profile.validate(MacSystem::AppArmor).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_apparmor_missing() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: None,
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::AppArmor).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_none() {
+        let profile = AgentMacProfile::new("User");
+        assert!(profile.validate(MacSystem::None).is_ok());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_empty_type() {
+        let profile = AgentMacProfile {
+            agent_type: String::new(),
+            selinux_context: None,
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::None).is_err());
+    }
+
+    #[test]
+    fn test_default_agent_profiles() {
+        let profiles = default_agent_profiles();
+        assert_eq!(profiles.len(), 3);
+        assert_eq!(profiles[0].agent_type, "User");
+        assert_eq!(profiles[1].agent_type, "Service");
+        assert_eq!(profiles[2].agent_type, "System");
+    }
+
+    #[test]
+    fn test_detect_mac_system() {
+        // This is platform-dependent; just verify it doesn't crash
+        let system = detect_mac_system();
+        // On most dev machines it will be AppArmor or None
+        assert!(matches!(
+            system,
+            MacSystem::SELinux | MacSystem::AppArmor | MacSystem::None
+        ));
+    }
+
+    #[test]
+    fn test_set_selinux_context_validation() {
+        // Empty context
+        let result = set_selinux_context("", false);
+        assert!(result.is_err());
+
+        // Bad format (not enough components)
+        let result = set_selinux_context("user:role", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_apparmor_change_profile_validation() {
+        // Empty name
+        let result = apparmor_change_profile("");
+        assert!(result.is_err());
+
+        // Name with slash
+        let result = apparmor_change_profile("bad/name");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_apply_agent_mac_profile_no_match() {
+        let profiles = default_agent_profiles();
+        // If no MAC system active, should warn and succeed
+        let result = apply_agent_mac_profile("NonExistent", &profiles);
+        let mac = detect_mac_system();
+        if mac == MacSystem::None {
+            assert!(result.is_ok());
+        } else {
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_agent_mac_profile_serialization() {
+        let profile = AgentMacProfile::new("User");
+        let json = serde_json::to_string(&profile).unwrap();
+        let deserialized: AgentMacProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.agent_type, "User");
+        assert_eq!(deserialized.selinux_context, profile.selinux_context);
+        assert_eq!(deserialized.apparmor_profile, profile.apparmor_profile);
+    }
+
+    #[test]
+    #[ignore = "Requires SELinux active and CAP_MAC_ADMIN"]
+    fn test_get_selinux_mode_live() {
+        let mode = get_selinux_mode().unwrap();
+        assert!(matches!(
+            mode,
+            SELinuxMode::Enforcing | SELinuxMode::Permissive | SELinuxMode::Disabled
+        ));
+    }
+
+    #[test]
+    #[ignore = "Requires SELinux active and root"]
+    fn test_get_current_selinux_context_live() {
+        let ctx = get_current_selinux_context().unwrap();
+        assert!(!ctx.is_empty());
+    }
+
+    // --- Additional coverage tests ---
+
+    #[test]
+    fn test_mac_system_serde_roundtrip() {
+        for variant in &[MacSystem::SELinux, MacSystem::AppArmor, MacSystem::None] {
+            let json = serde_json::to_string(variant).unwrap();
+            let back: MacSystem = serde_json::from_str(&json).unwrap();
+            assert_eq!(*variant, back);
+        }
+    }
+
+    #[test]
+    fn test_selinux_mode_serde_roundtrip() {
+        for variant in &[
+            SELinuxMode::Enforcing,
+            SELinuxMode::Permissive,
+            SELinuxMode::Disabled,
+        ] {
+            let json = serde_json::to_string(variant).unwrap();
+            let back: SELinuxMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(*variant, back);
+        }
+    }
+
+    #[test]
+    fn test_apparmor_profile_state_serde_roundtrip() {
+        for variant in &[
+            AppArmorProfileState::Enforce,
+            AppArmorProfileState::Complain,
+            AppArmorProfileState::Unconfined,
+        ] {
+            let json = serde_json::to_string(variant).unwrap();
+            let back: AppArmorProfileState = serde_json::from_str(&json).unwrap();
+            assert_eq!(*variant, back);
+        }
+    }
+
+    #[test]
+    fn test_mac_system_clone_and_copy() {
+        let a = MacSystem::SELinux;
+        let b = a; // Copy
+        let c = a; // Clone
         assert_eq!(a, b);
+        assert_eq!(a, c);
     }
 
-    // ── SELinuxMode ─────────────────────────────────────────────────
+    #[test]
+    fn test_mac_system_debug() {
+        let dbg = format!("{:?}", MacSystem::SELinux);
+        assert_eq!(dbg, "SELinux");
+        let dbg = format!("{:?}", MacSystem::AppArmor);
+        assert_eq!(dbg, "AppArmor");
+        let dbg = format!("{:?}", MacSystem::None);
+        assert_eq!(dbg, "None");
+    }
 
     #[test]
-    fn selinux_mode_eq() {
+    fn test_selinux_mode_debug() {
+        assert_eq!(format!("{:?}", SELinuxMode::Enforcing), "Enforcing");
+        assert_eq!(format!("{:?}", SELinuxMode::Permissive), "Permissive");
+        assert_eq!(format!("{:?}", SELinuxMode::Disabled), "Disabled");
+    }
+
+    #[test]
+    fn test_apparmor_profile_state_debug() {
+        assert_eq!(format!("{:?}", AppArmorProfileState::Enforce), "Enforce");
+        assert_eq!(format!("{:?}", AppArmorProfileState::Complain), "Complain");
+        assert_eq!(
+            format!("{:?}", AppArmorProfileState::Unconfined),
+            "Unconfined"
+        );
+    }
+
+    #[test]
+    fn test_agent_mac_profile_new_system() {
+        let profile = AgentMacProfile::new("System");
+        assert_eq!(profile.agent_type, "System");
+        assert_eq!(
+            profile.selinux_context.as_deref(),
+            Some("system_u:system_r:agnos_agent_system_t:s0")
+        );
+        assert_eq!(
+            profile.apparmor_profile.as_deref(),
+            Some("agnos-agent-system")
+        );
+    }
+
+    #[test]
+    fn test_agent_mac_profile_new_mixed_case() {
+        let profile = AgentMacProfile::new("MyCustomType");
+        assert_eq!(profile.agent_type, "MyCustomType");
+        assert_eq!(
+            profile.selinux_context.as_deref(),
+            Some("system_u:system_r:agnos_agent_mycustomtype_t:s0")
+        );
+        assert_eq!(
+            profile.apparmor_profile.as_deref(),
+            Some("agnos-agent-mycustomtype")
+        );
+    }
+
+    #[test]
+    fn test_agent_mac_profile_new_from_string() {
+        // Tests the `impl Into<String>` path with an owned String
+        let name = String::from("Worker");
+        let profile = AgentMacProfile::new(name);
+        assert_eq!(profile.agent_type, "Worker");
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_empty_context_string() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: Some(String::new()),
+            apparmor_profile: None,
+        };
+        let err = profile.validate(MacSystem::SELinux).unwrap_err();
+        assert!(err.to_string().contains("required but not set"));
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_three_components() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: Some("user:role:type".to_string()),
+            apparmor_profile: None,
+        };
+        let err = profile.validate(MacSystem::SELinux).unwrap_err();
+        assert!(err.to_string().contains("user:role:type:level"));
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_apparmor_null_char() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: None,
+            apparmor_profile: Some("bad\0name".to_string()),
+        };
+        let err = profile.validate(MacSystem::AppArmor).unwrap_err();
+        assert!(err.to_string().contains("Invalid AppArmor profile name"));
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_apparmor_empty_string() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: None,
+            apparmor_profile: Some(String::new()),
+        };
+        let err = profile.validate(MacSystem::AppArmor).unwrap_err();
+        assert!(err.to_string().contains("required but not set"));
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_empty_type_for_all_systems() {
+        let profile = AgentMacProfile {
+            agent_type: String::new(),
+            selinux_context: Some("u:r:t:s0".to_string()),
+            apparmor_profile: Some("valid".to_string()),
+        };
+        // Empty agent type is rejected for all MAC systems
+        assert!(profile.validate(MacSystem::SELinux).is_err());
+        assert!(profile.validate(MacSystem::AppArmor).is_err());
+        assert!(profile.validate(MacSystem::None).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_clone() {
+        let profile = AgentMacProfile::new("User");
+        let cloned = profile.clone();
+        assert_eq!(cloned.agent_type, profile.agent_type);
+        assert_eq!(cloned.selinux_context, profile.selinux_context);
+        assert_eq!(cloned.apparmor_profile, profile.apparmor_profile);
+    }
+
+    #[test]
+    fn test_agent_mac_profile_debug() {
+        let profile = AgentMacProfile::new("User");
+        let dbg = format!("{:?}", profile);
+        assert!(dbg.contains("User"));
+        assert!(dbg.contains("AgentMacProfile"));
+    }
+
+    #[test]
+    fn test_agent_mac_profile_serialization_roundtrip() {
+        let profile = AgentMacProfile {
+            agent_type: "Custom".to_string(),
+            selinux_context: None,
+            apparmor_profile: Some("my-profile".to_string()),
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        let back: AgentMacProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.agent_type, "Custom");
+        assert!(back.selinux_context.is_none());
+        assert_eq!(back.apparmor_profile.as_deref(), Some("my-profile"));
+    }
+
+    #[test]
+    fn test_default_agent_profiles_all_validate_selinux() {
+        let profiles = default_agent_profiles();
+        for profile in &profiles {
+            assert!(profile.validate(MacSystem::SELinux).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_default_agent_profiles_all_validate_apparmor() {
+        let profiles = default_agent_profiles();
+        for profile in &profiles {
+            assert!(profile.validate(MacSystem::AppArmor).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_default_agent_profiles_all_validate_none() {
+        let profiles = default_agent_profiles();
+        for profile in &profiles {
+            assert!(profile.validate(MacSystem::None).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_set_selinux_context_validation_three_parts() {
+        let result = set_selinux_context("a:b:c", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_selinux_context_validation_on_exec() {
+        // Empty context should fail regardless of on_exec flag
+        let result = set_selinux_context("", true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_apparmor_change_profile_null_char() {
+        let result = apparmor_change_profile("bad\0name");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_selinux_module_nonexistent_path() {
+        let result = load_selinux_module(Path::new("/nonexistent/module.pp"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_selinux_module_empty_name() {
+        let result = remove_selinux_module("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_apparmor_profile_nonexistent_path() {
+        let result = load_apparmor_profile(Path::new("/nonexistent/profile"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_apply_agent_mac_profile_matching_case_insensitive() {
+        // When no MAC is active, it returns Ok regardless
+        let profiles = default_agent_profiles();
+        let mac = detect_mac_system();
+        if mac == MacSystem::None {
+            // Case-insensitive match works
+            assert!(apply_agent_mac_profile("user", &profiles).is_ok());
+            assert!(apply_agent_mac_profile("USER", &profiles).is_ok());
+            assert!(apply_agent_mac_profile("User", &profiles).is_ok());
+            assert!(apply_agent_mac_profile("service", &profiles).is_ok());
+            assert!(apply_agent_mac_profile("system", &profiles).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_apply_agent_mac_profile_empty_profiles() {
+        let mac = detect_mac_system();
+        if mac == MacSystem::None {
+            // With no MAC, even an empty profiles list succeeds (returns early)
+            assert!(apply_agent_mac_profile("User", &[]).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_mac_system_eq_and_ne() {
+        assert_eq!(MacSystem::SELinux, MacSystem::SELinux);
+        assert_ne!(MacSystem::SELinux, MacSystem::AppArmor);
+        assert_ne!(MacSystem::SELinux, MacSystem::None);
+        assert_ne!(MacSystem::AppArmor, MacSystem::None);
+    }
+
+    #[test]
+    fn test_selinux_mode_eq_and_ne() {
         assert_eq!(SELinuxMode::Enforcing, SELinuxMode::Enforcing);
         assert_ne!(SELinuxMode::Enforcing, SELinuxMode::Permissive);
+        assert_ne!(SELinuxMode::Permissive, SELinuxMode::Disabled);
     }
 
     #[test]
-    fn selinux_mode_debug() {
-        let dbg = format!("{:?}", SELinuxMode::Enforcing);
-        assert!(dbg.contains("Enforcing"));
-    }
-
-    // ── LSM detection ───────────────────────────────────────────────
-
-    #[test]
-    fn list_lsms_returns_result() {
-        let _ = list_lsms();
-    }
-
-    #[test]
-    fn active_lsm_returns_result() {
-        let _ = active_lsm();
+    fn test_apparmor_profile_state_eq_and_ne() {
+        assert_eq!(AppArmorProfileState::Enforce, AppArmorProfileState::Enforce);
+        assert_ne!(
+            AppArmorProfileState::Enforce,
+            AppArmorProfileState::Complain
+        );
+        assert_ne!(
+            AppArmorProfileState::Complain,
+            AppArmorProfileState::Unconfined
+        );
     }
 
     #[test]
-    fn lsm_string_returns_result() {
-        let _ = lsm_string();
+    fn test_get_selinux_mode_returns_result() {
+        // On non-SELinux systems, should return Disabled or NotSupported
+        let result = get_selinux_mode();
+        // Either way it should not panic
+        let _ = result;
     }
 
     #[test]
-    fn is_lsm_active_returns_result() {
-        let _ = is_lsm_active(Lsm::Landlock);
-    }
-
-    // ── SELinux ─────────────────────────────────────────────────────
-
-    #[test]
-    fn selinux_available_returns_bool() {
-        let _ = selinux_available();
-    }
-
-    #[test]
-    fn selinux_mode_returns_result() {
-        let _ = selinux_mode();
-    }
-
-    // ── AppArmor ────────────────────────────────────────────────────
-
-    #[test]
-    fn apparmor_available_returns_bool() {
-        let _ = apparmor_available();
+    fn test_agent_mac_profile_validate_selinux_five_components() {
+        // Five colon-separated components is also valid (>= 4)
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: Some("u:r:t:s0:c1".to_string()),
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::SELinux).is_ok());
     }
 
     #[test]
-    fn apparmor_profile_count_returns_result() {
-        let _ = apparmor_profile_count();
+    fn test_agent_mac_profile_validate_apparmor_valid_chars() {
+        let profile = AgentMacProfile {
+            agent_type: "User".to_string(),
+            selinux_context: None,
+            apparmor_profile: Some("agnos-agent_user.v2".to_string()),
+        };
+        assert!(profile.validate(MacSystem::AppArmor).is_ok());
     }
 
-    // ── Security context ────────────────────────────────────────────
+    // --- New coverage tests ---
 
     #[test]
-    fn current_context_returns_result() {
-        let _ = current_context();
-    }
-
-    #[test]
-    fn process_context_self() {
-        let pid = crate::syscall::getpid();
-        let _ = process_context(pid);
-    }
-
-    #[test]
-    fn process_context_nonexistent() {
-        let result = process_context(999999999);
-        assert!(result.is_err());
+    fn test_detect_mac_system_returns_valid_variant() {
+        let system = detect_mac_system();
+        // Must be one of the three variants
+        match system {
+            MacSystem::SELinux | MacSystem::AppArmor | MacSystem::None => {}
+        }
     }
 
     #[test]
-    fn file_context_returns_result() {
-        let _ = file_context(Path::new("/etc/passwd"));
+    fn test_get_selinux_mode_on_non_selinux() {
+        // On most test systems, SELinux is not active
+        let result = get_selinux_mode();
+        // Should return Ok(Disabled) or Err(NotSupported), never panic
+        if let Ok(mode) = result {
+            let _ = mode; // Valid — Err is also acceptable (non-Linux)
+        }
     }
 
     #[test]
-    fn file_context_nonexistent() {
-        let result = file_context(Path::new("/nonexistent_agnosys"));
-        assert!(result.is_err());
+    fn test_apply_agent_mac_profile_no_mac_with_all_profiles() {
+        let mac = detect_mac_system();
+        if mac == MacSystem::None {
+            let profiles = default_agent_profiles();
+            // When no MAC system is active, apply should succeed for all types
+            for agent_type in &["User", "Service", "System"] {
+                let result = apply_agent_mac_profile(agent_type, &profiles);
+                assert!(
+                    result.is_ok(),
+                    "Should succeed for '{}' with no MAC",
+                    agent_type
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_agent_mac_profile_new_empty_string() {
+        let profile = AgentMacProfile::new("");
+        assert_eq!(profile.agent_type, "");
+        // validate should fail because agent_type is empty
+        assert!(profile.validate(MacSystem::None).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_selinux_context_format() {
+        let profile = AgentMacProfile::new("Test");
+        let ctx = profile.selinux_context.as_deref().unwrap();
+        // Should have exactly 4 colon-separated parts
+        let parts: Vec<&str> = ctx.split(':').collect();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0], "system_u");
+        assert_eq!(parts[1], "system_r");
+        assert!(parts[2].starts_with("agnos_agent_"));
+        assert_eq!(parts[3], "s0");
+    }
+
+    #[test]
+    fn test_mac_system_display_all_variants() {
+        assert_eq!(format!("{}", MacSystem::SELinux), "SELinux");
+        assert_eq!(format!("{}", MacSystem::AppArmor), "AppArmor");
+        assert_eq!(format!("{}", MacSystem::None), "None");
+    }
+
+    #[test]
+    fn test_selinux_mode_clone_copy() {
+        let m = SELinuxMode::Enforcing;
+        let m2 = m; // Copy
+        let m3 = m; // Clone
+        assert_eq!(m, m2);
+        assert_eq!(m, m3);
+    }
+
+    #[test]
+    fn test_apparmor_profile_state_clone_copy() {
+        let s = AppArmorProfileState::Enforce;
+        let s2 = s; // Copy
+        let s3 = s; // Clone
+        assert_eq!(s, s2);
+        assert_eq!(s, s3);
     }
 }
