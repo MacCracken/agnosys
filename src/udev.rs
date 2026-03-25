@@ -963,4 +963,529 @@ E: SUBSYSTEM=net
         assert!(config.subsystem_filter.is_none());
         assert!(config.devtype_filter.is_none());
     }
+
+    // ---- parse_udevadm_info edge cases ----
+
+    #[test]
+    fn test_parse_udevadm_info_no_devnode() {
+        let output = "\
+P: /devices/platform/serial8250
+E: SUBSYSTEM=platform
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert!(info.devnode.is_none());
+        assert_eq!(info.subsystem, "platform");
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_no_driver() {
+        let output = "\
+P: /devices/virtual/misc/cpu_dma_latency
+E: SUBSYSTEM=misc
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert!(info.driver.is_none());
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_no_devtype() {
+        let output = "\
+P: /devices/virtual/net/lo
+N: lo
+E: SUBSYSTEM=net
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert!(info.devtype.is_none());
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_multiple_properties() {
+        let output = "\
+P: /devices/pci0000:00/0000:00:02.0
+E: SUBSYSTEM=pci
+E: PCI_CLASS=30000
+E: PCI_ID=8086:1234
+E: PCI_SLOT_NAME=0000:00:02.0
+E: DRIVER=i915
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert_eq!(info.properties.get("PCI_CLASS").unwrap(), "30000");
+        assert_eq!(info.properties.get("PCI_ID").unwrap(), "8086:1234");
+        assert_eq!(info.driver, Some("i915".into()));
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_devnode_n_line_priority_over_devname() {
+        // When both N: and DEVNAME are present, N: line should be used
+        let output = "\
+P: /devices/virtual/tty/tty0
+N: tty0
+E: SUBSYSTEM=tty
+E: DEVNAME=/dev/tty0
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert_eq!(info.devnode, Some("/dev/tty0".into()));
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_only_empty_lines() {
+        let err = parse_udevadm_info("\n\n\n").unwrap_err();
+        assert!(err.to_string().contains("devpath"));
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_e_line_without_equals() {
+        // E: lines without '=' should be silently skipped
+        let output = "\
+P: /devices/virtual/misc/test
+E: SUBSYSTEM=misc
+E: MALFORMED_LINE
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert_eq!(info.subsystem, "misc");
+        // The malformed E: line should not cause a crash
+    }
+
+    #[test]
+    fn test_parse_udevadm_info_e_line_value_with_equals() {
+        // E: KEY=value=with=equals — split_once should only split on first '='
+        let output = "\
+P: /devices/virtual/misc/test
+E: SUBSYSTEM=misc
+E: COMPLEX_VAL=key=value=pair
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert_eq!(
+            info.properties.get("COMPLEX_VAL").unwrap(),
+            "key=value=pair"
+        );
+    }
+
+    // ---- parse_export_db edge cases ----
+
+    #[test]
+    fn test_parse_export_db_empty_input() {
+        let devices = parse_export_db("").unwrap();
+        assert!(devices.is_empty());
+    }
+
+    #[test]
+    fn test_parse_export_db_only_blank_lines() {
+        let devices = parse_export_db("\n\n\n").unwrap();
+        assert!(devices.is_empty());
+    }
+
+    #[test]
+    fn test_parse_export_db_block_without_p_line_skipped() {
+        let output = "\
+E: SUBSYSTEM=block
+E: DEVNAME=/dev/sda
+
+P: /devices/virtual/net/lo
+E: SUBSYSTEM=net
+";
+        let devices = parse_export_db(output).unwrap();
+        // First block has no P: line, should be skipped
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].subsystem, "net");
+    }
+
+    #[test]
+    fn test_parse_export_db_three_devices() {
+        let output = "\
+P: /devices/pci0000:00/block/sda
+E: SUBSYSTEM=block
+
+P: /devices/virtual/net/lo
+E: SUBSYSTEM=net
+
+P: /devices/virtual/tty/tty0
+E: SUBSYSTEM=tty
+";
+        let devices = parse_export_db(output).unwrap();
+        assert_eq!(devices.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_export_db_no_trailing_newline() {
+        let output = "P: /devices/test\nE: SUBSYSTEM=test";
+        let devices = parse_export_db(output).unwrap();
+        assert_eq!(devices.len(), 1);
+    }
+
+    // ---- DeviceSubsystem display roundtrip ----
+
+    #[test]
+    fn test_subsystem_display_all_variants() {
+        assert_eq!(DeviceSubsystem::Block.to_string(), "block");
+        assert_eq!(DeviceSubsystem::Net.to_string(), "net");
+        assert_eq!(DeviceSubsystem::Input.to_string(), "input");
+        assert_eq!(DeviceSubsystem::Usb.to_string(), "usb");
+        assert_eq!(DeviceSubsystem::Pci.to_string(), "pci");
+        assert_eq!(DeviceSubsystem::Tty.to_string(), "tty");
+        assert_eq!(DeviceSubsystem::Gpu.to_string(), "drm");
+        assert_eq!(DeviceSubsystem::Sound.to_string(), "sound");
+        assert_eq!(
+            DeviceSubsystem::Other("custom".into()).to_string(),
+            "custom"
+        );
+    }
+
+    // ---- DeviceEvent parse all valid values ----
+
+    #[test]
+    fn test_device_event_parse_all() {
+        assert_eq!(DeviceEvent::parse("change").unwrap(), DeviceEvent::Change);
+        assert_eq!(DeviceEvent::parse("bind").unwrap(), DeviceEvent::Bind);
+        assert_eq!(DeviceEvent::parse("unbind").unwrap(), DeviceEvent::Unbind);
+    }
+
+    #[test]
+    fn test_device_event_parse_case_sensitive() {
+        assert!(DeviceEvent::parse("Add").is_err());
+        assert!(DeviceEvent::parse("REMOVE").is_err());
+        assert!(DeviceEvent::parse("").is_err());
+    }
+
+    // ---- validate_rule comprehensive coverage ----
+
+    #[test]
+    fn test_validate_rule_name_too_long() {
+        let rule = UdevRule {
+            name: "a".repeat(129),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![],
+        };
+        let err = validate_rule(&rule).unwrap_err();
+        assert!(err.to_string().contains("too long"));
+    }
+
+    #[test]
+    fn test_validate_rule_name_exactly_128() {
+        let rule = UdevRule {
+            name: "a".repeat(128),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rule_name_with_spaces() {
+        let rule = UdevRule {
+            name: "name with spaces".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_err());
+    }
+
+    #[test]
+    fn test_validate_rule_name_with_dots() {
+        let rule = UdevRule {
+            name: "99.test.rule".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_err());
+    }
+
+    #[test]
+    fn test_validate_rule_name_with_dash_and_underscore() {
+        let rule = UdevRule {
+            name: "99-agnos_test".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rule_dangerous_import_program() {
+        let rule = UdevRule {
+            name: "99-bad".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "usb".into())],
+            actions: vec![("IMPORT{program}".into(), "/bin/exploit".into())],
+        };
+        let err = validate_rule(&rule).unwrap_err();
+        assert!(err.to_string().contains("Dangerous"));
+    }
+
+    #[test]
+    fn test_validate_rule_dangerous_import_builtin() {
+        let rule = UdevRule {
+            name: "99-bad".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "usb".into())],
+            actions: vec![("IMPORT{builtin}".into(), "path_id".into())],
+        };
+        assert!(validate_rule(&rule).is_err());
+    }
+
+    #[test]
+    fn test_validate_rule_invalid_action_key() {
+        let rule = UdevRule {
+            name: "99-bad".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![("BOGUS_ACTION".into(), "value".into())],
+        };
+        let err = validate_rule(&rule).unwrap_err();
+        assert!(err.to_string().contains("Invalid action key"));
+    }
+
+    #[test]
+    fn test_validate_rule_valid_with_attr_qualifier() {
+        let rule = UdevRule {
+            name: "99-test".into(),
+            match_attrs: vec![("ATTR{idVendor}".into(), "1234".into())],
+            actions: vec![("MODE".into(), "0660".into())],
+        };
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rule_valid_all_match_keys() {
+        for key in &["SUBSYSTEM", "KERNEL", "DRIVER", "ACTION", "DEVPATH", "TAG"] {
+            let rule = UdevRule {
+                name: "99-test".into(),
+                match_attrs: vec![(key.to_string(), "value".into())],
+                actions: vec![],
+            };
+            assert!(validate_rule(&rule).is_ok(), "Key {} should be valid", key);
+        }
+    }
+
+    #[test]
+    fn test_validate_rule_valid_env_match_key() {
+        let rule = UdevRule {
+            name: "99-test".into(),
+            match_attrs: vec![("ENV{ID_SERIAL}".into(), "ABC123".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rule_valid_attrs_match_key() {
+        let rule = UdevRule {
+            name: "99-test".into(),
+            match_attrs: vec![("ATTRS{idVendor}".into(), "1234".into())],
+            actions: vec![],
+        };
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rule_valid_action_keys() {
+        for key in &["MODE", "OWNER", "GROUP", "NAME", "OPTIONS"] {
+            let rule = UdevRule {
+                name: "99-test".into(),
+                match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+                actions: vec![(key.to_string(), "value".into())],
+            };
+            assert!(
+                validate_rule(&rule).is_ok(),
+                "Action key {} should be valid",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_rule_symlink_append() {
+        let rule = UdevRule {
+            name: "99-test".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![("SYMLINK+=".into(), "my-device".into())],
+        };
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rule_tag_append() {
+        let rule = UdevRule {
+            name: "99-test".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "block".into())],
+            actions: vec![("TAG+=".into(), "systemd".into())],
+        };
+        assert!(validate_rule(&rule).is_ok());
+    }
+
+    // ---- render_udev_rule edge cases ----
+
+    #[test]
+    fn test_render_udev_rule_empty_actions() {
+        let rule = UdevRule {
+            name: "99-match-only".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "net".into())],
+            actions: vec![],
+        };
+        let rendered = render_udev_rule(&rule);
+        assert!(rendered.contains("# AGNOS udev rule: 99-match-only"));
+        assert!(rendered.contains("SUBSYSTEM==\"net\""));
+    }
+
+    #[test]
+    fn test_render_udev_rule_multiple_symlinks() {
+        let rule = UdevRule {
+            name: "99-links".into(),
+            match_attrs: vec![("KERNEL".into(), "sd*".into())],
+            actions: vec![
+                ("SYMLINK+=".into(), "disk/by-name/first".into()),
+                ("SYMLINK+=".into(), "disk/by-name/second".into()),
+            ],
+        };
+        let rendered = render_udev_rule(&rule);
+        assert!(rendered.contains("SYMLINK+=\"disk/by-name/first\""));
+        assert!(rendered.contains("SYMLINK+=\"disk/by-name/second\""));
+    }
+
+    #[test]
+    fn test_render_udev_rule_mixed_actions() {
+        let rule = UdevRule {
+            name: "99-mixed".into(),
+            match_attrs: vec![("SUBSYSTEM".into(), "usb".into())],
+            actions: vec![
+                ("MODE".into(), "0660".into()),
+                ("GROUP".into(), "plugdev".into()),
+                ("TAG+=".into(), "uaccess".into()),
+            ],
+        };
+        let rendered = render_udev_rule(&rule);
+        assert!(rendered.contains("MODE=\"0660\""));
+        assert!(rendered.contains("GROUP=\"plugdev\""));
+        assert!(rendered.contains("TAG+=\"uaccess\""));
+        // All parts should be comma-separated
+        assert!(rendered.contains(", "));
+    }
+
+    // ---- DeviceSubsystem parse + serde ----
+
+    #[test]
+    fn test_subsystem_parse_empty_string() {
+        assert_eq!(
+            DeviceSubsystem::parse(""),
+            DeviceSubsystem::Other("".into())
+        );
+    }
+
+    #[test]
+    fn test_subsystem_serde_roundtrip() {
+        let subs = vec![
+            DeviceSubsystem::Block,
+            DeviceSubsystem::Net,
+            DeviceSubsystem::Gpu,
+            DeviceSubsystem::Other("nvme".into()),
+        ];
+        for sub in &subs {
+            let json = serde_json::to_string(sub).unwrap();
+            let back: DeviceSubsystem = serde_json::from_str(&json).unwrap();
+            assert_eq!(sub, &back);
+        }
+    }
+
+    // ---- DeviceEvent serde roundtrip ----
+
+    #[test]
+    fn test_device_event_serde_roundtrip() {
+        let events = [
+            DeviceEvent::Add,
+            DeviceEvent::Remove,
+            DeviceEvent::Change,
+            DeviceEvent::Bind,
+            DeviceEvent::Unbind,
+        ];
+        for ev in &events {
+            let json = serde_json::to_string(ev).unwrap();
+            let back: DeviceEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(*ev, back);
+        }
+    }
+
+    // ---- DeviceMonitorConfig serde ----
+
+    #[test]
+    fn test_device_monitor_config_serde_roundtrip() {
+        let config = DeviceMonitorConfig {
+            subsystem_filter: Some("block".into()),
+            devtype_filter: Some("disk".into()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: DeviceMonitorConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.subsystem_filter, Some("block".into()));
+        assert_eq!(back.devtype_filter, Some("disk".into()));
+    }
+
+    // ---- DeviceInfo with all optional fields None ----
+
+    #[test]
+    fn test_device_info_minimal() {
+        let info = DeviceInfo {
+            syspath: "/sys/devices/test".into(),
+            devpath: "/devices/test".into(),
+            subsystem: "test".into(),
+            devtype: None,
+            driver: None,
+            devnode: None,
+            properties: HashMap::new(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: DeviceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, back);
+        assert!(back.devtype.is_none());
+        assert!(back.driver.is_none());
+        assert!(back.devnode.is_none());
+    }
+
+    // ---- parse_udevadm_info: syspath constructed correctly ----
+
+    #[test]
+    fn test_parse_udevadm_info_syspath_prefixed() {
+        let output = "\
+P: /devices/test/device
+E: SUBSYSTEM=test
+";
+        let info = parse_udevadm_info(output).unwrap();
+        assert_eq!(info.syspath, "/sys/devices/test/device");
+        assert_eq!(info.devpath, "/devices/test/device");
+    }
+
+    // ---- parse_export_db: mixed valid and invalid blocks ----
+
+    #[test]
+    fn test_parse_export_db_mixed_valid_invalid() {
+        let output = "\
+P: /devices/valid1
+E: SUBSYSTEM=block
+
+E: NO_P_LINE=true
+
+P: /devices/valid2
+E: SUBSYSTEM=net
+
+";
+        let devices = parse_export_db(output).unwrap();
+        assert_eq!(devices.len(), 2);
+    }
+
+    // ---- Symlinks accumulation ----
+
+    #[test]
+    fn test_parse_udevadm_info_three_symlinks() {
+        let output = "\
+P: /devices/pci0000:00/block/sda
+N: sda
+S: disk/by-id/ata-VBOX1
+S: disk/by-path/pci-0000
+S: disk/by-uuid/1234-ABCD
+E: SUBSYSTEM=block
+";
+        let info = parse_udevadm_info(output).unwrap();
+        let devlinks = info.properties.get("DEVLINKS").unwrap();
+        assert!(devlinks.contains("/dev/disk/by-id/ata-VBOX1"));
+        assert!(devlinks.contains("/dev/disk/by-path/pci-0000"));
+        assert!(devlinks.contains("/dev/disk/by-uuid/1234-ABCD"));
+        // Should be space-separated
+        let count = devlinks.split(' ').count();
+        assert_eq!(count, 3);
+    }
 }

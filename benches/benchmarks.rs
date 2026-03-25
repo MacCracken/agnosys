@@ -59,7 +59,6 @@ fn bench_error(c: &mut Criterion) {
     use agnosys::error::SysError;
     let mut group = c.benchmark_group("error");
 
-    // from_errno — all mapped branches
     group.bench_function("from_errno_eperm", |b| {
         b.iter(|| SysError::from_errno(black_box(libc::EPERM)))
     });
@@ -78,25 +77,17 @@ fn bench_error(c: &mut Criterion) {
     group.bench_function("from_errno_unknown", |b| {
         b.iter(|| SysError::from_errno(black_box(999)))
     });
-
-    // last_os_error
     group.bench_function("last_os_error", |b| {
         b.iter(|| {
             unsafe { libc::close(-1) };
             SysError::last_os_error()
         })
     });
-
-    // Display — all variants
     group.bench_function("display_syscall_failed", |b| {
         let e = SysError::SyscallFailed {
             errno: 2,
             message: "No such file".into(),
         };
-        b.iter(|| format!("{}", black_box(&e)))
-    });
-    group.bench_function("display_invalid_argument", |b| {
-        let e = SysError::InvalidArgument("bad flags".into());
         b.iter(|| format!("{}", black_box(&e)))
     });
     group.bench_function("display_permission_denied", |b| {
@@ -109,148 +100,59 @@ fn bench_error(c: &mut Criterion) {
         let e = SysError::WouldBlock;
         b.iter(|| format!("{}", black_box(&e)))
     });
-    group.bench_function("display_module_not_loaded", |b| {
-        let e = SysError::ModuleNotLoaded {
-            module: "tpm_tis".into(),
-        };
-        b.iter(|| format!("{}", black_box(&e)))
+
+    group.finish();
+}
+
+#[cfg(feature = "security")]
+fn bench_security(c: &mut Criterion) {
+    use agnosys::security::*;
+    let mut group = c.benchmark_group("security");
+
+    group.bench_function("create_basic_seccomp_filter", |b| {
+        b.iter(create_basic_seccomp_filter)
     });
-    group.bench_function("display_not_supported", |b| {
-        let e = SysError::NotSupported {
-            feature: "landlock".into(),
-        };
-        b.iter(|| format!("{}", black_box(&e)))
+    group.bench_function("syscall_name_to_nr_read", |b| {
+        b.iter(|| syscall_name_to_nr(black_box("read")))
+    });
+    group.bench_function("syscall_name_to_nr_miss", |b| {
+        b.iter(|| syscall_name_to_nr(black_box("nonexistent")))
+    });
+    group.bench_function("filesystem_rule_read_only", |b| {
+        b.iter(|| FilesystemRule::read_only(black_box("/tmp")))
+    });
+    group.bench_function("filesystem_rule_read_write", |b| {
+        b.iter(|| FilesystemRule::read_write(black_box("/var")))
+    });
+    group.bench_function("namespace_flags_combine", |b| {
+        b.iter(|| black_box(NamespaceFlags::NETWORK | NamespaceFlags::MOUNT | NamespaceFlags::PID))
     });
 
     group.finish();
 }
 
-#[cfg(feature = "landlock")]
-fn bench_landlock(c: &mut Criterion) {
-    let mut group = c.benchmark_group("landlock");
-
-    group.bench_function("abi_version", |b| b.iter(agnosys::landlock::abi_version));
-    group.bench_function("supported_fs_access", |b| {
-        b.iter(agnosys::landlock::supported_fs_access)
-    });
-    group.bench_function("fs_access_combine", |b| {
-        use agnosys::landlock::FsAccess;
-        b.iter(|| {
-            black_box(
-                FsAccess::READ_FILE | FsAccess::WRITE_FILE | FsAccess::EXECUTE | FsAccess::READ_DIR,
-            )
-        })
-    });
-    group.bench_function("ruleset_new", |b| {
-        use agnosys::landlock::{FsAccess, Ruleset};
-        b.iter(|| Ruleset::new(black_box(FsAccess::READ_FILE)))
-    });
-    if let Ok(rs) = agnosys::landlock::Ruleset::new(agnosys::landlock::FsAccess::READ_FILE) {
-        // Leak the ruleset so we can use it in the closure without lifetime issues
-        let rs = Box::leak(Box::new(rs));
-        group.bench_function("ruleset_allow_path", |b| {
-            b.iter(|| {
-                rs.allow_path(
-                    std::path::Path::new("/tmp"),
-                    black_box(agnosys::landlock::FsAccess::READ_FILE),
-                )
-            })
-        });
-    }
-
-    group.finish();
-}
-
-#[cfg(not(feature = "landlock"))]
-fn bench_landlock(_c: &mut Criterion) {}
-
-#[cfg(feature = "seccomp")]
-fn bench_seccomp(c: &mut Criterion) {
-    use agnosys::seccomp::{Action, FilterBuilder};
-    let mut group = c.benchmark_group("seccomp");
-
-    group.bench_function("build_empty", |b| {
-        b.iter(|| FilterBuilder::new(Action::KillProcess).build())
-    });
-    group.bench_function("build_5_rules", |b| {
-        b.iter(|| {
-            FilterBuilder::new(Action::KillProcess)
-                .allow_syscall(libc::SYS_read)
-                .allow_syscall(libc::SYS_write)
-                .allow_syscall(libc::SYS_exit_group)
-                .allow_syscall(libc::SYS_brk)
-                .allow_syscall(libc::SYS_mmap)
-                .build()
-        })
-    });
-    group.bench_function("build_20_rules", |b| {
-        b.iter(|| {
-            let mut fb = FilterBuilder::new(Action::KillProcess);
-            for i in 0..20 {
-                fb = fb.allow_syscall(black_box(i));
-            }
-            fb.build()
-        })
-    });
-    group.bench_function("filter_len", |b| {
-        let f = FilterBuilder::new(Action::KillProcess)
-            .allow_syscall(libc::SYS_read)
-            .build();
-        b.iter(|| black_box(f.len()))
-    });
-    group.bench_function("filter_is_empty", |b| {
-        let f = FilterBuilder::new(Action::KillProcess).build();
-        b.iter(|| black_box(f.is_empty()))
-    });
-    group.finish();
-}
-
-#[cfg(not(feature = "seccomp"))]
-fn bench_seccomp(_c: &mut Criterion) {}
+#[cfg(not(feature = "security"))]
+fn bench_security(_c: &mut Criterion) {}
 
 #[cfg(feature = "udev")]
 fn bench_udev(c: &mut Criterion) {
     let mut group = c.benchmark_group("udev");
 
-    group.bench_function("enumerate_net", |b| {
-        b.iter(|| agnosys::udev::enumerate(black_box("net")))
+    group.bench_function("list_devices_net", |b| {
+        b.iter(|| agnosys::udev::list_devices(Some(black_box("net"))))
     });
-    group.bench_function("device_from_syspath_lo", |b| {
-        b.iter(|| agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")))
+    group.bench_function("get_device_info_lo", |b| {
+        b.iter(|| agnosys::udev::get_device_info(black_box("/sys/class/net/lo")))
     });
-    group.bench_function("device_attr_read", |b| {
-        let dev =
-            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
-        b.iter(|| dev.attr(black_box("address")))
+    group.bench_function("render_udev_rule", |b| {
+        let rule = agnosys::udev::UdevRule {
+            name: "test".to_string(),
+            match_attrs: vec![("SUBSYSTEM".to_string(), "net".to_string())],
+            actions: vec![("RUN".to_string(), "/bin/true".to_string())],
+        };
+        b.iter(|| agnosys::udev::render_udev_rule(black_box(&rule)))
     });
-    group.bench_function("enumerate_bus_platform", |b| {
-        b.iter(|| agnosys::udev::enumerate_bus(black_box("platform")))
-    });
-    group.bench_function("device_name", |b| {
-        let dev =
-            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
-        b.iter(|| black_box(dev.name()))
-    });
-    group.bench_function("device_properties", |b| {
-        let dev =
-            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
-        b.iter(|| black_box(dev.properties()))
-    });
-    group.bench_function("device_devnode", |b| {
-        let dev =
-            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
-        b.iter(|| black_box(dev.devnode()))
-    });
-    group.bench_function("device_driver", |b| {
-        let dev =
-            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
-        b.iter(|| black_box(dev.driver()))
-    });
-    group.bench_function("device_subsystem", |b| {
-        let dev =
-            agnosys::udev::device_from_syspath(std::path::Path::new("/sys/class/net/lo")).unwrap();
-        b.iter(|| black_box(dev.subsystem()))
-    });
+
     group.finish();
 }
 
@@ -266,7 +168,6 @@ fn bench_drm(c: &mut Criterion) {
         b.iter(agnosys::drm::enumerate_render_nodes)
     });
 
-    // Conditional GPU benchmarks
     if let Ok(cards) = agnosys::drm::enumerate_cards()
         && let Some(path) = cards.first()
         && let Ok(dev) = agnosys::drm::Device::open(path)
@@ -290,12 +191,25 @@ fn bench_drm(_c: &mut Criterion) {}
 #[cfg(feature = "netns")]
 fn bench_netns(c: &mut Criterion) {
     let mut group = c.benchmark_group("netns");
-    group.bench_function("current", |b| b.iter(agnosys::netns::current));
-    group.bench_function("current_ns_id", |b| b.iter(agnosys::netns::current_ns_id));
-    group.bench_function("list", |b| b.iter(agnosys::netns::list));
-    group.bench_function("named_path", |b| {
-        b.iter(|| agnosys::netns::named_path(black_box("test")))
+
+    group.bench_function("generate_agent_ips", |b| {
+        b.iter(|| agnosys::netns::generate_agent_ips(black_box("test-agent")))
     });
+    group.bench_function("list_agent_netns", |b| {
+        b.iter(agnosys::netns::list_agent_netns)
+    });
+    group.bench_function("nftables_ruleset", |b| {
+        let policy = agnosys::netns::FirewallPolicy {
+            default_inbound: agnosys::netns::FirewallAction::Drop,
+            default_outbound: agnosys::netns::FirewallAction::Accept,
+            rules: vec![],
+        };
+        b.iter(|| agnosys::netns::generate_nftables_ruleset(black_box(&policy), "veth0"))
+    });
+    group.bench_function("config_for_agent", |b| {
+        b.iter(|| agnosys::netns::NetNamespaceConfig::for_agent(black_box("bench")))
+    });
+
     group.finish();
 }
 
@@ -304,50 +218,31 @@ fn bench_netns(_c: &mut Criterion) {}
 
 #[cfg(feature = "certpin")]
 fn bench_certpin(c: &mut Criterion) {
-    use agnosys::certpin::{Pin, PinSet};
     let mut group = c.benchmark_group("certpin");
-    group.bench_function("sha256_32b", |b| {
-        b.iter(|| Pin::from_spki(black_box(&[0xAB; 32])))
+
+    group.bench_function("compute_spki_pin", |b| {
+        let pem =
+            "-----BEGIN CERTIFICATE-----\nMIIBkTCB+wIJAL...test...==\n-----END CERTIFICATE-----";
+        b.iter(|| agnosys::certpin::compute_spki_pin(black_box(pem)))
     });
-    group.bench_function("sha256_256b", |b| {
-        b.iter(|| Pin::from_spki(black_box(&[0xAB; 256])))
-    });
-    group.bench_function("pin_to_base64", |b| {
-        let pin = Pin::from_spki(b"test");
-        b.iter(|| black_box(&pin).to_base64())
-    });
-    group.bench_function("pin_to_hex", |b| {
-        let pin = Pin::from_spki(b"test");
-        b.iter(|| black_box(&pin).to_hex())
-    });
-    group.bench_function("pinset_validate_hit", |b| {
-        let mut ps = PinSet::new();
-        ps.add(Pin::from_spki(b"key1"));
-        b.iter(|| ps.validate_spki(black_box(b"key1")))
-    });
-    group.bench_function("pinset_validate_miss", |b| {
-        let mut ps = PinSet::new();
-        ps.add(Pin::from_spki(b"key1"));
-        b.iter(|| ps.validate_spki(black_box(b"key2")))
-    });
-    group.bench_function("pin_from_base64", |b| {
-        let pin = Pin::from_spki(b"bench");
-        let b64 = pin.to_base64();
-        b.iter(|| Pin::from_base64(black_box(&b64)))
-    });
-    group.bench_function("pin_from_bytes", |b| {
-        let hash = [0xABu8; 32];
-        b.iter(|| Pin::from_bytes(black_box(hash)))
-    });
-    group.bench_function("pinset_add", |b| {
+    group.bench_function("validate_pin_format_valid", |b| {
         b.iter(|| {
-            let mut ps = PinSet::new();
-            ps.add(Pin::from_spki(b"k1"));
-            ps.add(Pin::from_spki(b"k2"));
-            ps.add(Pin::from_spki(b"k3"));
-            black_box(&ps);
+            agnosys::certpin::validate_pin_format(black_box(
+                "YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=",
+            ))
         })
     });
+    group.bench_function("validate_pin_format_invalid", |b| {
+        b.iter(|| agnosys::certpin::validate_pin_format(black_box("bad")))
+    });
+    group.bench_function("default_agnos_pins", |b| {
+        b.iter(agnosys::certpin::default_agnos_pins)
+    });
+    group.bench_function("check_pin_expiry", |b| {
+        let ps = agnosys::certpin::default_agnos_pins();
+        b.iter(|| agnosys::certpin::check_pin_expiry(black_box(&ps)))
+    });
+
     group.finish();
 }
 
@@ -357,23 +252,16 @@ fn bench_certpin(_c: &mut Criterion) {}
 #[cfg(feature = "agent")]
 fn bench_agent(c: &mut Criterion) {
     let mut group = c.benchmark_group("agent");
-    group.bench_function("get_process_name", |b| {
-        b.iter(agnosys::agent::get_process_name)
+
+    group.bench_function("agent_id_new", |b| b.iter(agnosys::agent::AgentId::new));
+    group.bench_function("agent_config_default", |b| {
+        b.iter(|| agnosys::agent::AgentConfig {
+            name: "bench".to_string(),
+            agent_type: agnosys::agent::AgentType::Service,
+            ..Default::default()
+        })
     });
-    group.bench_function("get_oom_score_adj", |b| {
-        b.iter(agnosys::agent::get_oom_score_adj)
-    });
-    group.bench_function("current_cgroup", |b| b.iter(agnosys::agent::current_cgroup));
-    group.bench_function("is_pid1", |b| b.iter(agnosys::agent::is_pid1));
-    group.bench_function("set_process_name", |b| {
-        b.iter(|| agnosys::agent::set_process_name(black_box("bench")))
-    });
-    group.bench_function("has_capability", |b| {
-        b.iter(|| agnosys::agent::has_capability(black_box(0)))
-    });
-    group.bench_function("watchdog_notify", |b| {
-        b.iter(agnosys::agent::watchdog_notify)
-    });
+
     group.finish();
 }
 
@@ -396,22 +284,23 @@ fn bench_logging(_c: &mut Criterion) {}
 #[cfg(feature = "luks")]
 fn bench_luks(c: &mut Criterion) {
     let mut group = c.benchmark_group("luks");
-    group.bench_function("dm_available", |b| b.iter(agnosys::luks::dm_available));
-    group.bench_function("list_dm_devices", |b| {
-        b.iter(agnosys::luks::list_dm_devices)
+
+    group.bench_function("cryptsetup_available", |b| {
+        b.iter(agnosys::luks::cryptsetup_available)
     });
-    group.bench_function("volume_exists", |b| {
-        b.iter(|| agnosys::luks::volume_exists(black_box("nonexistent")))
+    group.bench_function("dmcrypt_supported", |b| {
+        b.iter(agnosys::luks::dmcrypt_supported)
     });
-    group.bench_function("volume_path", |b| {
-        b.iter(|| agnosys::luks::volume_path(black_box("test")))
+    group.bench_function("config_for_agent", |b| {
+        b.iter(|| agnosys::luks::LuksConfig::for_agent(black_box("bench"), 256))
     });
-    group.bench_function("volume_status", |b| {
-        b.iter(|| agnosys::luks::volume_status(black_box("nonexistent")))
+    group.bench_function("key_generate_32", |b| {
+        b.iter(|| agnosys::luks::LuksKey::generate(black_box(32)))
     });
-    group.bench_function("is_luks_device", |b| {
-        b.iter(|| agnosys::luks::is_luks_device(std::path::Path::new("/dev/null")))
+    group.bench_function("filesystem_as_str", |b| {
+        b.iter(|| agnosys::luks::LuksFilesystem::Ext4.as_str())
     });
+
     group.finish();
 }
 
@@ -421,26 +310,23 @@ fn bench_luks(_c: &mut Criterion) {}
 #[cfg(feature = "dmverity")]
 fn bench_dmverity(c: &mut Criterion) {
     let mut group = c.benchmark_group("dmverity");
-    group.bench_function("volume_active", |b| {
-        b.iter(|| agnosys::dmverity::volume_active(black_box("nonexistent")))
+
+    group.bench_function("verity_supported", |b| {
+        b.iter(agnosys::dmverity::verity_supported)
     });
-    group.bench_function("volume_path", |b| {
-        b.iter(|| agnosys::dmverity::volume_path(black_box("system")))
+    group.bench_function("validate_root_hash_sha256", |b| {
+        let hash = "a".repeat(64);
+        b.iter(|| {
+            agnosys::dmverity::validate_root_hash(
+                black_box(&hash),
+                agnosys::dmverity::VerityHashAlgorithm::Sha256,
+            )
+        })
     });
-    group.bench_function("validate_root_hash_match", |b| {
-        let a = agnosys::dmverity::RootHash::from_bytes(&[0xAB; 32]);
-        let bb = agnosys::dmverity::RootHash::from_bytes(&[0xAB; 32]);
-        b.iter(|| agnosys::dmverity::validate_root_hash(black_box(&a), black_box(&bb)))
+    group.bench_function("hash_algorithm_str", |b| {
+        b.iter(|| agnosys::dmverity::VerityHashAlgorithm::Sha256.as_str())
     });
-    group.bench_function("root_hash_from_hex", |b| {
-        b.iter(|| agnosys::dmverity::RootHash::from_hex(black_box("abcdef0123456789")))
-    });
-    group.bench_function("is_verity_device", |b| {
-        b.iter(|| agnosys::dmverity::is_verity_device(std::path::Path::new("/dev/null")))
-    });
-    group.bench_function("verity_status", |b| {
-        b.iter(|| agnosys::dmverity::verity_status(black_box("nonexistent")))
-    });
+
     group.finish();
 }
 
@@ -450,17 +336,18 @@ fn bench_dmverity(_c: &mut Criterion) {}
 #[cfg(feature = "audit")]
 fn bench_audit(c: &mut Criterion) {
     let mut group = c.benchmark_group("audit");
-    group.bench_function("is_available", |b| b.iter(agnosys::audit::is_available));
-    group.bench_function("parse_audit_line_simple", |b| {
-        b.iter(|| agnosys::audit::parse_audit_line(black_box("key1=val1 key2=val2")))
+
+    group.bench_function("rule_file_watch", |b| {
+        b.iter(|| agnosys::audit::AuditRule::file_watch(black_box("/etc/passwd"), "test"))
     });
-    group.bench_function("parse_audit_line_real", |b| {
-        let line = "type=SYSCALL msg=audit(1234567890.123:42): arch=c000003e syscall=59 success=yes pid=1234 ppid=1 uid=0";
-        b.iter(|| agnosys::audit::parse_audit_line(black_box(line)))
+    group.bench_function("rule_syscall_watch", |b| {
+        b.iter(|| agnosys::audit::AuditRule::syscall_watch(black_box(59), "test"))
     });
-    group.bench_function("msg_type_from_raw", |b| {
-        b.iter(|| agnosys::audit::AuditMsgType::from_raw(black_box(1300)))
+    group.bench_function("rule_validate", |b| {
+        let rule = agnosys::audit::AuditRule::file_watch("/etc/passwd", "test");
+        b.iter(|| rule.validate())
     });
+
     group.finish();
 }
 
@@ -470,23 +357,29 @@ fn bench_audit(_c: &mut Criterion) {}
 #[cfg(feature = "pam")]
 fn bench_pam(c: &mut Criterion) {
     let mut group = c.benchmark_group("pam");
-    group.bench_function("is_available", |b| b.iter(agnosys::pam::is_available));
-    group.bench_function("list_services", |b| b.iter(agnosys::pam::list_services));
-    group.bench_function("service_exists", |b| {
-        b.iter(|| agnosys::pam::service_exists(black_box("login")))
+
+    group.bench_function("validate_username_good", |b| {
+        b.iter(|| agnosys::pam::validate_username(black_box("testuser")))
+    });
+    group.bench_function("validate_username_bad", |b| {
+        b.iter(|| agnosys::pam::validate_username(black_box("")))
     });
     group.bench_function("parse_pam_config", |b| {
-        let config = "auth required pam_unix.so\naccount required pam_unix.so\nsession optional pam_systemd.so";
+        let config =
+            "auth required pam_unix.so\naccount required pam_unix.so\nsession optional pam_systemd.so";
         b.iter(|| agnosys::pam::parse_pam_config(black_box(config)))
     });
-    group.bench_function("service_path", |b| {
-        b.iter(|| agnosys::pam::service_path(black_box("login")))
+    group.bench_function("render_pam_config", |b| {
+        let rules = agnosys::pam::parse_pam_config(
+            "auth required pam_unix.so\naccount required pam_unix.so",
+        )
+        .unwrap();
+        b.iter(|| agnosys::pam::render_pam_config(black_box(&rules)))
     });
-    if agnosys::pam::service_exists("other") {
-        group.bench_function("read_service", |b| {
-            b.iter(|| agnosys::pam::read_service(black_box("other")))
-        });
-    }
+    group.bench_function("get_pam_service_path", |b| {
+        b.iter(|| agnosys::pam::get_pam_service_path(&agnosys::pam::PamService::Login))
+    });
+
     group.finish();
 }
 
@@ -496,20 +389,20 @@ fn bench_pam(_c: &mut Criterion) {}
 #[cfg(feature = "mac")]
 fn bench_mac(c: &mut Criterion) {
     let mut group = c.benchmark_group("mac");
-    group.bench_function("selinux_available", |b| {
-        b.iter(agnosys::mac::selinux_available)
+
+    group.bench_function("detect_mac_system", |b| {
+        b.iter(agnosys::mac::detect_mac_system)
     });
-    group.bench_function("apparmor_available", |b| {
-        b.iter(agnosys::mac::apparmor_available)
+    group.bench_function("get_current_selinux_context", |b| {
+        b.iter(agnosys::mac::get_current_selinux_context)
     });
-    group.bench_function("list_lsms", |b| b.iter(agnosys::mac::list_lsms));
-    group.bench_function("current_context", |b| b.iter(agnosys::mac::current_context));
-    group.bench_function("lsm_string", |b| b.iter(agnosys::mac::lsm_string));
-    group.bench_function("selinux_mode", |b| b.iter(agnosys::mac::selinux_mode));
-    group.bench_function("process_context_self", |b| {
-        let pid = agnosys::syscall::getpid();
-        b.iter(|| agnosys::mac::process_context(black_box(pid)))
+    group.bench_function("get_selinux_mode", |b| {
+        b.iter(agnosys::mac::get_selinux_mode)
     });
+    group.bench_function("default_agent_profiles", |b| {
+        b.iter(agnosys::mac::default_agent_profiles)
+    });
+
     group.finish();
 }
 
@@ -519,13 +412,22 @@ fn bench_mac(_c: &mut Criterion) {}
 #[cfg(feature = "ima")]
 fn bench_ima(c: &mut Criterion) {
     let mut group = c.benchmark_group("ima");
-    group.bench_function("is_available", |b| b.iter(agnosys::ima::is_available));
-    group.bench_function("parse_policy", |b| {
-        let policy =
-            "measure func=FILE_CHECK\ndont_measure fsmagic=0x9fa0\nappraise func=FILE_CHECK";
-        b.iter(|| agnosys::ima::parse_policy(black_box(policy)))
+
+    group.bench_function("get_ima_status", |b| b.iter(agnosys::ima::get_ima_status));
+    group.bench_function("parse_ima_measurements_empty", |b| {
+        b.iter(|| agnosys::ima::parse_ima_measurements(black_box("")))
     });
-    group.bench_function("policy_readable", |b| b.iter(agnosys::ima::policy_readable));
+    group.bench_function("policy_rule_build", |b| {
+        b.iter(|| {
+            agnosys::ima::ImaPolicyRule::new(
+                agnosys::ima::ImaAction::Measure,
+                agnosys::ima::ImaTarget::BprmCheck,
+            )
+            .with_uid(0)
+            .validate()
+        })
+    });
+
     group.finish();
 }
 
@@ -535,8 +437,21 @@ fn bench_ima(_c: &mut Criterion) {}
 #[cfg(feature = "fuse")]
 fn bench_fuse(c: &mut Criterion) {
     let mut group = c.benchmark_group("fuse");
-    group.bench_function("is_available", |b| b.iter(agnosys::fuse::is_available));
-    group.bench_function("list_mounts", |b| b.iter(agnosys::fuse::list_mounts));
+
+    group.bench_function("is_fuse_available", |b| {
+        b.iter(agnosys::fuse::is_fuse_available)
+    });
+    group.bench_function("list_fuse_mounts", |b| {
+        b.iter(agnosys::fuse::list_fuse_mounts)
+    });
+    group.bench_function("parse_proc_mounts_empty", |b| {
+        b.iter(|| agnosys::fuse::parse_proc_mounts(black_box("")))
+    });
+    group.bench_function("render_mount_options", |b| {
+        let opts = agnosys::fuse::FuseMountOptions::default();
+        b.iter(|| agnosys::fuse::render_mount_options(black_box(&opts)))
+    });
+
     group.finish();
 }
 
@@ -546,32 +461,35 @@ fn bench_fuse(_c: &mut Criterion) {}
 #[cfg(feature = "update")]
 fn bench_update(c: &mut Criterion) {
     let mut group = c.benchmark_group("update");
-    group.bench_function("is_writable_tmp", |b| {
-        b.iter(|| agnosys::update::is_writable(std::path::Path::new("/tmp")))
+
+    group.bench_function("validate_version_good", |b| {
+        b.iter(|| agnosys::update::validate_version(black_box("2025.03.1")))
     });
-    group.bench_function("sync_dir_tmp", |b| {
-        b.iter(|| agnosys::update::sync_dir(std::path::Path::new("/tmp")))
+    group.bench_function("validate_version_bad", |b| {
+        b.iter(|| agnosys::update::validate_version(black_box("")))
     });
-    group.bench_function("atomic_write", |b| {
-        let path = std::path::Path::new("/tmp/agnosys_bench_atomic");
-        b.iter(|| agnosys::update::atomic_write(path, black_box(b"bench data")));
-        let _ = std::fs::remove_file(path);
+    group.bench_function("compare_versions", |b| {
+        b.iter(|| agnosys::update::compare_versions(black_box("2025.01.0"), black_box("2025.02.0")))
     });
-    group.bench_function("same_filesystem", |b| {
+    group.bench_function("build_test_manifest", |b| {
         b.iter(|| {
-            agnosys::update::same_filesystem(
-                std::path::Path::new("/tmp"),
-                std::path::Path::new("/tmp"),
+            agnosys::update::build_test_manifest(
+                black_box("2025.03.1"),
+                agnosys::update::UpdateChannel::Stable,
             )
         })
     });
-    group.bench_function("fsync_file", |b| {
-        let tmp = &format!("/tmp/agnosys_bench_fsync_{}", std::process::id());
-        std::fs::write(tmp, "bench").unwrap();
-        let path = std::path::Path::new(tmp);
-        b.iter(|| agnosys::update::fsync_file(path));
-        let _ = std::fs::remove_file(tmp);
+    group.bench_function("verify_manifest", |b| {
+        let m = agnosys::update::build_test_manifest(
+            "2025.03.1",
+            agnosys::update::UpdateChannel::Stable,
+        );
+        b.iter(|| agnosys::update::verify_manifest(black_box(&m)))
     });
+    group.bench_function("slot_other", |b| {
+        b.iter(|| agnosys::update::UpdateSlot::A.other())
+    });
+
     group.finish();
 }
 
@@ -581,12 +499,9 @@ fn bench_update(_c: &mut Criterion) {}
 #[cfg(feature = "tpm")]
 fn bench_tpm(c: &mut Criterion) {
     let mut group = c.benchmark_group("tpm");
-    group.bench_function("is_available", |b| b.iter(agnosys::tpm::is_available));
-    group.bench_function("rm_available", |b| b.iter(agnosys::tpm::rm_available));
-    group.bench_function("list_devices", |b| b.iter(agnosys::tpm::list_devices));
-    group.bench_function("event_log_available", |b| {
-        b.iter(agnosys::tpm::event_log_available)
-    });
+
+    group.bench_function("tpm_available", |b| b.iter(agnosys::tpm::tpm_available));
+
     group.finish();
 }
 
@@ -596,22 +511,11 @@ fn bench_tpm(_c: &mut Criterion) {}
 #[cfg(feature = "secureboot")]
 fn bench_secureboot(c: &mut Criterion) {
     let mut group = c.benchmark_group("secureboot");
-    group.bench_function("is_efi", |b| b.iter(agnosys::secureboot::is_efi));
-    group.bench_function("efivars_available", |b| {
-        b.iter(agnosys::secureboot::efivars_available)
+
+    group.bench_function("get_secureboot_status", |b| {
+        b.iter(agnosys::secureboot::get_secureboot_status)
     });
-    group.bench_function("state", |b| b.iter(agnosys::secureboot::state));
-    group.bench_function("key_db_exists_pk", |b| {
-        b.iter(|| agnosys::secureboot::key_db_exists(agnosys::secureboot::KeyDb::PK))
-    });
-    group.bench_function("efi_var_path", |b| {
-        b.iter(|| {
-            agnosys::secureboot::efi_var_path(
-                black_box("SecureBoot"),
-                black_box("8be4df61-93ca-11d2-aa0d-00e098032b8c"),
-            )
-        })
-    });
+
     group.finish();
 }
 
@@ -621,14 +525,18 @@ fn bench_secureboot(_c: &mut Criterion) {}
 #[cfg(feature = "journald")]
 fn bench_journald(c: &mut Criterion) {
     let mut group = c.benchmark_group("journald");
-    group.bench_function("is_available", |b| b.iter(agnosys::journald::is_available));
-    group.bench_function("machine_id", |b| b.iter(agnosys::journald::machine_id));
-    group.bench_function("has_persistent_storage", |b| {
-        b.iter(agnosys::journald::has_persistent_storage)
+
+    group.bench_function("get_journal_stats", |b| {
+        b.iter(agnosys::journald::get_journal_stats)
     });
-    group.bench_function("has_volatile_storage", |b| {
-        b.iter(agnosys::journald::has_volatile_storage)
+    group.bench_function("build_journalctl_args", |b| {
+        let filter = agnosys::journald::JournalFilter::default();
+        b.iter(|| agnosys::journald::build_journalctl_args(black_box(&filter)))
     });
+    group.bench_function("priority_from_u8", |b| {
+        b.iter(|| agnosys::journald::JournalPriority::from_u8(black_box(3)))
+    });
+
     group.finish();
 }
 
@@ -638,20 +546,16 @@ fn bench_journald(_c: &mut Criterion) {}
 #[cfg(feature = "bootloader")]
 fn bench_bootloader(c: &mut Criterion) {
     let mut group = c.benchmark_group("bootloader");
-    group.bench_function("detect", |b| b.iter(agnosys::bootloader::detect));
-    group.bench_function("boot_mounted", |b| {
-        b.iter(agnosys::bootloader::boot_mounted)
+
+    group.bench_function("detect_bootloader", |b| {
+        b.iter(agnosys::bootloader::detect_bootloader)
     });
-    group.bench_function("list_kernels", |b| {
-        b.iter(agnosys::bootloader::list_kernels)
+    group.bench_function("validate_kernel_cmdline", |b| {
+        b.iter(|| {
+            agnosys::bootloader::validate_kernel_cmdline(black_box("root=/dev/sda1 ro quiet"))
+        })
     });
-    group.bench_function("parse_loader_config", |b| {
-        let config = "default arch-*\ntimeout 5\nconsole-mode auto\neditor yes";
-        b.iter(|| agnosys::bootloader::parse_loader_config(black_box(config)))
-    });
-    group.bench_function("list_entries", |b| {
-        b.iter(agnosys::bootloader::list_entries)
-    });
+
     group.finish();
 }
 
@@ -662,8 +566,7 @@ criterion_group!(
     benches,
     bench_syscall,
     bench_error,
-    bench_landlock,
-    bench_seccomp,
+    bench_security,
     bench_udev,
     bench_drm,
     bench_netns,
@@ -681,6 +584,6 @@ criterion_group!(
     bench_tpm,
     bench_secureboot,
     bench_journald,
-    bench_bootloader
+    bench_bootloader,
 );
 criterion_main!(benches);

@@ -1064,4 +1064,575 @@ mod tests {
         assert_eq!(info.shell, "/usr/sbin/nologin");
         assert!(info.is_system_user); // UID 74 < 1000
     }
+
+    // --- Audit coverage additions ---
+
+    // -- Username validation edge cases --
+
+    #[test]
+    fn test_validate_username_starts_with_underscore() {
+        assert!(validate_username("_backup").is_ok());
+    }
+
+    #[test]
+    fn test_validate_username_only_underscore() {
+        assert!(validate_username("_").is_ok());
+    }
+
+    #[test]
+    fn test_validate_username_all_digits_after_start() {
+        assert!(validate_username("a123456789").is_ok());
+    }
+
+    #[test]
+    fn test_validate_username_hyphen_start() {
+        let err = validate_username("-user").unwrap_err();
+        assert!(err.to_string().contains("must start with"));
+    }
+
+    #[test]
+    fn test_validate_username_dot_rejected() {
+        let err = validate_username("user.name").unwrap_err();
+        assert!(err.to_string().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_username_space_rejected() {
+        let err = validate_username("user name").unwrap_err();
+        assert!(err.to_string().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_username_newline_rejected() {
+        let err = validate_username("user\nname").unwrap_err();
+        assert!(err.to_string().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_username_null_byte_rejected() {
+        let err = validate_username("user\0name").unwrap_err();
+        assert!(err.to_string().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_username_exactly_33_chars() {
+        let name = "a".repeat(33);
+        let err = validate_username(&name).unwrap_err();
+        assert!(err.to_string().contains("too long"));
+        assert!(err.to_string().contains("33"));
+    }
+
+    #[test]
+    fn test_validate_username_uppercase_middle() {
+        let err = validate_username("aUser").unwrap_err();
+        assert!(err.to_string().contains("invalid character"));
+    }
+
+    #[test]
+    fn test_validate_username_starts_with_uppercase_underscore_ok() {
+        // Starts with underscore is OK even if rest has digits/hyphens
+        assert!(validate_username("_a-1").is_ok());
+    }
+
+    // -- Passwd parsing edge cases --
+
+    #[test]
+    fn test_parse_passwd_line_uid_boundary_999() {
+        let line = "svc:x:999:999::/home/svc:/bin/sh";
+        let info = parse_passwd_line(line).unwrap();
+        assert!(info.is_system_user); // 999 < 1000
+    }
+
+    #[test]
+    fn test_parse_passwd_line_uid_boundary_1000() {
+        let line = "user:x:1000:1000::/home/user:/bin/sh";
+        let info = parse_passwd_line(line).unwrap();
+        assert!(!info.is_system_user); // 1000 is NOT system
+    }
+
+    #[test]
+    fn test_parse_passwd_line_uid_zero() {
+        let line = "root:x:0:0:root:/root:/bin/bash";
+        let info = parse_passwd_line(line).unwrap();
+        assert!(info.is_system_user);
+        assert_eq!(info.uid, 0);
+    }
+
+    #[test]
+    fn test_parse_passwd_line_large_uid() {
+        let line = "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin";
+        let info = parse_passwd_line(line).unwrap();
+        assert_eq!(info.uid, 65534);
+        assert!(!info.is_system_user); // 65534 >= 1000
+    }
+
+    #[test]
+    fn test_parse_passwd_line_empty_gecos() {
+        let line = "testuser:x:1001:1001::/home/testuser:/bin/bash";
+        let info = parse_passwd_line(line).unwrap();
+        assert_eq!(info.username, "testuser");
+    }
+
+    #[test]
+    fn test_parse_passwd_line_extra_colons() {
+        // More than 7 fields should still work (extra fields ignored)
+        let line = "user:x:1000:1000:gecos:/home/user:/bin/sh:extra:fields";
+        let info = parse_passwd_line(line).unwrap();
+        assert_eq!(info.username, "user");
+        assert_eq!(info.shell, "/bin/sh");
+    }
+
+    #[test]
+    fn test_parse_passwd_line_empty_string() {
+        let err = parse_passwd_line("").unwrap_err();
+        assert!(err.to_string().contains("Malformed"));
+    }
+
+    #[test]
+    fn test_parse_passwd_line_six_fields() {
+        let err = parse_passwd_line("a:b:1:2:c:d").unwrap_err();
+        assert!(err.to_string().contains("expected 7"));
+    }
+
+    #[test]
+    fn test_parse_passwd_line_negative_uid() {
+        let line = "user:x:-1:1000::/home/user:/bin/sh";
+        let err = parse_passwd_line(line).unwrap_err();
+        assert!(err.to_string().contains("Invalid UID"));
+    }
+
+    #[test]
+    fn test_parse_passwd_line_uid_overflow() {
+        let line = "user:x:99999999999:1000::/home/user:/bin/sh";
+        let err = parse_passwd_line(line).unwrap_err();
+        assert!(err.to_string().contains("Invalid UID"));
+    }
+
+    #[test]
+    fn test_parse_passwd_line_gid_non_numeric() {
+        let line = "user:x:1000:abc::/home/user:/bin/sh";
+        let err = parse_passwd_line(line).unwrap_err();
+        assert!(err.to_string().contains("Invalid GID"));
+    }
+
+    // -- Who output parsing edge cases --
+
+    #[test]
+    fn test_parse_who_output_short_line_two_fields() {
+        // Lines with fewer than 3 fields are skipped
+        let output = "onlyuser pts/0\n";
+        let sessions = parse_who_output(output);
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_who_output_one_field() {
+        let output = "onlyuser\n";
+        let sessions = parse_who_output(output);
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_who_output_three_fields_no_time() {
+        // Exactly 3 fields: user tty date (no time)
+        let output = "alice pts/0 2026-03-06\n";
+        let sessions = parse_who_output(output);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].user, "alice");
+        assert_eq!(sessions[0].login_time, "2026-03-06");
+        assert!(sessions[0].remote_host.is_none());
+    }
+
+    #[test]
+    fn test_parse_who_output_remote_host_parsing() {
+        let output = "alice pts/0 2026-03-06 10:30 (10.0.0.1)\n";
+        let sessions = parse_who_output(output);
+        assert_eq!(sessions[0].remote_host, Some("10.0.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_parse_who_output_no_parens_last_field() {
+        // Last field is not in parens, so no remote host
+        let output = "bob tty1 2026-03-06 09:15\n";
+        let sessions = parse_who_output(output);
+        assert!(sessions[0].remote_host.is_none());
+    }
+
+    #[test]
+    fn test_parse_who_output_session_id_format() {
+        let output = "alice pts/0 2026-03-06 10:30\n";
+        let sessions = parse_who_output(output);
+        assert_eq!(sessions[0].session_id, "who-0");
+    }
+
+    #[test]
+    fn test_parse_who_output_pid_is_zero() {
+        // `who` doesn't report PID, so it should always be 0
+        let output = "alice pts/0 2026-03-06 10:30\n";
+        let sessions = parse_who_output(output);
+        assert_eq!(sessions[0].pid, 0);
+    }
+
+    #[test]
+    fn test_parse_who_output_mixed_valid_and_blank() {
+        let output = "alice pts/0 2026-03-06 10:30\n\n  \nbob tty1 2026-03-06 09:15\n\n";
+        let sessions = parse_who_output(output);
+        assert_eq!(sessions.len(), 2);
+    }
+
+    // -- PAM config parsing edge cases --
+
+    #[test]
+    fn test_parse_pam_config_empty_string() {
+        let rules = parse_pam_config("").unwrap();
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pam_config_only_comments() {
+        let rules = parse_pam_config("# comment 1\n# comment 2\n").unwrap();
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pam_config_only_whitespace() {
+        let rules = parse_pam_config("   \n\t\n  \n").unwrap();
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pam_config_password_rule_type() {
+        let content = "password requisite pam_pwquality.so retry=3\n";
+        let rules = parse_pam_config(content).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, PamRuleType::Password);
+        assert_eq!(rules[0].control, PamControl::Requisite);
+        assert_eq!(rules[0].args, vec!["retry=3"]);
+    }
+
+    #[test]
+    fn test_parse_pam_config_include_control() {
+        let content = "auth include system-auth\n";
+        let rules = parse_pam_config(content).unwrap();
+        assert_eq!(rules[0].control, PamControl::Include);
+    }
+
+    #[test]
+    fn test_parse_pam_config_multiple_args() {
+        let content = "auth required pam_unix.so try_first_pass nullok audit\n";
+        let rules = parse_pam_config(content).unwrap();
+        assert_eq!(rules[0].args, vec!["try_first_pass", "nullok", "audit"]);
+    }
+
+    #[test]
+    fn test_parse_pam_config_tabs_and_spaces() {
+        let content = "auth\t\trequired\t\tpam_unix.so\ttry_first_pass\n";
+        let rules = parse_pam_config(content).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].module, "pam_unix.so");
+    }
+
+    #[test]
+    fn test_parse_pam_config_single_word_line() {
+        let err = parse_pam_config("badline\n").unwrap_err();
+        assert!(err.to_string().contains("Malformed"));
+    }
+
+    // -- PAM rule validation edge cases --
+
+    #[test]
+    fn test_validate_pam_rule_module_with_dotdot_in_name() {
+        // ".." embedded in name like "pam_..so" should be rejected
+        let rule = PamRule {
+            rule_type: PamRuleType::Auth,
+            control: PamControl::Required,
+            module: "pam_..so".to_string(),
+            args: vec![],
+        };
+        assert!(validate_pam_rule(&rule).is_err());
+    }
+
+    #[test]
+    fn test_validate_pam_rule_exclamation_in_module() {
+        let rule = PamRule {
+            rule_type: PamRuleType::Auth,
+            control: PamControl::Required,
+            module: "pam_unix!.so".to_string(),
+            args: vec![],
+        };
+        assert!(validate_pam_rule(&rule).is_err());
+    }
+
+    #[test]
+    fn test_validate_pam_rule_braces_in_module() {
+        let rule = PamRule {
+            rule_type: PamRuleType::Auth,
+            control: PamControl::Required,
+            module: "pam_{evil}.so".to_string(),
+            args: vec![],
+        };
+        assert!(validate_pam_rule(&rule).is_err());
+    }
+
+    #[test]
+    fn test_validate_pam_rule_dangerous_chars_in_arg() {
+        for ch in ['|', ';', '&', '$', '`', '>', '<', '!', '{', '}'] {
+            let rule = PamRule {
+                rule_type: PamRuleType::Auth,
+                control: PamControl::Required,
+                module: "pam_unix.so".to_string(),
+                args: vec![format!("arg{}val", ch)],
+            };
+            assert!(
+                validate_pam_rule(&rule).is_err(),
+                "Should reject '{}' in arg",
+                ch
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_pam_rule_multiple_args_second_bad() {
+        let rule = PamRule {
+            rule_type: PamRuleType::Auth,
+            control: PamControl::Required,
+            module: "pam_unix.so".to_string(),
+            args: vec!["good_arg".to_string(), "bad;arg".to_string()],
+        };
+        assert!(validate_pam_rule(&rule).is_err());
+    }
+
+    #[test]
+    fn test_validate_pam_rule_no_args_ok() {
+        let rule = PamRule {
+            rule_type: PamRuleType::Session,
+            control: PamControl::Optional,
+            module: "pam_systemd.so".to_string(),
+            args: vec![],
+        };
+        assert!(validate_pam_rule(&rule).is_ok());
+    }
+
+    // -- render_pam_config --
+
+    #[test]
+    fn test_render_pam_config_empty_rules() {
+        let rendered = render_pam_config(&[]);
+        assert!(rendered.starts_with("# Generated by AGNOS"));
+        // Only the header line, no rule lines
+        assert_eq!(rendered.lines().count(), 1);
+    }
+
+    #[test]
+    fn test_render_pam_config_header() {
+        let rules = vec![PamRule {
+            rule_type: PamRuleType::Auth,
+            control: PamControl::Required,
+            module: "pam_unix.so".to_string(),
+            args: vec![],
+        }];
+        let rendered = render_pam_config(&rules);
+        assert!(rendered.starts_with("# Generated by AGNOS PAM manager\n"));
+    }
+
+    // -- PamRule Display --
+
+    #[test]
+    fn test_pam_rule_display_no_args() {
+        let rule = PamRule {
+            rule_type: PamRuleType::Account,
+            control: PamControl::Sufficient,
+            module: "pam_permit.so".to_string(),
+            args: vec![],
+        };
+        let s = rule.to_string();
+        assert!(s.contains("account"));
+        assert!(s.contains("sufficient"));
+        assert!(s.contains("pam_permit.so"));
+    }
+
+    #[test]
+    fn test_pam_rule_display_multiple_args() {
+        let rule = PamRule {
+            rule_type: PamRuleType::Password,
+            control: PamControl::Requisite,
+            module: "pam_pwquality.so".to_string(),
+            args: vec!["retry=3".to_string(), "minlen=8".to_string()],
+        };
+        let s = rule.to_string();
+        assert!(s.contains("retry=3"));
+        assert!(s.contains("minlen=8"));
+    }
+
+    // -- PamService --
+
+    #[test]
+    fn test_pam_service_sshd_name() {
+        assert_eq!(PamService::Sshd.service_name(), "sshd");
+    }
+
+    #[test]
+    fn test_pam_service_custom_empty() {
+        let svc = PamService::Custom(String::new());
+        assert_eq!(svc.service_name(), "");
+    }
+
+    #[test]
+    fn test_pam_service_eq() {
+        assert_eq!(PamService::Login, PamService::Login);
+        assert_ne!(PamService::Login, PamService::Sudo);
+        assert_eq!(
+            PamService::Custom("x".into()),
+            PamService::Custom("x".into())
+        );
+        assert_ne!(
+            PamService::Custom("x".into()),
+            PamService::Custom("y".into())
+        );
+    }
+
+    // -- PamConfig --
+
+    #[test]
+    fn test_pam_config_serde_roundtrip() {
+        let config = PamConfig {
+            service: PamService::AgnosAgent,
+            rules: vec![PamRule {
+                rule_type: PamRuleType::Auth,
+                control: PamControl::Required,
+                module: "pam_unix.so".to_string(),
+                args: vec!["try_first_pass".to_string()],
+            }],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: PamConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.service, PamService::AgnosAgent);
+        assert_eq!(back.rules.len(), 1);
+        assert_eq!(back.rules[0].module, "pam_unix.so");
+    }
+
+    // -- AuthResult --
+
+    #[test]
+    fn test_auth_result_serde_roundtrip() {
+        let variants = vec![
+            AuthResult::Success,
+            AuthResult::Denied("bad pw".into()),
+            AuthResult::AccountExpired,
+            AuthResult::PasswordExpired,
+            AuthResult::SessionError("session fail".into()),
+            AuthResult::Unknown(-7),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AuthResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn test_auth_result_eq() {
+        assert_eq!(AuthResult::Success, AuthResult::Success);
+        assert_ne!(AuthResult::Success, AuthResult::AccountExpired);
+        assert_eq!(
+            AuthResult::Denied("x".into()),
+            AuthResult::Denied("x".into())
+        );
+        assert_ne!(
+            AuthResult::Denied("x".into()),
+            AuthResult::Denied("y".into())
+        );
+        assert_eq!(AuthResult::Unknown(0), AuthResult::Unknown(0));
+        assert_ne!(AuthResult::Unknown(0), AuthResult::Unknown(1));
+    }
+
+    // -- UserInfo --
+
+    #[test]
+    fn test_user_info_detect_system_user_boundary() {
+        assert!(UserInfo::detect_system_user(0));
+        assert!(UserInfo::detect_system_user(999));
+        assert!(!UserInfo::detect_system_user(1000));
+        assert!(!UserInfo::detect_system_user(65534));
+    }
+
+    #[test]
+    fn test_user_info_debug() {
+        let info = UserInfo {
+            username: "test".to_string(),
+            uid: 1000,
+            gid: 1000,
+            home_dir: PathBuf::from("/home/test"),
+            shell: "/bin/sh".to_string(),
+            groups: vec![],
+            is_system_user: false,
+        };
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("UserInfo"));
+        assert!(dbg.contains("test"));
+    }
+
+    // -- SessionInfo --
+
+    #[test]
+    fn test_session_info_with_remote_host() {
+        let info = SessionInfo {
+            session_id: "s1".to_string(),
+            user: "alice".to_string(),
+            login_time: "2026-01-01 00:00".to_string(),
+            tty: Some("pts/0".to_string()),
+            remote_host: Some("10.0.0.1".to_string()),
+            pid: 42,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: SessionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.remote_host, Some("10.0.0.1".to_string()));
+        assert_eq!(back.pid, 42);
+    }
+
+    #[test]
+    fn test_session_info_without_tty_and_remote() {
+        let info = SessionInfo {
+            session_id: "s2".to_string(),
+            user: "bob".to_string(),
+            login_time: "2026-01-01".to_string(),
+            tty: None,
+            remote_host: None,
+            pid: 0,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: SessionInfo = serde_json::from_str(&json).unwrap();
+        assert!(back.tty.is_none());
+        assert!(back.remote_host.is_none());
+    }
+
+    // -- PamRuleType from_str edge cases --
+
+    #[test]
+    fn test_pam_rule_type_from_str_case_sensitive() {
+        // Should reject uppercase
+        assert!(PamRuleType::from_str("Auth").is_err());
+        assert!(PamRuleType::from_str("AUTH").is_err());
+        assert!(PamRuleType::from_str("SESSION").is_err());
+    }
+
+    // -- PamControl from_str edge cases --
+
+    #[test]
+    fn test_pam_control_from_str_case_sensitive() {
+        assert!(PamControl::from_str("Required").is_err());
+        assert!(PamControl::from_str("REQUIRED").is_err());
+    }
+
+    #[test]
+    fn test_pam_control_from_str_empty() {
+        let err = PamControl::from_str("").unwrap_err();
+        assert!(err.to_string().contains("Unknown PAM control flag"));
+    }
+
+    #[test]
+    fn test_pam_rule_type_from_str_empty() {
+        let err = PamRuleType::from_str("").unwrap_err();
+        assert!(err.to_string().contains("Unknown PAM rule type"));
+    }
 }

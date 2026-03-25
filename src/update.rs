@@ -1145,4 +1145,441 @@ mod tests {
     fn test_compare_versions_year_boundary() {
         assert_eq!(compare_versions("2026.31.12", "2027.1.1"), Ordering::Less);
     }
+
+    // ---- Version validation edge cases ----
+
+    #[test]
+    fn test_validate_version_year_2024_boundary() {
+        assert!(validate_version("2024.1.1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_year_2100_boundary() {
+        assert!(validate_version("2100.1.1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_year_2101_out_of_range() {
+        assert!(validate_version("2101.1.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_year_2023_out_of_range() {
+        assert!(validate_version("2023.12.12").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_month_1_valid() {
+        assert!(validate_version("2026.1.1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_month_12_valid() {
+        assert!(validate_version("2026.1.12").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_empty_string() {
+        assert!(validate_version("").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_single_part() {
+        assert!(validate_version("2026").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_four_parts() {
+        assert!(validate_version("2026.1.2.3").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_negative_numbers() {
+        // "-1" fails u32 parse
+        assert!(validate_version("-2026.1.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_leading_zeros() {
+        // "01" parses fine as u32 = 1
+        assert!(validate_version("2026.01.01").is_ok());
+    }
+
+    // ---- Version comparison edge cases ----
+
+    #[test]
+    fn test_compare_versions_identical() {
+        assert_eq!(compare_versions("2026.1.1", "2026.1.1"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_versions_one_malformed() {
+        // One valid, one invalid — falls back to lexicographic
+        let result = compare_versions("2026.1.1", "abc");
+        assert_eq!(result, "2026.1.1".cmp("abc"));
+    }
+
+    #[test]
+    fn test_compare_versions_both_malformed() {
+        assert_eq!(compare_versions("xyz", "abc"), Ordering::Greater);
+    }
+
+    #[test]
+    fn test_compare_versions_empty_strings() {
+        assert_eq!(compare_versions("", ""), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_versions_large_day_values() {
+        // CalVer day can be large (like day-of-year)
+        assert_eq!(
+            compare_versions("2026.365.1", "2026.1.1"),
+            Ordering::Greater
+        );
+    }
+
+    // ---- Manifest verification edge cases ----
+
+    #[test]
+    fn test_verify_manifest_empty_release_date() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.release_date = String::new();
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_empty_sha256_digest() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.sha256_digest = String::new();
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_invalid_file_hash_too_short() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.files[0].sha256 = "abc".into();
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_invalid_file_hash_non_hex() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.files[0].sha256 = "g".repeat(64); // 'g' is not hex
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_invalid_version_format() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.version = "not-a-version".into();
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_with_all_channels() {
+        for channel in &[
+            UpdateChannel::Stable,
+            UpdateChannel::Beta,
+            UpdateChannel::Nightly,
+            UpdateChannel::Custom("edge".into()),
+        ] {
+            let manifest = build_test_manifest("2026.4.5", channel.clone());
+            assert!(
+                verify_manifest(&manifest).is_ok(),
+                "Failed for {:?}",
+                channel
+            );
+        }
+    }
+
+    #[test]
+    fn test_verify_manifest_with_min_version() {
+        let file_hash = "a".repeat(64);
+        let mut manifest = UpdateManifest {
+            version: "2026.4.5".into(),
+            channel: UpdateChannel::Stable,
+            files: vec![UpdateFile {
+                path: "rootfs.img".into(),
+                sha256: file_hash,
+                size_bytes: 1024,
+                delta_from: None,
+                compressed: false,
+            }],
+            release_date: "2026-03-06T00:00:00Z".into(),
+            min_version: Some("2026.3.1".into()),
+            changelog: Some("Test".into()),
+            sha256_digest: String::new(),
+        };
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn test_verify_manifest_with_no_changelog() {
+        let file_hash = "a".repeat(64);
+        let mut manifest = UpdateManifest {
+            version: "2026.4.5".into(),
+            channel: UpdateChannel::Stable,
+            files: vec![UpdateFile {
+                path: "rootfs.img".into(),
+                sha256: file_hash,
+                size_bytes: 1024,
+                delta_from: None,
+                compressed: false,
+            }],
+            release_date: "2026-03-06T00:00:00Z".into(),
+            min_version: None,
+            changelog: None,
+            sha256_digest: String::new(),
+        };
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn test_verify_manifest_multiple_files() {
+        let mut manifest = UpdateManifest {
+            version: "2026.4.5".into(),
+            channel: UpdateChannel::Stable,
+            files: vec![
+                UpdateFile {
+                    path: "rootfs.img".into(),
+                    sha256: "a".repeat(64),
+                    size_bytes: 1024,
+                    delta_from: None,
+                    compressed: false,
+                },
+                UpdateFile {
+                    path: "boot.img".into(),
+                    sha256: "b".repeat(64),
+                    size_bytes: 512,
+                    delta_from: None,
+                    compressed: true,
+                },
+            ],
+            release_date: "2026-03-06T00:00:00Z".into(),
+            min_version: None,
+            changelog: None,
+            sha256_digest: String::new(),
+        };
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_ok());
+    }
+
+    // ---- Slot management ----
+
+    #[test]
+    fn test_slot_serde_roundtrip() {
+        for slot in &[UpdateSlot::A, UpdateSlot::B] {
+            let json = serde_json::to_string(slot).unwrap();
+            let back: UpdateSlot = serde_json::from_str(&json).unwrap();
+            assert_eq!(*slot, back);
+        }
+    }
+
+    // ---- UpdateState serialization ----
+
+    #[test]
+    fn test_state_serialization_no_pending() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::A,
+            current_version: "2026.1.1".into(),
+            pending_update: None,
+            last_update: None,
+            rollback_available: false,
+            boot_count_since_update: 0,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: UpdateState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.current_slot, UpdateSlot::A);
+        assert!(back.pending_update.is_none());
+        assert!(back.last_update.is_none());
+        assert!(!back.rollback_available);
+    }
+
+    #[test]
+    fn test_save_update_state_creates_parent_dirs() {
+        let dir = std::env::temp_dir()
+            .join("agnos-test-deep-dir")
+            .join("sub1")
+            .join("sub2");
+        let path = dir.join("state.json");
+        // Clean up if exists from prior run
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("agnos-test-deep-dir"));
+
+        let state = UpdateState {
+            current_slot: UpdateSlot::A,
+            current_version: "2026.1.1".into(),
+            pending_update: None,
+            last_update: None,
+            rollback_available: false,
+            boot_count_since_update: 0,
+        };
+        save_update_state(&state, &path).unwrap();
+        assert!(path.exists());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("agnos-test-deep-dir"));
+    }
+
+    // ---- needs_rollback edge cases ----
+
+    #[test]
+    fn test_needs_rollback_exact_threshold() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::A,
+            current_version: "2026.3.5".into(),
+            pending_update: Some("2026.4.5".into()),
+            last_update: None,
+            rollback_available: true,
+            boot_count_since_update: 5,
+        };
+        assert!(needs_rollback(&state, 5));
+        assert!(!needs_rollback(&state, 6));
+    }
+
+    #[test]
+    fn test_needs_rollback_zero_max() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::A,
+            current_version: "2026.3.5".into(),
+            pending_update: Some("2026.4.5".into()),
+            last_update: None,
+            rollback_available: true,
+            boot_count_since_update: 0,
+        };
+        assert!(needs_rollback(&state, 0));
+    }
+
+    #[test]
+    fn test_needs_rollback_u32_max() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::A,
+            current_version: "2026.3.5".into(),
+            pending_update: Some("2026.4.5".into()),
+            last_update: None,
+            rollback_available: true,
+            boot_count_since_update: u32::MAX,
+        };
+        assert!(needs_rollback(&state, u32::MAX));
+    }
+
+    // ---- UpdateProgress ----
+
+    #[test]
+    fn test_progress_zero_percent() {
+        let p = UpdateProgress::new(UpdatePhase::Downloading, 0, "starting");
+        assert_eq!(p.percent, 0);
+    }
+
+    #[test]
+    fn test_progress_100_percent() {
+        let p = UpdateProgress::new(UpdatePhase::Complete, 100, "done");
+        assert_eq!(p.percent, 100);
+    }
+
+    #[test]
+    fn test_progress_255_clamped_to_100() {
+        let p = UpdateProgress::new(UpdatePhase::Applying, 255, "overflow");
+        assert_eq!(p.percent, 100);
+    }
+
+    #[test]
+    fn test_progress_serde_roundtrip() {
+        let p = UpdateProgress::new(UpdatePhase::Verifying, 50, "halfway");
+        let json = serde_json::to_string(&p).unwrap();
+        let back: UpdateProgress = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.phase, UpdatePhase::Verifying);
+        assert_eq!(back.percent, 50);
+        assert_eq!(back.message, "halfway");
+    }
+
+    // ---- UpdateConfig ----
+
+    #[test]
+    fn test_config_default_values() {
+        let config = UpdateConfig::default();
+        assert_eq!(config.update_url, "https://updates.agnos.org");
+        assert_eq!(config.max_retries, 3);
+        assert!(config.verify_after_apply);
+        assert_eq!(
+            config.state_file,
+            PathBuf::from("/var/lib/agnos/update-state.json")
+        );
+    }
+
+    #[test]
+    fn test_config_serde_roundtrip() {
+        let config = UpdateConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: UpdateConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.update_url, config.update_url);
+        assert_eq!(back.max_retries, config.max_retries);
+    }
+
+    // ---- Manifest digest determinism ----
+
+    #[test]
+    fn test_manifest_digest_deterministic() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        assert_eq!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_manifest_digest_changes_with_version() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let m2 = build_test_manifest("2026.4.6", UpdateChannel::Stable);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_manifest_digest_changes_with_channel() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let m2 = build_test_manifest("2026.4.5", UpdateChannel::Beta);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    // ---- Phase serde ----
+
+    #[test]
+    fn test_phase_serde_roundtrip() {
+        let phases = [
+            UpdatePhase::Downloading,
+            UpdatePhase::Verifying,
+            UpdatePhase::Applying,
+            UpdatePhase::Finalizing,
+            UpdatePhase::RollingBack,
+            UpdatePhase::Complete,
+            UpdatePhase::Failed,
+        ];
+        for phase in &phases {
+            let json = serde_json::to_string(phase).unwrap();
+            let back: UpdatePhase = serde_json::from_str(&json).unwrap();
+            assert_eq!(*phase, back);
+        }
+    }
+
+    // ---- UpdateFile serde ----
+
+    #[test]
+    fn test_update_file_serde_roundtrip() {
+        let file = UpdateFile {
+            path: "/some/path".into(),
+            sha256: "a".repeat(64),
+            size_bytes: 42,
+            delta_from: Some("2026.3.5".into()),
+            compressed: true,
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        let back: UpdateFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.path, "/some/path");
+        assert_eq!(back.size_bytes, 42);
+        assert!(back.compressed);
+        assert_eq!(back.delta_from, Some("2026.3.5".into()));
+    }
 }

@@ -731,4 +731,296 @@ SHA1 Fingerprint: 11:22:33:44:55:66:77:88:99:00:aa:bb:cc:dd:ee:ff:11:22:33:44
         // environment — just verify it does not panic.
         let _ = get_secureboot_status();
     }
+
+    // --- Additional SecureBootState tests ---
+
+    #[test]
+    fn test_secureboot_state_display_all_variants() {
+        assert_eq!(format!("{}", SecureBootState::Disabled), "disabled");
+        assert_eq!(
+            format!("{}", SecureBootState::NotSupported),
+            "not_supported"
+        );
+    }
+
+    #[test]
+    fn test_secureboot_state_debug_all_variants() {
+        assert_eq!(format!("{:?}", SecureBootState::Disabled), "Disabled");
+        assert_eq!(
+            format!("{:?}", SecureBootState::NotSupported),
+            "NotSupported"
+        );
+    }
+
+    #[test]
+    fn test_secureboot_state_ne() {
+        assert_ne!(SecureBootState::Enabled, SecureBootState::SetupMode);
+        assert_ne!(SecureBootState::Disabled, SecureBootState::NotSupported);
+        assert_ne!(SecureBootState::SetupMode, SecureBootState::NotSupported);
+    }
+
+    // --- Additional parse_mokutil_list tests ---
+
+    #[test]
+    fn test_parse_mokutil_list_key_without_subject() {
+        let output = r#"[key 1]
+SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+        Issuer: CN=CA Only
+        Valid from: Jan 1 2026
+        Valid until: Dec 31 2030
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].subject, ""); // Subject missing, defaults to empty
+        assert_eq!(keys[0].issuer, "CN=CA Only");
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_key_without_dates() {
+        let output = r#"[key 1]
+SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+        Subject: CN=No Dates
+        Issuer: CN=CA
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].not_before, "");
+        assert_eq!(keys[0].not_after, "");
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_three_keys() {
+        let output = r#"[key 1]
+SHA1 Fingerprint: 11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11:11
+        Subject: CN=Key1
+        Issuer: CN=CA1
+        Valid from: Jan 1 2026
+        Valid until: Dec 31 2030
+[key 2]
+SHA1 Fingerprint: 22:22:22:22:22:22:22:22:22:22:22:22:22:22:22:22:22:22:22:22
+        Subject: CN=Key2
+        Issuer: CN=CA2
+        Valid from: Feb 1 2026
+        Valid until: Feb 1 2031
+[key 3]
+SHA1 Fingerprint: 33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33
+        Subject: CN=Key3
+        Issuer: CN=CA3
+        Valid from: Mar 1 2026
+        Valid until: Mar 1 2031
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 3);
+        assert_eq!(keys[0].subject, "CN=Key1");
+        assert_eq!(keys[1].subject, "CN=Key2");
+        assert_eq!(keys[2].subject, "CN=Key3");
+        assert_eq!(
+            keys[0].fingerprint,
+            "1111111111111111111111111111111111111111"
+        );
+        assert_eq!(
+            keys[2].fingerprint,
+            "3333333333333333333333333333333333333333"
+        );
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_fingerprint_colons_stripped() {
+        let output = r#"[key 1]
+SHA1 Fingerprint: AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD
+        Subject: CN=Test
+        Issuer: CN=CA
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(
+            keys[0].fingerprint,
+            "aabbccddeeff00112233445566778899aabbccdd"
+        );
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_lines_before_first_key_ignored() {
+        let output = r#"Some header text
+Another line
+[key 1]
+SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+        Subject: CN=Test
+        Issuer: CN=CA
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].subject, "CN=Test");
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_only_headers_no_fingerprints() {
+        let output = "[key 1]\n[key 2]\n[key 3]\n";
+        let keys = parse_mokutil_list(output).unwrap();
+        // None have fingerprints, so none are included
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_key_header_variations() {
+        // mokutil uses "[key N]" format with different numbers
+        let output = r#"[key 42]
+SHA1 Fingerprint: ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff:ff
+        Subject: CN=Key42
+        Issuer: CN=CA42
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].subject, "CN=Key42");
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_whitespace_only() {
+        let output = "   \n  \n   \n";
+        let keys = parse_mokutil_list(output).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_subject_with_multiple_fields() {
+        let output = r#"[key 1]
+SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+        Subject: C=US, ST=CA, O=AGNOS, CN=Signing Key
+        Issuer: C=US, O=AGNOS CA, CN=Root CA
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys[0].subject, "C=US, ST=CA, O=AGNOS, CN=Signing Key");
+        assert_eq!(keys[0].issuer, "C=US, O=AGNOS CA, CN=Root CA");
+    }
+
+    // --- Additional EnrolledKey tests ---
+
+    #[test]
+    fn test_enrolled_key_debug() {
+        let key = EnrolledKey {
+            subject: "CN=Test".to_string(),
+            issuer: "CN=CA".to_string(),
+            fingerprint: "aabb".to_string(),
+            not_before: "2026".to_string(),
+            not_after: "2030".to_string(),
+        };
+        let dbg = format!("{:?}", key);
+        assert!(dbg.contains("EnrolledKey"));
+        assert!(dbg.contains("CN=Test"));
+    }
+
+    #[test]
+    fn test_enrolled_key_ne() {
+        let a = EnrolledKey {
+            subject: "CN=A".to_string(),
+            issuer: "CN=CA".to_string(),
+            fingerprint: "aa".to_string(),
+            not_before: "now".to_string(),
+            not_after: "later".to_string(),
+        };
+        let b = EnrolledKey {
+            subject: "CN=B".to_string(),
+            issuer: "CN=CA".to_string(),
+            fingerprint: "bb".to_string(),
+            not_before: "now".to_string(),
+            not_after: "later".to_string(),
+        };
+        assert_ne!(a, b);
+    }
+
+    // --- Additional ModuleSignatureInfo tests ---
+
+    #[test]
+    fn test_module_signature_info_debug() {
+        let info = ModuleSignatureInfo {
+            module_path: PathBuf::from("/tmp/test.ko"),
+            has_signature: true,
+            signer: Some("AGNOS".to_string()),
+            sig_algorithm: Some("sha256".to_string()),
+        };
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("ModuleSignatureInfo"));
+        assert!(dbg.contains("test.ko"));
+    }
+
+    #[test]
+    fn test_module_signature_info_clone_eq() {
+        let info = ModuleSignatureInfo {
+            module_path: PathBuf::from("/tmp/test.ko"),
+            has_signature: false,
+            signer: None,
+            sig_algorithm: None,
+        };
+        let cloned = info.clone();
+        assert_eq!(info, cloned);
+    }
+
+    #[test]
+    fn test_module_signature_info_ne() {
+        let a = ModuleSignatureInfo {
+            module_path: PathBuf::from("/tmp/a.ko"),
+            has_signature: true,
+            signer: Some("A".to_string()),
+            sig_algorithm: Some("sha256".to_string()),
+        };
+        let b = ModuleSignatureInfo {
+            module_path: PathBuf::from("/tmp/b.ko"),
+            has_signature: false,
+            signer: None,
+            sig_algorithm: None,
+        };
+        assert_ne!(a, b);
+    }
+
+    // --- Additional EfiVariable tests ---
+
+    #[test]
+    fn test_efi_variable_clone_eq() {
+        let var = EfiVariable {
+            name: "SecureBoot-8be4df61".to_string(),
+            value_hex: "0600000001".to_string(),
+            size: 5,
+        };
+        let cloned = var.clone();
+        assert_eq!(var, cloned);
+    }
+
+    #[test]
+    fn test_efi_variable_ne() {
+        let a = EfiVariable {
+            name: "SecureBoot-abc".to_string(),
+            value_hex: "01".to_string(),
+            size: 1,
+        };
+        let b = EfiVariable {
+            name: "SetupMode-abc".to_string(),
+            value_hex: "00".to_string(),
+            size: 1,
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_efi_variable_empty_value() {
+        let var = EfiVariable {
+            name: "test".to_string(),
+            value_hex: String::new(),
+            size: 0,
+        };
+        assert_eq!(var.size, 0);
+        assert!(var.value_hex.is_empty());
+    }
+
+    // --- get_efi_variables (safe to call) ---
+
+    #[test]
+    fn test_get_efi_variables_no_crash() {
+        let _ = get_efi_variables();
+    }
+
+    // --- list_enrolled_keys (safe to call) ---
+
+    #[test]
+    fn test_list_enrolled_keys_no_crash() {
+        let _ = list_enrolled_keys();
+    }
 }

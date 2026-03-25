@@ -1425,4 +1425,251 @@ mod tests {
         assert_eq!(de.remote_addr, "1.2.3.4");
         assert_eq!(de.comment, "HTTPS");
     }
+
+    // ---- Security: nft rule injection via remote_addr ----
+
+    #[test]
+    fn test_format_nft_rule_shell_metachar_in_addr_returns_empty() {
+        // Semicolon injection attempt
+        let rule = FirewallRule {
+            direction: TrafficDirection::Inbound,
+            protocol: Protocol::Tcp,
+            port: 80,
+            remote_addr: "1.2.3.4; drop table".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        let formatted = format_nft_rule(&rule);
+        assert!(formatted.is_empty(), "Should reject addr with semicolons");
+    }
+
+    #[test]
+    fn test_format_nft_rule_pipe_in_addr_returns_empty() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Inbound,
+            protocol: Protocol::Tcp,
+            port: 80,
+            remote_addr: "1.2.3.4|malicious".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        assert!(format_nft_rule(&rule).is_empty());
+    }
+
+    #[test]
+    fn test_format_nft_rule_backtick_in_addr_returns_empty() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Inbound,
+            protocol: Protocol::Tcp,
+            port: 80,
+            remote_addr: "`whoami`".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        assert!(format_nft_rule(&rule).is_empty());
+    }
+
+    #[test]
+    fn test_format_nft_rule_non_ip_addr_returns_empty() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Outbound,
+            protocol: Protocol::Tcp,
+            port: 443,
+            remote_addr: "not-an-ip".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        assert!(format_nft_rule(&rule).is_empty());
+    }
+
+    #[test]
+    fn test_format_nft_rule_ipv6_addr() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Outbound,
+            protocol: Protocol::Tcp,
+            port: 443,
+            remote_addr: "::1".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        let formatted = format_nft_rule(&rule);
+        assert!(formatted.contains("::1"));
+        assert!(formatted.contains("ip daddr"));
+    }
+
+    #[test]
+    fn test_format_nft_rule_cidr_valid() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Outbound,
+            protocol: Protocol::Any,
+            port: 0,
+            remote_addr: "10.0.0.0/8".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        let formatted = format_nft_rule(&rule);
+        assert!(formatted.contains("10.0.0.0/8"));
+    }
+
+    #[test]
+    fn test_format_nft_rule_cidr_invalid_prefix() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Outbound,
+            protocol: Protocol::Any,
+            port: 0,
+            remote_addr: "10.0.0.0/abc".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        assert!(format_nft_rule(&rule).is_empty());
+    }
+
+    #[test]
+    fn test_format_nft_rule_comment_with_quotes_escaped() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Inbound,
+            protocol: Protocol::Tcp,
+            port: 22,
+            remote_addr: String::new(),
+            action: FirewallAction::Accept,
+            comment: r#"Allow "admin" SSH"#.to_string(),
+        };
+        let formatted = format_nft_rule(&rule);
+        assert!(formatted.contains(r#"Allow \"admin\" SSH"#));
+    }
+
+    #[test]
+    fn test_format_nft_rule_comment_with_backslash_escaped() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Inbound,
+            protocol: Protocol::Tcp,
+            port: 22,
+            remote_addr: String::new(),
+            action: FirewallAction::Accept,
+            comment: r"path\to\thing".to_string(),
+        };
+        let formatted = format_nft_rule(&rule);
+        assert!(formatted.contains(r"path\\to\\thing"));
+    }
+
+    // ---- Edge case: generate_agent_ips hash collisions ----
+
+    #[test]
+    fn test_generate_agent_ips_all_valid_ipv4() {
+        // Test many names, all should produce parseable IPv4 addresses
+        for i in 0..100 {
+            let name = format!("agent-{}", i);
+            let (host, agent) = generate_agent_ips(&name);
+            assert!(
+                host.parse::<std::net::Ipv4Addr>().is_ok(),
+                "host IP not valid: {}",
+                host
+            );
+            assert!(
+                agent.parse::<std::net::Ipv4Addr>().is_ok(),
+                "agent IP not valid: {}",
+                agent
+            );
+        }
+    }
+
+    // ---- Ruleset generation: outbound-only rules appear in output chain ----
+
+    #[test]
+    fn test_generate_nftables_ruleset_outbound_only() {
+        let policy = FirewallPolicy {
+            default_inbound: FirewallAction::Drop,
+            default_outbound: FirewallAction::Drop,
+            rules: vec![FirewallRule {
+                direction: TrafficDirection::Outbound,
+                protocol: Protocol::Tcp,
+                port: 443,
+                remote_addr: String::new(),
+                action: FirewallAction::Accept,
+                comment: "HTTPS out".to_string(),
+            }],
+        };
+        let ruleset = generate_nftables_ruleset(&policy, "veth0");
+        // The HTTPS rule should appear after "chain output" not after "chain input"
+        let input_pos = ruleset.find("chain input").unwrap();
+        let output_pos = ruleset.find("chain output").unwrap();
+        let https_pos = ruleset.find("HTTPS out").unwrap();
+        assert!(
+            https_pos > output_pos,
+            "Outbound rule should be in output chain"
+        );
+        assert!(https_pos > input_pos);
+    }
+
+    #[test]
+    fn test_generate_nftables_ruleset_inbound_only() {
+        let policy = FirewallPolicy {
+            default_inbound: FirewallAction::Drop,
+            default_outbound: FirewallAction::Accept,
+            rules: vec![FirewallRule {
+                direction: TrafficDirection::Inbound,
+                protocol: Protocol::Tcp,
+                port: 22,
+                remote_addr: String::new(),
+                action: FirewallAction::Accept,
+                comment: "SSH in".to_string(),
+            }],
+        };
+        let ruleset = generate_nftables_ruleset(&policy, "veth0");
+        let output_pos = ruleset.find("chain output").unwrap();
+        let ssh_pos = ruleset.find("SSH in").unwrap();
+        assert!(
+            ssh_pos < output_pos,
+            "Inbound rule should be in input chain"
+        );
+    }
+
+    // ---- Validate config edge cases ----
+
+    #[test]
+    fn test_net_namespace_config_validate_ipv6_rejected() {
+        let mut config = NetNamespaceConfig::for_agent("test");
+        config.agent_ip = "::1".to_string();
+        // validate() parses as Ipv4Addr, so IPv6 should fail
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_net_namespace_config_validate_all_valid_prefix_lens() {
+        for pl in 1..=32u8 {
+            let mut config = NetNamespaceConfig::for_agent("test");
+            config.prefix_len = pl;
+            assert!(
+                config.validate().is_ok(),
+                "prefix_len {} should be valid",
+                pl
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_nft_rule_newline_in_addr_returns_empty() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Inbound,
+            protocol: Protocol::Tcp,
+            port: 80,
+            remote_addr: "1.2.3.4\n; flush ruleset".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        assert!(format_nft_rule(&rule).is_empty());
+    }
+
+    #[test]
+    fn test_format_nft_rule_dollar_in_addr_returns_empty() {
+        let rule = FirewallRule {
+            direction: TrafficDirection::Inbound,
+            protocol: Protocol::Tcp,
+            port: 80,
+            remote_addr: "$HOME".to_string(),
+            action: FirewallAction::Accept,
+            comment: String::new(),
+        };
+        assert!(format_nft_rule(&rule).is_empty());
+    }
 }

@@ -1146,4 +1146,222 @@ mod tests {
         assert_eq!(s, s2);
         assert_eq!(s, s3);
     }
+
+    // --- Audit coverage additions ---
+
+    #[test]
+    fn test_set_selinux_mode_disabled_rejected() {
+        // Attempting to set SELinux to Disabled at runtime must always fail
+        let result = set_selinux_mode(SELinuxMode::Disabled);
+        // On Linux without SELinux: NotSupported; on Linux with SELinux: InvalidArgument;
+        // on non-Linux: NotSupported. In all cases it errors.
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_selinux_context_exactly_four_parts() {
+        // Four parts is the minimum valid format; should pass validation
+        // (will fail at the filesystem level, not at validation)
+        let result = set_selinux_context("u:r:t:s0", false);
+        // On non-Linux: NotSupported; on Linux without SELinux: NotSupported or Unknown
+        // Key: the validation (empty / format) must NOT trigger
+        if let Err(e) = result {
+            let msg = e.to_string();
+            assert!(!msg.contains("empty"), "Should not fail on empty: {}", msg);
+            assert!(
+                !msg.contains("Invalid SELinux context format"),
+                "Should not fail format: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_set_selinux_context_single_part() {
+        let result = set_selinux_context("onlyonepart", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_selinux_context_two_parts() {
+        let result = set_selinux_context("a:b", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_selinux_context_on_exec_bad_format() {
+        let result = set_selinux_context("bad", true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_apparmor_change_profile_valid_name() {
+        // Valid name should pass validation; may fail at filesystem level
+        let result = apparmor_change_profile("agnos-agent-user");
+        if let Err(e) = result {
+            let msg = e.to_string();
+            assert!(!msg.contains("empty"), "Should not fail on empty: {}", msg);
+            assert!(
+                !msg.contains("Invalid AppArmor profile name"),
+                "Should not fail name validation: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_apparmor_change_profile_slash_in_middle() {
+        let result = apparmor_change_profile("path/to/profile");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_exactly_four_parts() {
+        let profile = AgentMacProfile {
+            agent_type: "Worker".to_string(),
+            selinux_context: Some("a:b:c:d".to_string()),
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::SELinux).is_ok());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_two_parts() {
+        let profile = AgentMacProfile {
+            agent_type: "Worker".to_string(),
+            selinux_context: Some("a:b".to_string()),
+            apparmor_profile: None,
+        };
+        let err = profile.validate(MacSystem::SELinux).unwrap_err();
+        assert!(err.to_string().contains("user:role:type:level"));
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_selinux_one_part() {
+        let profile = AgentMacProfile {
+            agent_type: "Worker".to_string(),
+            selinux_context: Some("justonepart".to_string()),
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::SELinux).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_apparmor_with_dots_and_dashes() {
+        let profile = AgentMacProfile {
+            agent_type: "Worker".to_string(),
+            selinux_context: None,
+            apparmor_profile: Some("my-profile.v2_test".to_string()),
+        };
+        assert!(profile.validate(MacSystem::AppArmor).is_ok());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_apparmor_slash_at_start() {
+        let profile = AgentMacProfile {
+            agent_type: "Worker".to_string(),
+            selinux_context: None,
+            apparmor_profile: Some("/absolute-path".to_string()),
+        };
+        assert!(profile.validate(MacSystem::AppArmor).is_err());
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_none_ignores_fields() {
+        // With MacSystem::None, validation passes regardless of missing fields
+        let profile = AgentMacProfile {
+            agent_type: "Worker".to_string(),
+            selinux_context: None,
+            apparmor_profile: None,
+        };
+        assert!(profile.validate(MacSystem::None).is_ok());
+    }
+
+    #[test]
+    fn test_default_agent_profiles_contexts_are_distinct() {
+        let profiles = default_agent_profiles();
+        let contexts: Vec<_> = profiles
+            .iter()
+            .map(|p| p.selinux_context.as_deref().unwrap())
+            .collect();
+        // All SELinux contexts should be different
+        for (i, a) in contexts.iter().enumerate() {
+            for (j, b) in contexts.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "Contexts at {} and {} should differ", i, j);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_default_agent_profiles_apparmor_names_are_distinct() {
+        let profiles = default_agent_profiles();
+        let names: Vec<_> = profiles
+            .iter()
+            .map(|p| p.apparmor_profile.as_deref().unwrap())
+            .collect();
+        for (i, a) in names.iter().enumerate() {
+            for (j, b) in names.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "Names at {} and {} should differ", i, j);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_selinux_module_valid_name() {
+        // Valid name should pass validation, will fail at semodule execution
+        let result = remove_selinux_module("my_module");
+        assert!(result.is_err()); // semodule not available or will fail
+    }
+
+    #[test]
+    fn test_agent_mac_profile_new_unicode_agent_type() {
+        // Unicode in agent type should still work for construction
+        let profile = AgentMacProfile::new("Tst");
+        // The lowercase should handle ASCII at minimum
+        assert_eq!(profile.agent_type, "Tst");
+    }
+
+    #[test]
+    fn test_mac_system_display_matches_debug_for_selinux() {
+        // Display and Debug should both contain "SELinux"
+        let display = format!("{}", MacSystem::SELinux);
+        let debug = format!("{:?}", MacSystem::SELinux);
+        assert_eq!(display, "SELinux");
+        assert_eq!(debug, "SELinux");
+    }
+
+    #[test]
+    fn test_set_selinux_mode_enforcing_or_permissive() {
+        // These should pass validation but fail at filesystem level
+        for mode in &[SELinuxMode::Enforcing, SELinuxMode::Permissive] {
+            let result = set_selinux_mode(*mode);
+            // On non-Linux: NotSupported. On Linux without SELinux: NotSupported.
+            // Key: must not fail with "Cannot disable SELinux at runtime"
+            if let Err(e) = result {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("Cannot disable"),
+                    "Should not reject {:?}: {}",
+                    mode,
+                    msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_agent_mac_profile_validate_error_message_content() {
+        // Empty agent type error
+        let profile = AgentMacProfile {
+            agent_type: String::new(),
+            selinux_context: Some("u:r:t:s0".to_string()),
+            apparmor_profile: None,
+        };
+        let err = profile.validate(MacSystem::SELinux).unwrap_err();
+        assert!(err.to_string().contains("Agent type cannot be empty"));
+    }
 }

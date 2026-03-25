@@ -995,4 +995,805 @@ mod tests {
             );
         }
     }
+
+    // -- Additional validate_kernel_cmdline edge cases --
+
+    #[test]
+    fn test_validate_cmdline_exactly_4096_chars() {
+        let line = "a".repeat(4096);
+        assert!(validate_kernel_cmdline(&line).is_ok());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_unicode() {
+        let result = validate_kernel_cmdline("root=UUID=abc quiet splash\u{00e9}");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-printable"));
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_tab() {
+        // Tab is ASCII control
+        let result = validate_kernel_cmdline("root=UUID=abc\tquiet");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-printable"));
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_newline() {
+        let result = validate_kernel_cmdline("root=UUID=abc\nquiet");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("non-printable"));
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_null_byte() {
+        let result = validate_kernel_cmdline("root=UUID=abc\x00quiet");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_init_bin_dash() {
+        assert!(validate_kernel_cmdline("init=/bin/dash").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_init_sbin_init_debug() {
+        assert!(validate_kernel_cmdline("init=/sbin/init.debug").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_debug_shell_alone() {
+        assert!(validate_kernel_cmdline("debug_shell").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_mixed_case_dangerous() {
+        assert!(validate_kernel_cmdline("EMERGENCY").is_err());
+        assert!(validate_kernel_cmdline("RD.BREAK").is_err());
+        assert!(validate_kernel_cmdline("Debug_Shell").is_err());
+        assert!(validate_kernel_cmdline("Systemd.Debug-Shell").is_err());
+        assert!(validate_kernel_cmdline("SINGLE").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_dangerous_token_embedded_in_options() {
+        // "single" substring appears embedded — still rejected by contains()
+        assert!(validate_kernel_cmdline("root=UUID=abc single quiet").is_err());
+    }
+
+    #[test]
+    fn test_validate_cmdline_allows_normal_complex_options() {
+        assert!(validate_kernel_cmdline(
+            "root=UUID=12345678-abcd-ef01-2345-6789abcdef01 ro quiet splash loglevel=3 rd.udev.log_priority=3"
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_validate_cmdline_allows_printable_ascii() {
+        assert!(
+            validate_kernel_cmdline(
+                "root=/dev/sda1 ro quiet splash console=tty0 console=ttyS0,115200n8"
+            )
+            .is_ok()
+        );
+    }
+
+    // -- Additional entry ID validation edge cases --
+
+    #[test]
+    fn test_validate_entry_id_exactly_256() {
+        let id = "a".repeat(256);
+        assert!(validate_entry_id(&id).is_ok());
+    }
+
+    #[test]
+    fn test_validate_entry_id_single_char() {
+        assert!(validate_entry_id("a").is_ok());
+        assert!(validate_entry_id("0").is_ok());
+        assert!(validate_entry_id("-").is_ok());
+        assert!(validate_entry_id("_").is_ok());
+        assert!(validate_entry_id(".").is_ok());
+    }
+
+    #[test]
+    fn test_validate_entry_id_rejects_slash() {
+        assert!(validate_entry_id("entry/bad").is_err());
+    }
+
+    #[test]
+    fn test_validate_entry_id_rejects_path_traversal() {
+        assert!(validate_entry_id("../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_entry_id_accepts_unicode_alphanumeric() {
+        // NOTE: is_alphanumeric() accepts unicode chars like 'e'. This is a potential
+        // security concern since entry IDs are used in file paths. Consider using
+        // is_ascii_alphanumeric() in the validation function instead.
+        assert!(validate_entry_id("entr\u{00e9}").is_ok());
+    }
+
+    #[test]
+    fn test_validate_entry_id_rejects_null() {
+        assert!(validate_entry_id("entry\x00id").is_err());
+    }
+
+    #[test]
+    fn test_validate_entry_id_rejects_shell_metacharacters() {
+        assert!(validate_entry_id("entry;rm -rf /").is_err());
+        assert!(validate_entry_id("entry|cat").is_err());
+        assert!(validate_entry_id("entry`id`").is_err());
+        assert!(validate_entry_id("entry$(cmd)").is_err());
+    }
+
+    // -- extract_version_from_path additional cases --
+
+    #[test]
+    fn test_extract_version_from_vmlinuz() {
+        let p = PathBuf::from("/boot/vmlinuz-5.15.0-generic");
+        assert_eq!(
+            extract_version_from_path(&p),
+            Some("5.15.0-generic".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_version_from_vmlinuz_just_version() {
+        let p = PathBuf::from("vmlinuz-6.1.0");
+        assert_eq!(extract_version_from_path(&p), Some("6.1.0".to_string()));
+    }
+
+    #[test]
+    fn test_extract_version_from_path_no_filename() {
+        let p = PathBuf::from("/");
+        assert_eq!(extract_version_from_path(&p), None);
+    }
+
+    #[test]
+    fn test_extract_version_from_non_vmlinuz() {
+        let p = PathBuf::from("/boot/initramfs-6.6.0.img");
+        assert_eq!(extract_version_from_path(&p), None);
+    }
+
+    #[test]
+    fn test_extract_version_empty_path() {
+        let p = PathBuf::from("");
+        assert_eq!(extract_version_from_path(&p), None);
+    }
+
+    #[test]
+    fn test_extract_version_vmlinuz_no_dash() {
+        // "vmlinuz" alone, no dash-version suffix
+        let p = PathBuf::from("/boot/vmlinuz");
+        assert_eq!(extract_version_from_path(&p), None);
+    }
+
+    // -- BootEntry construction tests --
+
+    #[test]
+    fn test_boot_entry_without_initrd() {
+        let entry = BootEntry {
+            id: "test".to_string(),
+            title: "Test Entry".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz-test"),
+            initrd: None,
+            options: "quiet".to_string(),
+            is_default: false,
+            version: None,
+        };
+        assert!(entry.initrd.is_none());
+        assert!(!entry.is_default);
+        assert!(entry.version.is_none());
+    }
+
+    #[test]
+    fn test_boot_entry_with_all_fields() {
+        let entry = BootEntry {
+            id: "full-entry".to_string(),
+            title: "Full Test".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz-6.6.0"),
+            initrd: Some(PathBuf::from("/boot/initramfs-6.6.0.img")),
+            options: "root=UUID=abc quiet splash".to_string(),
+            is_default: true,
+            version: Some("6.6.0".to_string()),
+        };
+        assert_eq!(entry.id, "full-entry");
+        assert!(entry.is_default);
+        assert_eq!(entry.version, Some("6.6.0".to_string()));
+        assert_eq!(
+            entry.initrd,
+            Some(PathBuf::from("/boot/initramfs-6.6.0.img"))
+        );
+    }
+
+    // -- BootConfig construction --
+
+    #[test]
+    fn test_boot_config_empty_entries() {
+        let config = BootConfig {
+            bootloader: Bootloader::Unknown,
+            timeout_secs: 0,
+            default_entry: None,
+            entries: vec![],
+        };
+        assert_eq!(config.bootloader, Bootloader::Unknown);
+        assert_eq!(config.timeout_secs, 0);
+        assert!(config.default_entry.is_none());
+        assert!(config.entries.is_empty());
+    }
+
+    #[test]
+    fn test_boot_config_multiple_entries() {
+        let entries = vec![
+            BootEntry {
+                id: "0".to_string(),
+                title: "Entry 0".to_string(),
+                linux: PathBuf::from("/boot/vmlinuz-6.6.0"),
+                initrd: None,
+                options: "quiet".to_string(),
+                is_default: true,
+                version: Some("6.6.0".to_string()),
+            },
+            BootEntry {
+                id: "1".to_string(),
+                title: "Entry 1".to_string(),
+                linux: PathBuf::from("/boot/vmlinuz-6.5.0"),
+                initrd: Some(PathBuf::from("/boot/initramfs-6.5.0.img")),
+                options: "quiet splash".to_string(),
+                is_default: false,
+                version: Some("6.5.0".to_string()),
+            },
+        ];
+        let config = BootConfig {
+            bootloader: Bootloader::Grub2,
+            timeout_secs: 10,
+            default_entry: Some("0".to_string()),
+            entries,
+        };
+        assert_eq!(config.entries.len(), 2);
+        assert!(config.entries[0].is_default);
+        assert!(!config.entries[1].is_default);
+    }
+
+    // -- Bootloader serde coverage for all variants --
+
+    #[test]
+    fn test_bootloader_serde_all_variants() {
+        for b in &[
+            Bootloader::SystemdBoot,
+            Bootloader::Grub2,
+            Bootloader::Unknown,
+        ] {
+            let json = serde_json::to_string(b).unwrap();
+            let b2: Bootloader = serde_json::from_str(&json).unwrap();
+            assert_eq!(*b, b2);
+        }
+    }
+
+    // -- Timeout boundary tests --
+
+    #[test]
+    fn test_set_timeout_zero() {
+        let result = set_timeout(0);
+        // Should pass validation (0 is valid), may fail later for other reasons
+        if let Err(e) = result {
+            assert!(
+                !e.to_string().contains("exceeds"),
+                "0 should be accepted: {}",
+                e
+            );
+        }
+    }
+
+    #[test]
+    fn test_set_timeout_rejects_u32_max() {
+        let result = set_timeout(u32::MAX);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("300"));
+    }
+
+    // -- parse_loader_conf tests (via tempfile) --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "timeout 10\ndefault agnos-6.6.0.conf\n").unwrap();
+
+        let (timeout, default_id) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(timeout, 10);
+        assert_eq!(default_id, Some("agnos-6.6.0".to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_comments_and_blanks() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(
+            &conf_path,
+            "# This is a comment\n\ntimeout 3\n# another comment\ndefault myentry.conf\n",
+        )
+        .unwrap();
+
+        let (timeout, default_id) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(timeout, 3);
+        assert_eq!(default_id, Some("myentry".to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_no_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "timeout 7\n").unwrap();
+
+        let (timeout, default_id) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(timeout, 7);
+        assert_eq!(default_id, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_no_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "default myentry.conf\n").unwrap();
+
+        let (timeout, default_id) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(timeout, 5); // default value
+        assert_eq!(default_id, Some("myentry".to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "").unwrap();
+
+        let (timeout, default_id) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(timeout, 5); // default
+        assert_eq!(default_id, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_invalid_timeout_uses_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "timeout not-a-number\n").unwrap();
+
+        let (timeout, _) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(timeout, 5); // falls back to default
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_missing_file() {
+        let result = parse_loader_conf(Path::new("/nonexistent/path/loader.conf"));
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_default_without_conf_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "default myentry\n").unwrap();
+
+        let (_, default_id) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(default_id, Some("myentry".to_string()));
+    }
+
+    // -- parse_systemd_boot_entry tests --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entry_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry_path = dir.path().join("agnos-6.6.0.conf");
+        std::fs::write(
+            &entry_path,
+            "title AGNOS 6.6.0\nlinux /boot/vmlinuz-6.6.0\ninitrd /boot/initramfs-6.6.0.img\noptions root=UUID=abc quiet\nversion 6.6.0\n",
+        )
+        .unwrap();
+
+        let entry = parse_systemd_boot_entry(&entry_path, Some("agnos-6.6.0")).unwrap();
+        assert_eq!(entry.id, "agnos-6.6.0");
+        assert_eq!(entry.title, "AGNOS 6.6.0");
+        assert_eq!(entry.linux, PathBuf::from("/boot/vmlinuz-6.6.0"));
+        assert_eq!(
+            entry.initrd,
+            Some(PathBuf::from("/boot/initramfs-6.6.0.img"))
+        );
+        assert_eq!(entry.options, "root=UUID=abc quiet");
+        assert!(entry.is_default);
+        assert_eq!(entry.version, Some("6.6.0".to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entry_minimal() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry_path = dir.path().join("minimal.conf");
+        std::fs::write(&entry_path, "title Minimal\nlinux /boot/vmlinuz\n").unwrap();
+
+        let entry = parse_systemd_boot_entry(&entry_path, None).unwrap();
+        assert_eq!(entry.id, "minimal");
+        assert_eq!(entry.title, "Minimal");
+        assert_eq!(entry.linux, PathBuf::from("/boot/vmlinuz"));
+        assert!(entry.initrd.is_none());
+        assert_eq!(entry.options, "");
+        assert!(!entry.is_default);
+        assert!(entry.version.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entry_not_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry_path = dir.path().join("other.conf");
+        std::fs::write(&entry_path, "title Other\nlinux /boot/vmlinuz-other\n").unwrap();
+
+        let entry = parse_systemd_boot_entry(&entry_path, Some("not-this-one")).unwrap();
+        assert!(!entry.is_default);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entry_with_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry_path = dir.path().join("commented.conf");
+        std::fs::write(
+            &entry_path,
+            "# This is a comment\ntitle Commented Entry\n\n# another comment\nlinux /boot/vmlinuz-6.6.0\noptions quiet\n",
+        )
+        .unwrap();
+
+        let entry = parse_systemd_boot_entry(&entry_path, None).unwrap();
+        assert_eq!(entry.title, "Commented Entry");
+        assert_eq!(entry.linux, PathBuf::from("/boot/vmlinuz-6.6.0"));
+        assert_eq!(entry.options, "quiet");
+    }
+
+    // -- parse_systemd_boot_entries tests --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entries_multiple() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("entry-a.conf"),
+            "title Entry A\nlinux /boot/vmlinuz-a\noptions quiet\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("entry-b.conf"),
+            "title Entry B\nlinux /boot/vmlinuz-b\noptions splash\n",
+        )
+        .unwrap();
+        // Non-conf file should be skipped
+        std::fs::write(dir.path().join("README.txt"), "not a config").unwrap();
+
+        let entries = parse_systemd_boot_entries(dir.path(), Some("entry-b")).unwrap();
+        assert_eq!(entries.len(), 2);
+        // Sorted by ID
+        assert_eq!(entries[0].id, "entry-a");
+        assert_eq!(entries[1].id, "entry-b");
+        assert!(!entries[0].is_default);
+        assert!(entries[1].is_default);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entries_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let entries = parse_systemd_boot_entries(dir.path(), None).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entries_nonexistent_dir() {
+        let result = parse_systemd_boot_entries(Path::new("/nonexistent/entries/dir"), None);
+        assert!(result.is_err());
+    }
+
+    // -- parse_grub_cfg tests --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            r#"set default="0"
+set timeout=5
+menuentry 'AGNOS 6.6.0' --class agnos {
+    linux /boot/vmlinuz-6.6.0 root=UUID=abc quiet
+    initrd /boot/initramfs-6.6.0.img
+}
+menuentry 'AGNOS 6.5.0' --class agnos {
+    linux /boot/vmlinuz-6.5.0 root=UUID=def
+    initrd /boot/initramfs-6.5.0.img
+}
+"#,
+        )
+        .unwrap();
+
+        let (entries, default_id) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(default_id, Some("0".to_string()));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, "0");
+        assert_eq!(entries[0].title, "AGNOS 6.6.0");
+        assert_eq!(entries[0].linux, PathBuf::from("/boot/vmlinuz-6.6.0"));
+        assert_eq!(entries[0].options, "root=UUID=abc quiet");
+        assert_eq!(
+            entries[0].initrd,
+            Some(PathBuf::from("/boot/initramfs-6.6.0.img"))
+        );
+        assert!(entries[0].is_default);
+        assert_eq!(entries[0].version, Some("6.6.0".to_string()));
+
+        assert_eq!(entries[1].id, "1");
+        assert_eq!(entries[1].title, "AGNOS 6.5.0");
+        assert!(!entries[1].is_default);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_default_by_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            r#"set default="AGNOS 6.5.0"
+menuentry 'AGNOS 6.6.0' {
+    linux /boot/vmlinuz-6.6.0 quiet
+}
+menuentry 'AGNOS 6.5.0' {
+    linux /boot/vmlinuz-6.5.0 quiet
+}
+"#,
+        )
+        .unwrap();
+
+        let (entries, _) = parse_grub_cfg(&grub_path).unwrap();
+        assert!(!entries[0].is_default);
+        assert!(entries[1].is_default);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_no_set_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            r#"menuentry 'Entry A' {
+    linux /boot/vmlinuz-a quiet
+}
+menuentry 'Entry B' {
+    linux /boot/vmlinuz-b quiet
+}
+"#,
+        )
+        .unwrap();
+
+        let (entries, default_id) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(default_id, None);
+        // Without a default directive, entry_index == 0 is treated as default
+        assert!(entries[0].is_default);
+        assert!(!entries[1].is_default);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(&grub_path, "# empty grub config\n").unwrap();
+
+        let (entries, default_id) = parse_grub_cfg(&grub_path).unwrap();
+        assert!(entries.is_empty());
+        assert!(default_id.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_linux16() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            r#"menuentry 'Legacy Boot' {
+    linux16 /boot/vmlinuz-legacy root=UUID=abc
+    initrd16 /boot/initramfs-legacy.img
+}
+"#,
+        )
+        .unwrap();
+
+        let (entries, _) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].linux, PathBuf::from("/boot/vmlinuz-legacy"));
+        assert_eq!(entries[0].options, "root=UUID=abc");
+        assert_eq!(
+            entries[0].initrd,
+            Some(PathBuf::from("/boot/initramfs-legacy.img"))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_double_quoted_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            "menuentry \"Double Quoted\" {\n    linux /boot/vmlinuz quiet\n}\n",
+        )
+        .unwrap();
+
+        let (entries, _) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Double Quoted");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_no_initrd() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            "menuentry 'No Initrd' {\n    linux /boot/vmlinuz quiet\n}\n",
+        )
+        .unwrap();
+
+        let (entries, _) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].initrd.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_nonexistent_file() {
+        let result = parse_grub_cfg(Path::new("/nonexistent/grub.cfg"));
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_linux_no_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            "menuentry 'Bare' {\n    linux /boot/vmlinuz\n}\n",
+        )
+        .unwrap();
+
+        let (entries, _) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].linux, PathBuf::from("/boot/vmlinuz"));
+        assert_eq!(entries[0].options, "");
+    }
+
+    // -- read_systemd_boot_config integration test via tempdir --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_systemd_boot_entry_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry_path = dir.path().join("empty.conf");
+        std::fs::write(&entry_path, "").unwrap();
+
+        let entry = parse_systemd_boot_entry(&entry_path, None).unwrap();
+        assert_eq!(entry.id, "empty");
+        assert_eq!(entry.title, "");
+        assert_eq!(entry.linux, PathBuf::new());
+        assert!(entry.initrd.is_none());
+        assert_eq!(entry.options, "");
+        assert!(!entry.is_default);
+        assert!(entry.version.is_none());
+    }
+
+    // -- Bootloader Debug formatting --
+
+    #[test]
+    fn test_bootloader_debug() {
+        let b = Bootloader::SystemdBoot;
+        let debug = format!("{:?}", b);
+        assert!(debug.contains("SystemdBoot"));
+    }
+
+    // -- BootEntry equality --
+
+    #[test]
+    fn test_boot_entry_equality() {
+        let entry1 = BootEntry {
+            id: "test".to_string(),
+            title: "Test".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz"),
+            initrd: None,
+            options: "quiet".to_string(),
+            is_default: false,
+            version: None,
+        };
+        let entry2 = entry1.clone();
+        assert_eq!(entry1, entry2);
+    }
+
+    #[test]
+    fn test_boot_entry_inequality() {
+        let entry1 = BootEntry {
+            id: "test1".to_string(),
+            title: "Test".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz"),
+            initrd: None,
+            options: "quiet".to_string(),
+            is_default: false,
+            version: None,
+        };
+        let entry2 = BootEntry {
+            id: "test2".to_string(),
+            title: "Test".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz"),
+            initrd: None,
+            options: "quiet".to_string(),
+            is_default: false,
+            version: None,
+        };
+        assert_ne!(entry1, entry2);
+    }
+
+    // -- set_default_entry validation --
+
+    #[test]
+    fn test_set_default_entry_rejects_empty_id() {
+        let result = set_default_entry("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_set_default_entry_rejects_invalid_chars() {
+        let result = set_default_entry("bad entry!");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid characters")
+        );
+    }
+
+    // -- set_kernel_cmdline validation --
+
+    #[test]
+    fn test_set_kernel_cmdline_rejects_empty_entry_id() {
+        let result = set_kernel_cmdline("", "quiet");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_set_kernel_cmdline_rejects_dangerous_options() {
+        let result = set_kernel_cmdline("valid-entry", "init=/bin/sh");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("dangerous"));
+    }
+
+    #[test]
+    fn test_set_kernel_cmdline_rejects_both_bad_id_and_options() {
+        // ID is checked first
+        let result = set_kernel_cmdline("", "init=/bin/sh");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
 }

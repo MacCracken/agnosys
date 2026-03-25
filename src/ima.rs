@@ -826,4 +826,513 @@ mod tests {
         let cloned = rule.clone();
         assert_eq!(rule, cloned);
     }
+
+    // --- Additional ImaAction tests ---
+
+    #[test]
+    fn test_ima_action_display_all_variants() {
+        assert_eq!(format!("{}", ImaAction::Audit), "audit");
+        assert_eq!(format!("{}", ImaAction::Hash), "hash");
+        assert_eq!(format!("{}", ImaAction::DontMeasure), "dont_measure");
+        assert_eq!(format!("{}", ImaAction::DontAppraise), "dont_appraise");
+    }
+
+    #[test]
+    fn test_ima_action_debug() {
+        assert_eq!(format!("{:?}", ImaAction::Measure), "Measure");
+        assert_eq!(format!("{:?}", ImaAction::DontMeasure), "DontMeasure");
+    }
+
+    #[test]
+    fn test_ima_action_clone_copy_eq() {
+        let a = ImaAction::Measure;
+        let b = a;
+        let c = a;
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn test_ima_action_ne() {
+        assert_ne!(ImaAction::Measure, ImaAction::Appraise);
+        assert_ne!(ImaAction::Audit, ImaAction::Hash);
+        assert_ne!(ImaAction::DontMeasure, ImaAction::DontAppraise);
+    }
+
+    // --- Additional ImaTarget tests ---
+
+    #[test]
+    fn test_ima_target_display_all_variants() {
+        assert_eq!(format!("{}", ImaTarget::FileCheck), "FILE_CHECK");
+        assert_eq!(format!("{}", ImaTarget::MmapCheck), "MMAP_CHECK");
+        assert_eq!(format!("{}", ImaTarget::ModuleCheck), "MODULE_CHECK");
+        assert_eq!(format!("{}", ImaTarget::FirmwareCheck), "FIRMWARE_CHECK");
+        assert_eq!(format!("{}", ImaTarget::PolicyCheck), "POLICY_CHECK");
+    }
+
+    #[test]
+    fn test_ima_target_debug() {
+        assert_eq!(format!("{:?}", ImaTarget::BprmCheck), "BprmCheck");
+        assert_eq!(format!("{:?}", ImaTarget::FirmwareCheck), "FirmwareCheck");
+    }
+
+    #[test]
+    fn test_ima_target_clone_copy_eq() {
+        let a = ImaTarget::BprmCheck;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_ima_target_ne() {
+        assert_ne!(ImaTarget::FileCheck, ImaTarget::BprmCheck);
+        assert_ne!(ImaTarget::ModuleCheck, ImaTarget::FirmwareCheck);
+    }
+
+    // --- Additional ImaPolicyRule tests ---
+
+    #[test]
+    fn test_rule_ne() {
+        let a = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck);
+        let b = ImaPolicyRule::new(ImaAction::Appraise, ImaTarget::BprmCheck);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_rule_ne_different_target() {
+        let a = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck);
+        let b = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::FileCheck);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_rule_debug() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck)
+            .with_uid(0)
+            .with_mask("MAY_EXEC");
+        let dbg = format!("{:?}", rule);
+        assert!(dbg.contains("ImaPolicyRule"));
+        assert!(dbg.contains("Measure"));
+        assert!(dbg.contains("BprmCheck"));
+    }
+
+    #[test]
+    fn test_rule_with_obj_type_in_policy_line() {
+        let rule = ImaPolicyRule::new(ImaAction::Appraise, ImaTarget::FileCheck)
+            .with_obj_type("system_u:object_r:bin_t:s0");
+        let line = rule.to_policy_line().unwrap();
+        assert!(line.contains("obj_type=system_u:object_r:bin_t:s0"));
+    }
+
+    #[test]
+    fn test_rule_to_policy_line_all_actions() {
+        for (action, expected) in [
+            (ImaAction::Measure, "measure"),
+            (ImaAction::Appraise, "appraise"),
+            (ImaAction::Audit, "audit"),
+            (ImaAction::Hash, "hash"),
+            (ImaAction::DontMeasure, "dont_measure"),
+            (ImaAction::DontAppraise, "dont_appraise"),
+        ] {
+            let rule = ImaPolicyRule::new(action, ImaTarget::BprmCheck);
+            let line = rule.to_policy_line().unwrap();
+            assert!(
+                line.starts_with(expected),
+                "action {:?} should produce line starting with '{}'",
+                action,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_rule_to_policy_line_all_targets() {
+        for (target, expected) in [
+            (ImaTarget::FileCheck, "FILE_CHECK"),
+            (ImaTarget::BprmCheck, "BPRM_CHECK"),
+            (ImaTarget::MmapCheck, "MMAP_CHECK"),
+            (ImaTarget::ModuleCheck, "MODULE_CHECK"),
+            (ImaTarget::FirmwareCheck, "FIRMWARE_CHECK"),
+            (ImaTarget::PolicyCheck, "POLICY_CHECK"),
+        ] {
+            let rule = ImaPolicyRule::new(ImaAction::Measure, target);
+            let line = rule.to_policy_line().unwrap();
+            assert!(
+                line.contains(&format!("func={}", expected)),
+                "target {:?} should produce func={}",
+                target,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_rule_to_policy_line_uid_zero() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck).with_uid(0);
+        let line = rule.to_policy_line().unwrap();
+        assert!(line.contains("uid=0"));
+    }
+
+    #[test]
+    fn test_rule_to_policy_line_uid_large() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck).with_uid(u32::MAX);
+        let line = rule.to_policy_line().unwrap();
+        assert!(line.contains(&format!("uid={}", u32::MAX)));
+    }
+
+    #[test]
+    fn test_rule_to_policy_line_fowner_zero() {
+        let rule = ImaPolicyRule::new(ImaAction::Appraise, ImaTarget::FileCheck).with_fowner(0);
+        let line = rule.to_policy_line().unwrap();
+        assert!(line.contains("fowner=0"));
+    }
+
+    #[test]
+    fn test_rule_validate_valid_fsuuid() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck)
+            .with_fsuuid("abcdef01234567890abcdef012345678");
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rule_validate_fsuuid_with_uppercase() {
+        // Uppercase hex should be valid
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck)
+            .with_fsuuid("ABCDEF01234567890ABCDEF012345678");
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rule_validate_fsuuid_31_chars_too_short() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck)
+            .with_fsuuid("abcdef0123456789abcdef012345678"); // 31 chars
+        let err = rule.validate().unwrap_err();
+        assert!(err.to_string().contains("32 hex"));
+    }
+
+    #[test]
+    fn test_rule_validate_fsuuid_33_chars_too_long() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck)
+            .with_fsuuid("abcdef0123456789abcdef0123456789a"); // 33 chars
+        let err = rule.validate().unwrap_err();
+        assert!(err.to_string().contains("32 hex"));
+    }
+
+    #[test]
+    fn test_rule_validate_fsuuid_with_dashes_rejected() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck)
+            .with_fsuuid("abcdef01-2345-6789-abcd-ef0123456789");
+        let err = rule.validate().unwrap_err();
+        assert!(err.to_string().contains("non-hex"));
+    }
+
+    #[test]
+    fn test_rule_validate_no_filters_is_valid() {
+        let rule = ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck);
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rule_serde_roundtrip() {
+        let rule = ImaPolicyRule::new(ImaAction::Appraise, ImaTarget::FileCheck)
+            .with_uid(0)
+            .with_fowner(1000)
+            .with_fsuuid("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4")
+            .with_obj_type("unconfined_t")
+            .with_mask("MAY_EXEC");
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: ImaPolicyRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule, back);
+    }
+
+    #[test]
+    fn test_rule_to_policy_line_with_invalid_fsuuid_fails() {
+        let rule =
+            ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck).with_fsuuid("short");
+        assert!(rule.to_policy_line().is_err());
+    }
+
+    #[test]
+    fn test_rule_to_policy_line_with_invalid_mask_fails() {
+        let rule =
+            ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck).with_mask("INVALID_MASK");
+        assert!(rule.to_policy_line().is_err());
+    }
+
+    // --- Additional ImaPolicy tests ---
+
+    #[test]
+    fn test_policy_single_rule() {
+        let policy =
+            ImaPolicy::new().add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck));
+        assert_eq!(policy.rules.len(), 1);
+        assert!(policy.validate().is_ok());
+    }
+
+    #[test]
+    fn test_policy_to_policy_string_empty_fails() {
+        let policy = ImaPolicy::new();
+        assert!(policy.to_policy_string().is_err());
+    }
+
+    #[test]
+    fn test_policy_to_policy_string_with_invalid_rule_fails() {
+        let policy = ImaPolicy::new().add_rule(
+            ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck).with_mask("BAD"),
+        );
+        assert!(policy.to_policy_string().is_err());
+    }
+
+    #[test]
+    fn test_policy_multiple_rules_rendered_newline_separated() {
+        let policy = ImaPolicy::new()
+            .add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck))
+            .add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::MmapCheck))
+            .add_rule(ImaPolicyRule::new(
+                ImaAction::Appraise,
+                ImaTarget::ModuleCheck,
+            ));
+        let rendered = policy.to_policy_string().unwrap();
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "measure func=BPRM_CHECK");
+        assert_eq!(lines[1], "measure func=MMAP_CHECK");
+        assert_eq!(lines[2], "appraise func=MODULE_CHECK");
+    }
+
+    #[test]
+    fn test_policy_validate_error_includes_rule_index() {
+        let policy = ImaPolicy::new()
+            .add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck))
+            .add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck))
+            .add_rule(
+                ImaPolicyRule::new(ImaAction::Audit, ImaTarget::FileCheck).with_fsuuid("not-hex!"),
+            );
+        let err = policy.validate().unwrap_err();
+        assert!(err.to_string().contains("Rule 2"));
+    }
+
+    #[test]
+    fn test_policy_clone_eq() {
+        let policy =
+            ImaPolicy::new().add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck));
+        let cloned = policy.clone();
+        assert_eq!(policy, cloned);
+    }
+
+    #[test]
+    fn test_policy_debug() {
+        let policy =
+            ImaPolicy::new().add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck));
+        let dbg = format!("{:?}", policy);
+        assert!(dbg.contains("ImaPolicy"));
+    }
+
+    #[test]
+    fn test_policy_default_eq_new() {
+        assert_eq!(ImaPolicy::default(), ImaPolicy::new());
+    }
+
+    // --- Additional measurement parsing tests ---
+
+    #[test]
+    fn test_parse_measurements_pcr_zero() {
+        let input = "0 abc123 ima-ng sha256:dead /boot/vmlinuz";
+        let ms = parse_ima_measurements(input).unwrap();
+        assert_eq!(ms[0].pcr, 0);
+    }
+
+    #[test]
+    fn test_parse_measurements_large_pcr() {
+        let input = "4294967295 abc123 ima-ng sha256:dead /file";
+        let ms = parse_ima_measurements(input).unwrap();
+        assert_eq!(ms[0].pcr, u32::MAX);
+    }
+
+    #[test]
+    fn test_parse_measurements_negative_pcr_fails() {
+        let input = "-1 abc123 ima-ng sha256:dead /file";
+        let err = parse_ima_measurements(input).unwrap_err();
+        assert!(err.to_string().contains("PCR"));
+    }
+
+    #[test]
+    fn test_parse_measurements_ima_sig_template() {
+        let input =
+            "10 abc123def456abc123def456abc123def456abc1 ima-sig sha256:dead /usr/sbin/init";
+        let ms = parse_ima_measurements(input).unwrap();
+        assert_eq!(ms[0].template_name, "ima-sig");
+    }
+
+    #[test]
+    fn test_parse_measurements_preserves_filedata_hash_prefix() {
+        let input =
+            "10 abc123def456abc123def456abc123def456abc1 ima-ng sha512:aabbccdd /usr/bin/test";
+        let ms = parse_ima_measurements(input).unwrap();
+        assert_eq!(ms[0].filedata_hash, "sha512:aabbccdd");
+    }
+
+    #[test]
+    fn test_parse_measurements_mixed_blank_and_valid_lines() {
+        let input =
+            "\n10 abc123 ima-ng sha256:dead /file1\n\n  \n10 def456 ima-ng sha256:beef /file2\n";
+        let ms = parse_ima_measurements(input).unwrap();
+        assert_eq!(ms.len(), 2);
+        assert_eq!(ms[0].filename, "/file1");
+        assert_eq!(ms[1].filename, "/file2");
+    }
+
+    #[test]
+    fn test_parse_measurements_single_field_line_fails() {
+        let input = "10";
+        let err = parse_ima_measurements(input).unwrap_err();
+        assert!(err.to_string().contains("fields"));
+    }
+
+    #[test]
+    fn test_parse_measurements_two_fields_fails() {
+        let input = "10 abc123";
+        let err = parse_ima_measurements(input).unwrap_err();
+        assert!(err.to_string().contains("fields"));
+    }
+
+    #[test]
+    fn test_parse_measurements_three_fields_fails() {
+        let input = "10 abc123 ima-ng";
+        let err = parse_ima_measurements(input).unwrap_err();
+        assert!(err.to_string().contains("fields"));
+    }
+
+    #[test]
+    fn test_parse_measurements_four_fields_fails() {
+        let input = "10 abc123 ima-ng sha256:dead";
+        let err = parse_ima_measurements(input).unwrap_err();
+        assert!(err.to_string().contains("fields"));
+    }
+
+    #[test]
+    fn test_parse_measurements_error_includes_line_number() {
+        let input = "10 abc123 ima-ng sha256:dead /file\nBAD LINE";
+        let err = parse_ima_measurements(input).unwrap_err();
+        assert!(err.to_string().contains("line 2"));
+    }
+
+    #[test]
+    fn test_parse_measurements_filename_with_multiple_spaces() {
+        let input = "10 abc123 ima-ng sha256:dead /path/to/my file with many spaces.txt";
+        let ms = parse_ima_measurements(input).unwrap();
+        assert_eq!(ms[0].filename, "/path/to/my file with many spaces.txt");
+    }
+
+    // --- Additional ImaMeasurement tests ---
+
+    #[test]
+    fn test_ima_measurement_clone_eq() {
+        let m = ImaMeasurement {
+            pcr: 10,
+            template_hash: "abc".to_string(),
+            template_name: "ima-ng".to_string(),
+            filedata_hash: "sha256:dead".to_string(),
+            filename: "/bin/test".to_string(),
+        };
+        let cloned = m.clone();
+        assert_eq!(m, cloned);
+    }
+
+    #[test]
+    fn test_ima_measurement_ne() {
+        let a = ImaMeasurement {
+            pcr: 10,
+            template_hash: "abc".to_string(),
+            template_name: "ima-ng".to_string(),
+            filedata_hash: "sha256:dead".to_string(),
+            filename: "/bin/a".to_string(),
+        };
+        let b = ImaMeasurement {
+            pcr: 10,
+            template_hash: "def".to_string(),
+            template_name: "ima-ng".to_string(),
+            filedata_hash: "sha256:beef".to_string(),
+            filename: "/bin/b".to_string(),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_ima_measurement_debug() {
+        let m = ImaMeasurement {
+            pcr: 10,
+            template_hash: "abc".to_string(),
+            template_name: "ima-ng".to_string(),
+            filedata_hash: "sha256:dead".to_string(),
+            filename: "/bin/test".to_string(),
+        };
+        let dbg = format!("{:?}", m);
+        assert!(dbg.contains("ImaMeasurement"));
+        assert!(dbg.contains("/bin/test"));
+    }
+
+    // --- Additional ImaStatus tests ---
+
+    #[test]
+    fn test_ima_status_clone_eq() {
+        let s = ImaStatus {
+            active: true,
+            measurement_count: 100,
+            policy_loaded: true,
+        };
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn test_ima_status_ne() {
+        let a = ImaStatus {
+            active: true,
+            measurement_count: 100,
+            policy_loaded: true,
+        };
+        let b = ImaStatus {
+            active: false,
+            measurement_count: 0,
+            policy_loaded: false,
+        };
+        assert_ne!(a, b);
+    }
+
+    // --- get_ima_status (safe to call) ---
+
+    #[test]
+    fn test_get_ima_status_no_crash() {
+        let _ = get_ima_status();
+    }
+
+    // --- read_ima_ascii_runtime_measurements with nonexistent file ---
+
+    #[test]
+    fn test_read_ima_measurements_nonexistent_file() {
+        let result = read_ima_ascii_runtime_measurements(Path::new("/nonexistent/path"));
+        assert!(result.is_err());
+    }
+
+    // --- Policy ordering tests ---
+
+    #[test]
+    fn test_policy_rule_order_preserved() {
+        let policy = ImaPolicy::new()
+            .add_rule(ImaPolicyRule::new(
+                ImaAction::DontMeasure,
+                ImaTarget::FileCheck,
+            ))
+            .add_rule(ImaPolicyRule::new(ImaAction::Measure, ImaTarget::BprmCheck))
+            .add_rule(ImaPolicyRule::new(
+                ImaAction::Appraise,
+                ImaTarget::ModuleCheck,
+            ));
+        let rendered = policy.to_policy_string().unwrap();
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert!(lines[0].starts_with("dont_measure"));
+        assert!(lines[1].starts_with("measure"));
+        assert!(lines[2].starts_with("appraise"));
+    }
 }

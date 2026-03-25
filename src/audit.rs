@@ -1759,4 +1759,350 @@ mod tests {
         // Should get NotSupported (ENOSYS) on a non-AGNOS kernel
         assert!(result.is_err());
     }
+
+    // --- Audit coverage additions ---
+
+    // -- AuditRule construction and validation --
+
+    #[test]
+    fn test_audit_rule_file_watch_validates_all_good_paths() {
+        // Various valid absolute paths
+        for path in &["/etc/passwd", "/var/log/auth.log", "/tmp/test", "/a"] {
+            let rule = AuditRule::file_watch(*path, "key");
+            assert!(rule.validate().is_ok(), "Should accept: {}", path);
+        }
+    }
+
+    #[test]
+    fn test_audit_rule_validate_file_watch_with_syscall_set() {
+        // Even if syscall is set, FileWatch requires path
+        let rule = AuditRule {
+            rule_type: AuditRuleType::FileWatch,
+            path: Some("/etc/shadow".to_string()),
+            syscall: Some(42), // irrelevant for FileWatch
+            key: "test".to_string(),
+        };
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_audit_rule_validate_syscall_watch_with_path_set() {
+        // Path is irrelevant for SyscallWatch; only syscall matters
+        let rule = AuditRule {
+            rule_type: AuditRuleType::SyscallWatch,
+            path: Some("/irrelevant".to_string()),
+            syscall: Some(59),
+            key: "test".to_string(),
+        };
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_audit_rule_validate_key_boundary_255() {
+        let rule = AuditRule::file_watch("/etc/passwd", "x".repeat(255));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_audit_rule_validate_key_boundary_256() {
+        let rule = AuditRule::file_watch("/etc/passwd", "x".repeat(256));
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_audit_rule_validate_key_boundary_257() {
+        let rule = AuditRule::file_watch("/etc/passwd", "x".repeat(257));
+        assert!(rule.validate().is_err());
+    }
+
+    #[test]
+    fn test_audit_rule_validate_file_watch_just_slash() {
+        let rule = AuditRule::file_watch("/", "root_watch");
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_audit_rule_validate_syscall_max_u32() {
+        let rule = AuditRule::syscall_watch(u32::MAX, "max_syscall");
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_audit_rule_validate_file_watch_path_with_spaces() {
+        let rule = AuditRule::file_watch("/path/with spaces/file", "space_key");
+        assert!(rule.validate().is_ok());
+    }
+
+    // -- AuditConfig --
+
+    #[test]
+    fn test_audit_config_both_enabled() {
+        let config = AuditConfig {
+            use_netlink: true,
+            use_agnos_proc: true,
+            proc_path: "/proc/agnos/audit".to_string(),
+        };
+        assert!(config.use_netlink);
+        assert!(config.use_agnos_proc);
+    }
+
+    #[test]
+    fn test_audit_config_neither_enabled() {
+        let config = AuditConfig {
+            use_netlink: false,
+            use_agnos_proc: false,
+            proc_path: String::new(),
+        };
+        assert!(!config.use_netlink);
+        assert!(!config.use_agnos_proc);
+    }
+
+    // -- AuditStatus --
+
+    #[test]
+    fn test_audit_status_default_failure_action() {
+        let status = AuditStatus::default();
+        // Default failure action is 1 (printk)
+        assert_eq!(status.failure_action, 1);
+    }
+
+    #[test]
+    fn test_audit_status_zero_all() {
+        let status = AuditStatus {
+            enabled: 0,
+            failure_action: 0,
+            pid: 0,
+            backlog_limit: 0,
+            lost: 0,
+            backlog: 0,
+        };
+        assert_eq!(status.enabled, 0);
+        assert_eq!(status.failure_action, 0);
+        assert_eq!(status.backlog_limit, 0);
+    }
+
+    #[test]
+    fn test_audit_status_max_values() {
+        let status = AuditStatus {
+            enabled: u32::MAX,
+            failure_action: u32::MAX,
+            pid: u32::MAX,
+            backlog_limit: u32::MAX,
+            lost: u32::MAX,
+            backlog: u32::MAX,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: AuditStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.enabled, u32::MAX);
+        assert_eq!(back.lost, u32::MAX);
+    }
+
+    // -- RawAuditEntry --
+
+    #[test]
+    fn test_raw_audit_entry_empty_fields() {
+        let entry = RawAuditEntry {
+            sequence: 0,
+            timestamp_ns: 0,
+            action_type: String::new(),
+            result: 0,
+            hash: String::new(),
+            prev_hash: String::new(),
+            payload: String::new(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: RawAuditEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.action_type, "");
+        assert_eq!(back.payload, "");
+    }
+
+    #[test]
+    fn test_raw_audit_entry_large_sequence() {
+        let entry = RawAuditEntry {
+            sequence: u64::MAX,
+            timestamp_ns: u64::MAX,
+            action_type: "test".to_string(),
+            result: i32::MIN,
+            hash: "h".to_string(),
+            prev_hash: "p".to_string(),
+            payload: "d".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: RawAuditEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sequence, u64::MAX);
+        assert_eq!(back.timestamp_ns, u64::MAX);
+        assert_eq!(back.result, i32::MIN);
+    }
+
+    #[test]
+    fn test_raw_audit_entry_with_special_chars_in_payload() {
+        let entry = RawAuditEntry {
+            sequence: 1,
+            timestamp_ns: 1,
+            action_type: "test".to_string(),
+            result: 0,
+            hash: "h".to_string(),
+            prev_hash: "p".to_string(),
+            payload: "key=\"value with spaces\" and=special&chars".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: RawAuditEntry = serde_json::from_str(&json).unwrap();
+        assert!(back.payload.contains("special&chars"));
+    }
+
+    // -- read_agnos_audit_events edge cases --
+
+    #[test]
+    fn test_read_agnos_audit_events_only_malformed() {
+        let dir = std::env::temp_dir().join("agnos_audit_test_all_bad");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("all_bad.json");
+        std::fs::write(&path, "not json\nalso not json\n{broken}\n").unwrap();
+
+        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        assert!(entries.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_agnos_audit_events_whitespace_only_lines() {
+        let dir = std::env::temp_dir().join("agnos_audit_test_ws");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("ws.json");
+
+        let entry = RawAuditEntry {
+            sequence: 5,
+            timestamp_ns: 100,
+            action_type: "ws_test".to_string(),
+            result: 0,
+            hash: "h".to_string(),
+            prev_hash: "".to_string(),
+            payload: "p".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        // Surround with whitespace-only lines
+        std::fs::write(&path, format!("   \n  \n{}\n  \n", json)).unwrap();
+
+        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].sequence, 5);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -- close_audit --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_close_audit_valid_fd() {
+        // Create a real fd via dup, then close it through close_audit
+        let fd = unsafe { libc::dup(0) };
+        assert!(fd >= 0);
+        let handle = AuditHandle {
+            fd,
+            _config: AuditConfig::default(),
+        };
+        close_audit(handle); // Should not panic
+    }
+
+    // -- open_audit --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_open_audit_proc_only_no_netlink() {
+        let config = AuditConfig {
+            use_netlink: false,
+            use_agnos_proc: true,
+            proc_path: "/proc/agnos/audit".to_string(),
+        };
+        let handle = open_audit(&config).unwrap();
+        assert_eq!(handle.fd, -1);
+        close_audit(handle);
+    }
+
+    // -- send_audit_event boundary --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_send_audit_event_message_exactly_8192() {
+        let fd = unsafe { libc::dup(0) };
+        assert!(fd >= 0);
+        let handle = AuditHandle {
+            fd,
+            _config: AuditConfig::default(),
+        };
+        let msg = "x".repeat(8192);
+        let result = send_audit_event(&handle, "test", &msg);
+        // Should not fail validation (8192 is the max, not 8191)
+        if let Err(e) = &result {
+            assert!(
+                !e.to_string().contains("too large"),
+                "8192 should be accepted: {}",
+                e
+            );
+        }
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_send_audit_event_message_8193_rejected() {
+        let fd = unsafe { libc::dup(0) };
+        assert!(fd >= 0);
+        let handle = AuditHandle {
+            fd,
+            _config: AuditConfig::default(),
+        };
+        let msg = "x".repeat(8193);
+        let result = send_audit_event(&handle, "test", &msg);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too large"));
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
+    // -- agnos_audit_log_syscall with valid input on non-AGNOS kernel --
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_agnos_audit_log_syscall_valid_but_no_agnos_kernel() {
+        let result = agnos_audit_log_syscall("sandbox_apply", "agent_id=test", 0);
+        // On standard kernel: ENOSYS -> NotSupported
+        assert!(result.is_err());
+        if let Err(e) = result {
+            let msg = e.to_string();
+            // Should not be a validation error
+            assert!(!msg.contains("empty"));
+            assert!(!msg.contains("too long"));
+            assert!(!msg.contains("null byte"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_agnos_audit_log_syscall_negative_result() {
+        let result = agnos_audit_log_syscall("test", "data", -1);
+        // Will fail at syscall level (ENOSYS), not validation
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_agnos_audit_log_syscall_empty_data_ok() {
+        // Empty data is fine, only empty action is rejected
+        let result = agnos_audit_log_syscall("test", "", 0);
+        // Will fail at syscall level (ENOSYS), not validation
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(
+                !e.to_string().contains("empty"),
+                "Empty data should be allowed: {}",
+                e
+            );
+        }
+    }
 }

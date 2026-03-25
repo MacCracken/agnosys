@@ -1677,4 +1677,309 @@ mod tests {
     fn test_luks_key_from_passphrase_rejects_empty() {
         assert!(LuksKey::from_passphrase("").is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage tests — audit round
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_luks_key_from_passphrase_boundary_7_chars() {
+        // Exactly 7 ASCII chars => too short
+        assert!(LuksKey::from_passphrase("1234567").is_err());
+        let err = LuksKey::from_passphrase("1234567").unwrap_err();
+        assert!(err.to_string().contains("minimum 8"));
+    }
+
+    #[test]
+    fn test_luks_key_from_passphrase_boundary_8_chars() {
+        // Exactly 8 ASCII chars => should pass
+        let key = LuksKey::from_passphrase("12345678").unwrap();
+        assert_eq!(key.len(), 8);
+        assert_eq!(key.as_bytes(), b"12345678");
+    }
+
+    #[test]
+    fn test_luks_key_from_passphrase_multibyte_counts_bytes() {
+        // 3 chars but >= 8 bytes due to multibyte UTF-8
+        // Each emoji is 4 bytes, so 2 emojis = 8 bytes
+        let pass = "\u{1F512}\u{1F512}"; // two lock emojis, 8 bytes
+        assert_eq!(pass.len(), 8);
+        let key = LuksKey::from_passphrase(pass).unwrap();
+        assert_eq!(key.len(), 8);
+    }
+
+    #[test]
+    fn test_luks_key_generate_error_msg_zero() {
+        let err = LuksKey::generate(0).unwrap_err();
+        assert!(err.to_string().contains("> 0"));
+    }
+
+    #[test]
+    fn test_luks_key_generate_error_msg_too_large() {
+        let err = LuksKey::generate(1025).unwrap_err();
+        assert!(err.to_string().contains("too large"));
+        assert!(err.to_string().contains("1024"));
+    }
+
+    #[test]
+    fn test_luks_config_validate_size_0() {
+        let config = LuksConfig {
+            size_mb: 0,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("at least 4 MB"));
+    }
+
+    #[test]
+    fn test_luks_config_validate_size_u64_max() {
+        let config = LuksConfig {
+            size_mb: u64::MAX,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_key_size_0() {
+        let config = LuksConfig {
+            key_size_bits: 0,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("256 or 512"));
+    }
+
+    #[test]
+    fn test_luks_config_validate_key_size_384() {
+        let config = LuksConfig {
+            key_size_bits: 384,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_only_hyphens() {
+        let config = LuksConfig {
+            name: "---".to_string(),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_only_underscores() {
+        let config = LuksConfig {
+            name: "___".to_string(),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_leading_hyphen() {
+        let config = LuksConfig {
+            name: "-leading".to_string(),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        // The validation allows this (just alphanumeric + hyphen + underscore)
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_unicode_alphanumeric_accepted() {
+        // NOTE: is_alphanumeric() accepts Unicode letters (e.g. accented chars).
+        // This means "hello\u{00e9}" passes validation. If dm-crypt names must
+        // be ASCII-only, the validation should use is_ascii_alphanumeric() instead.
+        // Documenting current behavior:
+        let config = LuksConfig {
+            name: "hello\u{00e9}".to_string(), // e with acute accent
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_ok()); // accepts unicode alphanumeric
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_unicode_non_alphanumeric_rejected() {
+        // Unicode symbols that are not alphanumeric should be rejected
+        let config = LuksConfig {
+            name: "test\u{2603}".to_string(), // snowman symbol
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_newline() {
+        let config = LuksConfig {
+            name: "bad\nname".to_string(),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_null_byte() {
+        let config = LuksConfig {
+            name: "bad\0name".to_string(),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_single_char() {
+        let config = LuksConfig {
+            name: "x".to_string(),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_luks_cipher_empty_fields() {
+        let cipher = LuksCipher {
+            algorithm: String::new(),
+            mode: String::new(),
+        };
+        assert_eq!(cipher.as_cryptsetup_str(), "-");
+    }
+
+    #[test]
+    fn test_luks_config_for_agent_empty_id() {
+        // for_agent with empty string produces "agnos-agent-" which is valid
+        let config = LuksConfig::for_agent("", 8);
+        assert_eq!(config.name, "agnos-agent-");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_luks_key_from_passphrase_short_error_distinct_from_empty() {
+        let empty_err = LuksKey::from_passphrase("").unwrap_err().to_string();
+        let short_err = LuksKey::from_passphrase("short").unwrap_err().to_string();
+        assert!(empty_err.contains("empty"));
+        assert!(short_err.contains("minimum 8"));
+        assert_ne!(empty_err, short_err);
+    }
+
+    #[test]
+    fn test_luks_key_is_empty_always_false_for_valid_key() {
+        // from_bytes rejects empty, so any valid key is never empty
+        let key = LuksKey::from_bytes(vec![1]).unwrap();
+        assert!(!key.is_empty());
+    }
+
+    #[test]
+    fn test_luks_key_from_passphrase_all_whitespace() {
+        // 8+ spaces is valid - cryptsetup handles this
+        let key = LuksKey::from_passphrase("        ").unwrap();
+        assert_eq!(key.len(), 8);
+    }
+
+    #[test]
+    fn test_luks_config_validate_all_valid_key_sizes() {
+        for ks in [256u32, 512] {
+            let config = LuksConfig {
+                key_size_bits: ks,
+                ..LuksConfig::for_agent("x", 64)
+            };
+            assert!(
+                config.validate().is_ok(),
+                "key_size_bits={} should be valid",
+                ks
+            );
+        }
+    }
+
+    #[test]
+    fn test_luks_filesystem_as_str_matches_display() {
+        for fs in [
+            LuksFilesystem::Ext4,
+            LuksFilesystem::Xfs,
+            LuksFilesystem::Btrfs,
+        ] {
+            assert_eq!(fs.as_str(), format!("{}", fs));
+        }
+    }
+
+    #[test]
+    fn test_luks_config_for_agent_size_preserved() {
+        // Verify the size_mb passed to for_agent is actually used
+        let config = LuksConfig::for_agent("x", 999);
+        assert_eq!(config.size_mb, 999);
+    }
+
+    #[test]
+    fn test_luks_key_generate_different_sizes_different_lengths() {
+        let k16 = LuksKey::generate(16).unwrap();
+        let k64 = LuksKey::generate(64).unwrap();
+        assert_eq!(k16.len(), 16);
+        assert_eq!(k64.len(), 64);
+        assert_ne!(k16.len(), k64.len());
+    }
+
+    #[test]
+    fn test_luks_close_empty_name_error_message() {
+        let err = luks_close("").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_teardown_empty_name_error_message() {
+        let err = teardown_agent_volume("").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_luks_status_deserialization_from_json_string() {
+        // Test deserialization with missing optional field
+        let json = r#"{
+            "name": "vol",
+            "is_open": false,
+            "is_mounted": false,
+            "backing_path": "/x",
+            "mount_point": null,
+            "cipher": "aes-xts-plain64",
+            "key_size_bits": 256
+        }"#;
+        let status: LuksStatus = serde_json::from_str(json).unwrap();
+        assert!(!status.is_open);
+        assert!(status.mount_point.is_none());
+        assert_eq!(status.key_size_bits, 256);
+    }
+
+    #[test]
+    fn test_luks_config_validate_validates_name_before_size() {
+        // Empty name + invalid size: should report name error
+        let config = LuksConfig {
+            name: String::new(),
+            size_mb: 0,
+            key_size_bits: 999,
+            ..LuksConfig::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("empty"),
+            "Should fail on name first, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_luks_config_validate_validates_size_before_key() {
+        // Valid name + invalid size + invalid key: should report size error
+        let config = LuksConfig {
+            name: "valid".to_string(),
+            size_mb: 1,
+            key_size_bits: 999,
+            ..LuksConfig::default()
+        };
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("at least 4 MB"),
+            "Should fail on size, got: {}",
+            err
+        );
+    }
 }

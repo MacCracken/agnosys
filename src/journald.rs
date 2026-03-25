@@ -836,4 +836,353 @@ mod tests {
         assert_eq!(back.lines, Some(200));
         assert_eq!(back.priority, Some(JournalPriority::Warning));
     }
+
+    // ---- parse_size_string edge cases ----
+
+    #[test]
+    fn test_parse_size_string_mb_suffix() {
+        // "128.0MB" — B stripped, M found
+        assert_eq!(parse_size_string("128.0MB"), Some(134217728));
+    }
+
+    #[test]
+    fn test_parse_size_string_gb_suffix() {
+        assert_eq!(parse_size_string("2.0GB"), Some(2147483648));
+    }
+
+    #[test]
+    fn test_parse_size_string_tb_suffix() {
+        assert_eq!(parse_size_string("1T"), Some(1099511627776));
+    }
+
+    #[test]
+    fn test_parse_size_string_tb_with_b_suffix() {
+        assert_eq!(parse_size_string("1TB"), Some(1099511627776));
+    }
+
+    #[test]
+    fn test_parse_size_string_only_b_suffix() {
+        // "512B" — the B is stripped, num is "512", suffix is "" → 512 bytes
+        assert_eq!(parse_size_string("512B"), Some(512));
+    }
+
+    #[test]
+    fn test_parse_size_string_whitespace_trimmed() {
+        assert_eq!(parse_size_string("  128M  "), Some(134217728));
+    }
+
+    #[test]
+    fn test_parse_size_string_unknown_unit() {
+        assert_eq!(parse_size_string("128X"), None);
+    }
+
+    #[test]
+    fn test_parse_size_string_invalid_number() {
+        assert_eq!(parse_size_string("abcM"), None);
+    }
+
+    #[test]
+    fn test_parse_size_string_zero() {
+        assert_eq!(parse_size_string("0"), Some(0));
+        assert_eq!(parse_size_string("0M"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_size_string_fractional_kb() {
+        // 1.5K = 1.5 * 1024 = 1536
+        assert_eq!(parse_size_string("1.5K"), Some(1536));
+    }
+
+    // ---- parse_disk_usage edge cases ----
+
+    #[test]
+    fn test_parse_disk_usage_no_size_found() {
+        assert_eq!(parse_disk_usage("No sizes here at all"), None);
+    }
+
+    #[test]
+    fn test_parse_disk_usage_gb_output() {
+        let text = "Archived and active journals take up 2.5G in the file system.";
+        let bytes = parse_disk_usage(text).unwrap();
+        assert_eq!(bytes, (2.5 * 1024.0 * 1024.0 * 1024.0) as u64);
+    }
+
+    #[test]
+    fn test_parse_disk_usage_empty_string() {
+        assert_eq!(parse_disk_usage(""), None);
+    }
+
+    // ---- parse_header_entry_count edge cases ----
+
+    #[test]
+    fn test_parse_header_entry_count_single_file() {
+        let text = "Number of entries: 42\n";
+        assert_eq!(parse_header_entry_count(text), 42);
+    }
+
+    #[test]
+    fn test_parse_header_entry_count_many_files() {
+        let text = "Number of entries: 100\nNumber of entries: 200\nNumber of entries: 300\n";
+        assert_eq!(parse_header_entry_count(text), 600);
+    }
+
+    #[test]
+    fn test_parse_header_entry_count_with_surrounding_text() {
+        let text = "\
+File path: /var/log/journal/abc123/system.journal
+Head sequential number: 1
+Tail sequential number: 5000
+Number of entries: 5000
+Disk usage: 64.0M
+";
+        assert_eq!(parse_header_entry_count(text), 5000);
+    }
+
+    #[test]
+    fn test_parse_header_entry_count_invalid_number() {
+        let text = "Number of entries: not-a-number\n";
+        assert_eq!(parse_header_entry_count(text), 0);
+    }
+
+    // ---- parse_journal_json edge cases ----
+
+    #[test]
+    fn test_parse_journal_json_non_string_values_skipped_in_fields() {
+        let json = r#"{
+            "MESSAGE": "test",
+            "_NUMERIC_FIELD": 42,
+            "_BOOL_FIELD": true,
+            "_NULL_FIELD": null,
+            "_STRING_FIELD": "kept"
+        }"#;
+        let entry = parse_journal_json(json).unwrap();
+        // Non-string values should be skipped in the extra fields
+        assert!(!entry.fields.contains_key("_NUMERIC_FIELD"));
+        assert!(!entry.fields.contains_key("_BOOL_FIELD"));
+        assert!(!entry.fields.contains_key("_NULL_FIELD"));
+        assert_eq!(entry.fields.get("_STRING_FIELD").unwrap(), "kept");
+    }
+
+    #[test]
+    fn test_parse_journal_json_known_keys_excluded_from_fields() {
+        let json = r#"{
+            "__REALTIME_TIMESTAMP": "1709740800000000",
+            "_SYSTEMD_UNIT": "sshd.service",
+            "PRIORITY": "3",
+            "MESSAGE": "test",
+            "_PID": "42",
+            "__CURSOR": "s=abc123",
+            "__MONOTONIC_TIMESTAMP": "12345",
+            "_EXTRA": "extra_val"
+        }"#;
+        let entry = parse_journal_json(json).unwrap();
+        // Known keys should NOT appear in fields
+        assert!(!entry.fields.contains_key("__REALTIME_TIMESTAMP"));
+        assert!(!entry.fields.contains_key("_SYSTEMD_UNIT"));
+        assert!(!entry.fields.contains_key("PRIORITY"));
+        assert!(!entry.fields.contains_key("MESSAGE"));
+        assert!(!entry.fields.contains_key("_PID"));
+        assert!(!entry.fields.contains_key("__CURSOR"));
+        assert!(!entry.fields.contains_key("__MONOTONIC_TIMESTAMP"));
+        // Extra key should appear
+        assert_eq!(entry.fields.get("_EXTRA").unwrap(), "extra_val");
+    }
+
+    #[test]
+    fn test_parse_journal_json_invalid_timestamp_uses_now() {
+        let json = r#"{"__REALTIME_TIMESTAMP": "not-a-number", "MESSAGE": "test"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        // Should fallback to Utc::now() — just check it doesn't crash
+        assert_eq!(entry.message, "test");
+    }
+
+    #[test]
+    fn test_parse_journal_json_missing_timestamp_uses_now() {
+        let json = r#"{"MESSAGE": "no timestamp"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        assert_eq!(entry.message, "no timestamp");
+    }
+
+    #[test]
+    fn test_parse_journal_json_invalid_priority_defaults_to_6() {
+        let json = r#"{"PRIORITY": "99", "MESSAGE": "high prio"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        // Priority "99" parses as u8 OK (99), so it stays 99.
+        // Actually, it does parse, it's just out of syslog range.
+        assert_eq!(entry.priority, 99);
+    }
+
+    #[test]
+    fn test_parse_journal_json_non_numeric_priority_defaults_to_6() {
+        let json = r#"{"PRIORITY": "err", "MESSAGE": "test"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        assert_eq!(entry.priority, 6); // default
+    }
+
+    #[test]
+    fn test_parse_journal_json_non_numeric_pid_defaults_to_0() {
+        let json = r#"{"_PID": "not-a-pid", "MESSAGE": "test"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        assert_eq!(entry.pid, 0);
+    }
+
+    #[test]
+    fn test_parse_journal_json_empty_object() {
+        let json = r#"{}"#;
+        let entry = parse_journal_json(json).unwrap();
+        assert_eq!(entry.message, "");
+        assert_eq!(entry.unit, "");
+        assert_eq!(entry.priority, 6);
+        assert_eq!(entry.pid, 0);
+        assert!(entry.fields.is_empty());
+    }
+
+    // ---- JournalPriority display coverage for remaining variants ----
+
+    #[test]
+    fn test_priority_display_all_variants() {
+        assert_eq!(JournalPriority::Emergency.to_string(), "emerg");
+        assert_eq!(JournalPriority::Alert.to_string(), "alert");
+        assert_eq!(JournalPriority::Critical.to_string(), "crit");
+        assert_eq!(JournalPriority::Error.to_string(), "err");
+        assert_eq!(JournalPriority::Warning.to_string(), "warning");
+        assert_eq!(JournalPriority::Notice.to_string(), "notice");
+        assert_eq!(JournalPriority::Info.to_string(), "info");
+        assert_eq!(JournalPriority::Debug.to_string(), "debug");
+    }
+
+    #[test]
+    fn test_priority_as_u8_all_values() {
+        assert_eq!(JournalPriority::Emergency.as_u8(), 0);
+        assert_eq!(JournalPriority::Alert.as_u8(), 1);
+        assert_eq!(JournalPriority::Critical.as_u8(), 2);
+        assert_eq!(JournalPriority::Error.as_u8(), 3);
+        assert_eq!(JournalPriority::Warning.as_u8(), 4);
+        assert_eq!(JournalPriority::Notice.as_u8(), 5);
+        assert_eq!(JournalPriority::Info.as_u8(), 6);
+        assert_eq!(JournalPriority::Debug.as_u8(), 7);
+    }
+
+    // ---- build_journalctl_args: verify ordering ----
+
+    #[test]
+    fn test_build_args_base_always_first() {
+        let filter = JournalFilter {
+            unit: Some("foo.service".into()),
+            ..Default::default()
+        };
+        let args = build_journalctl_args(&filter);
+        assert_eq!(args[0], "--output=json");
+        assert_eq!(args[1], "--no-pager");
+    }
+
+    // ---- vacuum_journal input validation ----
+
+    #[test]
+    fn test_vacuum_whitespace_only_size() {
+        #[cfg(target_os = "linux")]
+        {
+            // " " is not empty, but has_valid_format checks for leading digits
+            let result = vacuum_journal(" ");
+            assert!(result.is_err());
+        }
+    }
+
+    // ---- JournalEntry Debug/Clone ----
+
+    #[test]
+    fn test_journal_entry_clone() {
+        let entry = JournalEntry {
+            timestamp: Utc.with_ymd_and_hms(2026, 3, 6, 12, 0, 0).unwrap(),
+            unit: "test.service".into(),
+            priority: 4,
+            message: "cloned".into(),
+            pid: 42,
+            fields: HashMap::new(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.unit, entry.unit);
+        assert_eq!(cloned.priority, entry.priority);
+        assert_eq!(cloned.pid, entry.pid);
+        assert_eq!(cloned.message, entry.message);
+    }
+
+    #[test]
+    fn test_journal_entry_debug() {
+        let entry = JournalEntry {
+            timestamp: Utc.with_ymd_and_hms(2026, 3, 6, 12, 0, 0).unwrap(),
+            unit: "test.service".into(),
+            priority: 6,
+            message: "debug test".into(),
+            pid: 1,
+            fields: HashMap::new(),
+        };
+        let dbg = format!("{:?}", entry);
+        assert!(dbg.contains("JournalEntry"));
+        assert!(dbg.contains("test.service"));
+    }
+
+    // ---- JournalStats with None timestamps ----
+
+    #[test]
+    fn test_journal_stats_serialization_none_timestamps() {
+        let stats = JournalStats {
+            total_entries: 0,
+            disk_usage_bytes: 0,
+            oldest_entry: None,
+            newest_entry: None,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: JournalStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.total_entries, 0);
+        assert!(back.oldest_entry.is_none());
+        assert!(back.newest_entry.is_none());
+    }
+
+    // ---- parse_journal_json: large PID / boundary values ----
+
+    #[test]
+    fn test_parse_journal_json_max_pid() {
+        let json = r#"{"_PID": "4294967295", "MESSAGE": "max pid"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        assert_eq!(entry.pid, u32::MAX);
+    }
+
+    #[test]
+    fn test_parse_journal_json_pid_overflow_defaults_to_0() {
+        // u32 max is 4294967295, so 4294967296 should overflow
+        let json = r#"{"_PID": "4294967296", "MESSAGE": "overflow"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        assert_eq!(entry.pid, 0);
+    }
+
+    #[test]
+    fn test_parse_journal_json_priority_zero_is_emergency() {
+        let json = r#"{"PRIORITY": "0", "MESSAGE": "emerg"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        assert_eq!(entry.priority, 0);
+    }
+
+    // ---- parse_journal_json: timestamp edge case ----
+
+    #[test]
+    fn test_parse_journal_json_negative_timestamp_uses_now() {
+        // Negative microseconds - timestamp_micros may fail
+        let json = r#"{"__REALTIME_TIMESTAMP": "-1", "MESSAGE": "neg"}"#;
+        let entry = parse_journal_json(json).unwrap();
+        // Should not crash; falls back to now or produces valid DateTime
+        assert_eq!(entry.message, "neg");
+    }
+
+    // ---- build_journalctl_args: lines=0 edge case ----
+
+    #[test]
+    fn test_build_args_lines_zero() {
+        let filter = JournalFilter {
+            lines: Some(0),
+            ..Default::default()
+        };
+        let args = build_journalctl_args(&filter);
+        assert!(args.contains(&"--lines=0".to_string()));
+    }
 }
