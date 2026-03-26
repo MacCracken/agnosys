@@ -172,12 +172,12 @@ impl ImaPolicyRule {
         }
 
         if let Some(ref mask) = self.mask {
-            let valid_masks = ["MAY_READ", "MAY_WRITE", "MAY_EXEC", "MAY_APPEND"];
-            if !valid_masks.contains(&mask.as_str()) {
+            static VALID_MASKS: [&str; 4] = ["MAY_READ", "MAY_WRITE", "MAY_EXEC", "MAY_APPEND"];
+            if !VALID_MASKS.contains(&mask.as_str()) {
                 return Err(SysError::InvalidArgument(
                     format!(
                         "Invalid mask '{}', expected one of: {:?}",
-                        mask, valid_masks
+                        mask, VALID_MASKS
                     )
                     .into(),
                 ));
@@ -191,27 +191,36 @@ impl ImaPolicyRule {
     /// `/sys/kernel/security/ima/policy`.
     #[must_use = "policy line should be used"]
     pub fn to_policy_line(&self) -> Result<String> {
+        use std::fmt::Write;
+
         self.validate()?;
 
-        let mut parts = vec![format!("{}", self.action), format!("func={}", self.target)];
+        let mut s = String::with_capacity(128);
+        write!(&mut s, "{} func={}", self.action, self.target)
+            .map_err(|e| SysError::Unknown(format!("fmt error: {}", e).into()))?;
 
         if let Some(uid) = self.uid {
-            parts.push(format!("uid={}", uid));
+            write!(&mut s, " uid={}", uid)
+                .map_err(|e| SysError::Unknown(format!("fmt error: {}", e).into()))?;
         }
         if let Some(fowner) = self.fowner {
-            parts.push(format!("fowner={}", fowner));
+            write!(&mut s, " fowner={}", fowner)
+                .map_err(|e| SysError::Unknown(format!("fmt error: {}", e).into()))?;
         }
         if let Some(ref uuid) = self.fsuuid {
-            parts.push(format!("fsuuid={}", uuid));
+            write!(&mut s, " fsuuid={}", uuid)
+                .map_err(|e| SysError::Unknown(format!("fmt error: {}", e).into()))?;
         }
         if let Some(ref obj_type) = self.obj_type {
-            parts.push(format!("obj_type={}", obj_type));
+            write!(&mut s, " obj_type={}", obj_type)
+                .map_err(|e| SysError::Unknown(format!("fmt error: {}", e).into()))?;
         }
         if let Some(ref mask) = self.mask {
-            parts.push(format!("mask={}", mask));
+            write!(&mut s, " mask={}", mask)
+                .map_err(|e| SysError::Unknown(format!("fmt error: {}", e).into()))?;
         }
 
-        Ok(parts.join(" "))
+        Ok(s)
     }
 }
 
@@ -249,8 +258,15 @@ impl ImaPolicy {
     #[must_use = "policy string should be used"]
     pub fn to_policy_string(&self) -> Result<String> {
         self.validate()?;
-        let lines: Result<Vec<String>> = self.rules.iter().map(|r| r.to_policy_line()).collect();
-        Ok(lines?.join("\n"))
+
+        let mut s = String::with_capacity(self.rules.len() * 128);
+        for (i, rule) in self.rules.iter().enumerate() {
+            if i > 0 {
+                s.push('\n');
+            }
+            s.push_str(&rule.to_policy_line()?);
+        }
+        Ok(s)
     }
 }
 

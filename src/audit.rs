@@ -604,7 +604,7 @@ pub fn read_agnos_audit_events(proc_path: &str) -> Result<Vec<RawAuditEntry>> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| SysError::Unknown(format!("Failed to read {}: {}", proc_path, e).into()))?;
 
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(contents.lines().count());
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {

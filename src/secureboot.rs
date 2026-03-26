@@ -205,12 +205,17 @@ pub fn list_enrolled_keys() -> Result<Vec<EnrolledKey>> {
 ///   Valid until: ...
 /// ```
 pub fn parse_mokutil_list(output: &str) -> Result<Vec<EnrolledKey>> {
-    let mut keys = Vec::new();
-    let mut current_subject = String::new();
-    let mut current_issuer = String::new();
-    let mut current_fingerprint = String::new();
-    let mut current_not_before = String::new();
-    let mut current_not_after = String::new();
+    // Pre-count key blocks to avoid repeated Vec reallocation
+    let key_count = output
+        .lines()
+        .filter(|l| l.trim().starts_with("[key "))
+        .count();
+    let mut keys = Vec::with_capacity(key_count);
+    let mut current_subject: Option<&str> = None;
+    let mut current_issuer: Option<&str> = None;
+    let mut current_fingerprint: Option<String> = None;
+    let mut current_not_before: Option<&str> = None;
+    let mut current_not_after: Option<&str> = None;
     let mut in_key = false;
 
     for line in output.lines() {
@@ -218,20 +223,20 @@ pub fn parse_mokutil_list(output: &str) -> Result<Vec<EnrolledKey>> {
 
         if trimmed.starts_with("[key ") {
             // Save previous key if any
-            if in_key && !current_fingerprint.is_empty() {
+            if in_key && let Some(fp) = current_fingerprint.take() {
                 keys.push(EnrolledKey {
-                    subject: current_subject.clone(),
-                    issuer: current_issuer.clone(),
-                    fingerprint: current_fingerprint.clone(),
-                    not_before: current_not_before.clone(),
-                    not_after: current_not_after.clone(),
+                    subject: current_subject.unwrap_or("").to_string(),
+                    issuer: current_issuer.unwrap_or("").to_string(),
+                    fingerprint: fp,
+                    not_before: current_not_before.unwrap_or("").to_string(),
+                    not_after: current_not_after.unwrap_or("").to_string(),
                 });
             }
-            current_subject.clear();
-            current_issuer.clear();
-            current_fingerprint.clear();
-            current_not_before.clear();
-            current_not_after.clear();
+            current_subject = None;
+            current_issuer = None;
+            current_fingerprint = None;
+            current_not_before = None;
+            current_not_after = None;
             in_key = true;
             continue;
         }
@@ -241,26 +246,27 @@ pub fn parse_mokutil_list(output: &str) -> Result<Vec<EnrolledKey>> {
         }
 
         if let Some(rest) = trimmed.strip_prefix("SHA1 Fingerprint:") {
-            current_fingerprint = rest.trim().replace(':', "").to_lowercase();
+            // Fingerprint requires transformation so it must be an owned String
+            current_fingerprint = Some(rest.trim().replace(':', "").to_lowercase());
         } else if let Some(rest) = trimmed.strip_prefix("Subject:") {
-            current_subject = rest.trim().to_string();
+            current_subject = Some(rest.trim());
         } else if let Some(rest) = trimmed.strip_prefix("Issuer:") {
-            current_issuer = rest.trim().to_string();
+            current_issuer = Some(rest.trim());
         } else if let Some(rest) = trimmed.strip_prefix("Valid from:") {
-            current_not_before = rest.trim().to_string();
+            current_not_before = Some(rest.trim());
         } else if let Some(rest) = trimmed.strip_prefix("Valid until:") {
-            current_not_after = rest.trim().to_string();
+            current_not_after = Some(rest.trim());
         }
     }
 
     // Don't forget the last key
-    if in_key && !current_fingerprint.is_empty() {
+    if in_key && let Some(fp) = current_fingerprint {
         keys.push(EnrolledKey {
-            subject: current_subject,
-            issuer: current_issuer,
-            fingerprint: current_fingerprint,
-            not_before: current_not_before,
-            not_after: current_not_after,
+            subject: current_subject.unwrap_or("").to_string(),
+            issuer: current_issuer.unwrap_or("").to_string(),
+            fingerprint: fp,
+            not_before: current_not_before.unwrap_or("").to_string(),
+            not_after: current_not_after.unwrap_or("").to_string(),
         });
     }
 

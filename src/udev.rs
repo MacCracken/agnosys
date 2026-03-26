@@ -314,7 +314,8 @@ pub fn parse_udevadm_info(output: &str) -> Result<DeviceInfo> {
 /// Device records are separated by blank lines. Each record uses the same
 /// P:/N:/S:/E: prefix format as single-device output.
 fn parse_export_db(output: &str) -> Result<Vec<DeviceInfo>> {
-    let mut devices = Vec::new();
+    // Rough estimate: ~10 lines per device block
+    let mut devices = Vec::with_capacity(output.lines().count() / 10 + 1);
     let mut current_block = String::new();
 
     for line in output.lines() {
@@ -385,7 +386,7 @@ pub fn trigger_device(syspath: &str) -> Result<()> {
 /// This is a pure function with no side effects.
 #[must_use]
 pub fn render_udev_rule(rule: &UdevRule) -> String {
-    let mut parts: Vec<String> = Vec::new();
+    let mut parts: Vec<String> = Vec::with_capacity(rule.match_attrs.len() + rule.actions.len());
 
     // Match conditions use `==`
     for (key, value) in &rule.match_attrs {

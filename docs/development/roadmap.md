@@ -51,7 +51,7 @@ Consumer validation: **stiva** ✅, **sigil** ✅, **ark** ✅ (partial — fuse
 
 ## Phase 4 — System Services & Device ✅
 
-- [x] `agent` — Process naming, OOM score, cgroup inspection, capabilities, systemd watchdog
+- [x] ~~`agent`~~ — *(moved to agnosai crate)*
 - [x] `netns` — Network namespace create, enter, list, current ns fd/inode
 - [x] `udev` — Pure sysfs/netlink device enumeration, hotplug monitoring, uevent parsing
 - [x] `drm` — DRM/KMS device enumeration, driver version, capabilities, mode resources, connectors
@@ -63,11 +63,11 @@ Consumer validation: **daimon** ✅, **nein** ✅, **yukti** ✅, **soorat** ✅
 
 ## All Modules Complete ✅
 
-All 22 modules implemented. All 13 consumers unblocked.
+All 20 modules implemented (agent/llm moved to agnosai/hoosh). All 13 consumers unblocked.
 
 ## V1.0 — Stable API (Next)
 
-- [x] All 22 modules implemented
+- [x] All 20 modules implemented (agent/llm moved to agnosai/hoosh)
 - [ ] API stabilization review — freeze public API signatures
 - [ ] Comprehensive documentation with security considerations per module
 - [ ] All consumers migrated from monolith `agnos-sys` to path dependency on `agnosys`
@@ -84,7 +84,7 @@ All 22 modules implemented. All 13 consumers unblocked.
 
 | Metric | Count |
 |--------|-------|
-| Modules implemented | **22 / 22** (100%) |
+| Modules implemented | **20 / 20** (100%) |
 | Consumer crates unblocked | **13 / 13** (100%) |
 | Unit tests | 511 |
 | Integration tests | 75 |
@@ -125,7 +125,7 @@ agnosys = { path = "../agnosys", features = ["landlock", "seccomp"] }
 | sigil | tpm, ima, secureboot, certpin | ✅ Ready |
 | ark | fuse, update | ✅ Ready |
 | argonaut | journald, bootloader | ✅ Ready |
-| daimon | seccomp, certpin, agent | ✅ Ready |
+| daimon | seccomp, certpin | ✅ Ready |
 | nein | netns | ✅ Ready |
 | yukti | udev | ✅ Ready |
 | soorat | drm | ✅ Ready |

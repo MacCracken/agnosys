@@ -298,7 +298,7 @@ pub fn parse_passwd_line(line: &str) -> Result<UserInfo> {
 /// ```
 #[must_use]
 pub fn parse_who_output(output: &str) -> Vec<SessionInfo> {
-    let mut sessions = Vec::new();
+    let mut sessions = Vec::with_capacity(output.lines().count());
     for (idx, line) in output.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
@@ -350,7 +350,7 @@ pub fn parse_who_output(output: &str) -> Vec<SessionInfo> {
 /// type  control  module  [args...]
 /// ```
 pub fn parse_pam_config(content: &str) -> Result<Vec<PamRule>> {
-    let mut rules = Vec::new();
+    let mut rules = Vec::with_capacity(content.lines().count());
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -508,7 +508,7 @@ pub fn list_users() -> Result<Vec<UserInfo>> {
     let passwd_content = std::fs::read_to_string("/etc/passwd")
         .map_err(|e| SysError::Unknown(format!("Failed to read /etc/passwd: {}", e).into()))?;
 
-    let mut users = Vec::new();
+    let mut users = Vec::with_capacity(passwd_content.lines().count());
     for line in passwd_content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {

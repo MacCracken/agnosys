@@ -19,7 +19,8 @@ Consumer crates:
   shakti     ──→ agnosys[pam]              (authentication)         ✅
   aegis      ──→ agnosys[mac]             (mandatory access control) ✅
   ark        ──→ agnosys[fuse,update]      (package management)     ✅
-  daimon     ──→ agnosys[certpin,agent]    (agent runtime)          ✅
+  daimon     ──→ agnosys[seccomp,certpin]  (daemon runtime)         ✅
+  hoosh      ──→ agnosys[certpin]         (LLM gateway)            ✅
 ```
 
 ## Feature Flags
@@ -40,7 +41,6 @@ Consumer crates:
 | `pam` | shakti | PAM service inspection | ✅ |
 | `mac` | aegis | LSM detection, security contexts | ✅ |
 | `audit` | libro | Kernel audit netlink interface | ✅ |
-| `agent` | daimon | Agent runtime kernel support | ✅ |
 | `drm` | soorat | Direct Rendering Manager / KMS | ✅ |
 | `tpm` | sigil | Trusted Platform Module | ✅ |
 | `secureboot` | sigil | Secure Boot verification | ✅ |
@@ -83,7 +83,7 @@ make check                     # fmt + clippy + test + audit
 
 See [docs/development/roadmap.md](docs/development/roadmap.md).
 
-**Complete:** 22/22 modules, 13/13 consumers unblocked, 605 tests, 132 benchmarks.
+**Complete:** 20/20 modules, 13/13 consumers unblocked, 605 tests, 132 benchmarks.
 
 ## License
 

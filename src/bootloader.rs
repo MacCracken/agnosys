@@ -439,7 +439,7 @@ fn set_systemd_boot_default(id: &str) -> Result<()> {
         SysError::Unknown(format!("Failed to read {}: {}", conf_path.display(), e).into())
     })?;
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::with_capacity(content.lines().count() + 1);
     let mut found = false;
     for line in content.lines() {
         if line.trim().starts_with("default") {
@@ -475,7 +475,7 @@ fn set_systemd_boot_cmdline(entry_id: &str, options: &str) -> Result<()> {
         SysError::Unknown(format!("Failed to read {}: {}", entry_path.display(), e).into())
     })?;
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::with_capacity(content.lines().count() + 1);
     let mut found = false;
     for line in content.lines() {
         if line.trim().starts_with("options") {
@@ -505,7 +505,7 @@ fn set_systemd_boot_timeout(seconds: u32) -> Result<()> {
         SysError::Unknown(format!("Failed to read {}: {}", conf_path.display(), e).into())
     })?;
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::with_capacity(content.lines().count() + 1);
     let mut found = false;
     for line in content.lines() {
         if line.trim().starts_with("timeout") {
@@ -688,7 +688,7 @@ fn set_grub2_cmdline(entry_id: &str, options: &str) -> Result<()> {
         SysError::Unknown(format!("Failed to read {}: {}", GRUB_DEFAULT_FILE, e).into())
     })?;
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::with_capacity(content.lines().count() + 1);
     let mut found = false;
     for line in content.lines() {
         if line.trim().starts_with("GRUB_CMDLINE_LINUX_DEFAULT=") {
@@ -734,7 +734,7 @@ fn set_grub2_timeout(seconds: u32) -> Result<()> {
         SysError::Unknown(format!("Failed to read {}: {}", GRUB_DEFAULT_FILE, e).into())
     })?;
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::with_capacity(content.lines().count() + 1);
     let mut found = false;
     for line in content.lines() {
         if line.trim().starts_with("GRUB_TIMEOUT=") {

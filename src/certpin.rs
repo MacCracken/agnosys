@@ -216,8 +216,12 @@ pub fn verify_pin(host: &str, actual_spki_pin: &str, pin_set: &CertPinSet) -> Ce
         return CertPinResult::Valid;
     }
 
-    let mut expected = entry.pin_sha256.clone();
-    expected.extend(entry.backup_pins.clone());
+    let expected: Vec<_> = entry
+        .pin_sha256
+        .iter()
+        .chain(entry.backup_pins.iter())
+        .cloned()
+        .collect();
     CertPinResult::PinMismatch {
         host: host.to_string(),
         expected,

@@ -118,7 +118,9 @@ pub struct JournalStats {
 /// This is a pure function with no side effects, suitable for unit testing.
 #[must_use]
 pub fn build_journalctl_args(filter: &JournalFilter) -> Vec<String> {
-    let mut args: Vec<String> = vec!["--output=json".to_string(), "--no-pager".to_string()];
+    let mut args: Vec<String> = Vec::with_capacity(8);
+    args.push("--output=json".to_string());
+    args.push("--no-pager".to_string());
 
     if let Some(ref unit) = filter.unit {
         args.push(format!("--unit={}", unit));
@@ -236,7 +238,7 @@ pub fn query_journal(filter: &JournalFilter) -> Result<Vec<JournalEntry>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(stdout.lines().count());
     for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -335,7 +337,7 @@ pub fn get_boot_list() -> Result<Vec<(String, DateTime<Utc>)>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut boots = Vec::new();
+    let mut boots = Vec::with_capacity(stdout.lines().count());
 
     for line in stdout.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0] - 2026-03-26
+
+### Changed
+- **SemVer migration**: Moved from CalVer (0.25.x) to SemVer, targeting 1.0.0
+- **agent/llm modules removed**: Extracted to dedicated crates (`agnosai` for agents, `hoosh` for LLM inference). Removes reqwest, tokio, async-trait, anyhow, once_cell from dep tree.
+- `#[non_exhaustive]` on all 28 public enums (was only 3)
+- `#[must_use]` on ~50 pure/query functions across all modules
+- deny.toml trimmed: removed 7 stale license entries from removed deps
+- Consumer map updated: daimon uses seccomp+certpin (agent moved to agnosai)
+
+### Fixed
+- update.rs: swapped day/month labels in `validate_version()` error messages
+- Feature gate completeness: 8 features (tpm, certpin, fuse, pam, mac, journald, bootloader, update) were missing standalone deps — all now compile individually
+- ima feature missing `dep:hex` and `serde` dependencies
+
+### Performance
+- ima.rs: `write!()` over `format!()` in policy building, `static` array for valid masks
+- certpin.rs: iterator chain instead of clone+extend in pin verification
+- secureboot.rs: `Option<&str>` instead of String in parse loop, Vec pre-allocation
+- Vec::with_capacity() across 13 sites in 5 modules (bootloader, journald, audit, udev, pam)
+
 ## [0.23.3] - 2026-03-24
 
 ### Added
@@ -8,7 +29,7 @@
 - drm: Direct Rendering Manager — device enumeration, driver version, capabilities, KMS resources, connector queries
 - netns: Network namespaces — create, enter, list, current ns fd/inode
 - certpin: Certificate pinning — SHA-256 pin computation (zero-dep), base64, SPKI extraction, PinSet validation
-- agent: Agent runtime support — process naming, OOM score, cgroup inspection, capability check, systemd watchdog
+- agent: Agent runtime support — process naming, OOM score, cgroup inspection, capability check, systemd watchdog *(moved to agnosai crate)*
 - luks: LUKS encrypted storage — header parsing, key slot inspection, dm-crypt volume management
 - dmverity: dm-verity integrity — superblock parsing, root hash validation (constant-time), volume status
 - audit: Kernel audit subsystem — netlink audit socket, status queries, log parsing, audit line parser
