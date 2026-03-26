@@ -32,16 +32,14 @@ journald = ["error"]
 bootloader = ["error"]
 secureboot = ["error", "dep:sha2", "dep:hex", "serde"]
 update = ["error"]
-agent = ["error", "syscall", "dep:chrono", "dep:uuid", "dep:serde_json", "dep:tokio", "dep:async-trait", "dep:anyhow", "dep:once_cell", "dep:sha2", "dep:reqwest", "serde"]
 drm = ["error"]
-llm = ["error", "dep:once_cell", "dep:serde_json", "dep:tokio", "dep:reqwest", "dep:anyhow", "serde"]
 serde = ["dep:serde"]
 logging = ["dep:tracing-subscriber"]
 full = [
     "syscall", "error", "security", "udev", "netns",
     "luks", "dmverity", "ima", "tpm", "certpin", "fuse", "pam",
     "mac", "audit", "journald", "bootloader", "secureboot",
-    "update", "agent", "drm", "llm", "logging", "serde",
+    "update", "drm", "logging", "serde",
 ]
 
 [dependencies]
@@ -51,16 +49,11 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 thiserror = "2"
 tracing = "0.1"
-anyhow = { version = "1", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
 uuid = { version = "1", features = ["v4", "serde"], optional = true }
 sha2 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 zeroize = { version = "1", optional = true }
-once_cell = { version = "1", optional = true }
-tokio = { version = "1", features = ["full"], optional = true }
-reqwest = { version = "0.12", features = ["json", "blocking"], optional = true }
-async-trait = { version = "0.1", optional = true }
 
 # Optional
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }

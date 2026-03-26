@@ -324,34 +324,6 @@ mod certpin_integration {
     }
 }
 
-// ── agent integration ───────────────────────────────────────────────
-
-#[cfg(feature = "agent")]
-mod agent_integration {
-    #[test]
-    fn agent_id_unique() {
-        let id1 = agnosys::agent::AgentId::new();
-        let id2 = agnosys::agent::AgentId::new();
-        assert_ne!(format!("{id1:?}"), format!("{id2:?}"));
-    }
-
-    #[test]
-    fn agent_config_defaults() {
-        let config = agnosys::agent::AgentConfig {
-            name: "test-agent".to_string(),
-            agent_type: agnosys::agent::AgentType::Service,
-        };
-        assert_eq!(config.name, "test-agent");
-    }
-
-    #[test]
-    fn agent_type_variants() {
-        let _ = agnosys::agent::AgentType::Service;
-        let _ = agnosys::agent::AgentType::Worker;
-        let _ = agnosys::agent::AgentType::Monitor;
-    }
-}
-
 // ── logging integration ─────────────────────────────────────────────
 
 #[cfg(feature = "logging")]

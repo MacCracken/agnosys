@@ -241,24 +241,6 @@ fn bench_certpin(c: &mut Criterion) {
 #[cfg(not(feature = "certpin"))]
 fn bench_certpin(_c: &mut Criterion) {}
 
-#[cfg(feature = "agent")]
-fn bench_agent(c: &mut Criterion) {
-    let mut group = c.benchmark_group("agent");
-
-    group.bench_function("agent_id_new", |b| b.iter(agnosys::agent::AgentId::new));
-    group.bench_function("agent_config_default", |b| {
-        b.iter(|| agnosys::agent::AgentConfig {
-            name: "bench".to_string(),
-            agent_type: agnosys::agent::AgentType::Service,
-        })
-    });
-
-    group.finish();
-}
-
-#[cfg(not(feature = "agent"))]
-fn bench_agent(_c: &mut Criterion) {}
-
 #[cfg(feature = "logging")]
 fn bench_logging(c: &mut Criterion) {
     let mut group = c.benchmark_group("logging");
@@ -562,7 +544,6 @@ criterion_group!(
     bench_drm,
     bench_netns,
     bench_certpin,
-    bench_agent,
     bench_logging,
     bench_luks,
     bench_dmverity,

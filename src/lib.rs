@@ -58,12 +58,6 @@ pub mod secureboot;
 #[cfg(feature = "update")]
 pub mod update;
 
-#[cfg(feature = "agent")]
-pub mod agent;
-
-#[cfg(feature = "llm")]
-pub mod llm;
-
 #[cfg(feature = "drm")]
 pub mod drm;
 
