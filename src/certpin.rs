@@ -101,6 +101,7 @@ pub struct CertPinSet {
 }
 
 /// Result of verifying a certificate pin.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CertPinResult {
     /// The presented SPKI pin matches a primary or backup pin.
@@ -175,6 +176,7 @@ pub fn compute_spki_pin(cert_pem: &str) -> Result<String> {
 }
 
 /// Verify a certificate pin against a pin set (pure function).
+#[must_use]
 pub fn verify_pin(host: &str, actual_spki_pin: &str, pin_set: &CertPinSet) -> CertPinResult {
     let entry = pin_set.pins.iter().find(|p| p.host == host);
     let entry = match entry {
@@ -467,6 +469,7 @@ pub fn validate_pin_format(pin: &str) -> Result<()> {
 }
 
 /// Return all pinned certs that expire within the next 30 days.
+#[must_use]
 pub fn check_pin_expiry(pin_set: &CertPinSet) -> Vec<PinnedCert> {
     let threshold = Utc::now() + chrono::Duration::days(30);
     pin_set
@@ -498,6 +501,7 @@ pub fn check_pin_expiry(pin_set: &CertPinSet) -> Vec<PinnedCert> {
 ///
 /// The `enforce: false` default means pin mismatches are **logged but not blocked**.
 /// This is intentional for pre-alpha to avoid connectivity breakage from certificate rotations.
+#[must_use]
 pub fn default_agnos_pins() -> CertPinSet {
     tracing::warn!(
         "Using development placeholder certificate pins (enforce=false). \

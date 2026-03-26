@@ -281,6 +281,7 @@ pub struct ConnectorInfo {
 // ── Device enumeration ──────────────────────────────────────────────
 
 /// List DRM card device paths (e.g., `/dev/dri/card0`, `/dev/dri/card1`).
+#[must_use = "enumerated cards should be used"]
 pub fn enumerate_cards() -> Result<Vec<PathBuf>> {
     let dri_path = Path::new("/dev/dri");
     if !dri_path.is_dir() {
@@ -309,6 +310,7 @@ pub fn enumerate_cards() -> Result<Vec<PathBuf>> {
 }
 
 /// List DRM render node paths (e.g., `/dev/dri/renderD128`).
+#[must_use = "enumerated render nodes should be used"]
 pub fn enumerate_render_nodes() -> Result<Vec<PathBuf>> {
     let dri_path = Path::new("/dev/dri");
     if !dri_path.is_dir() {
@@ -374,6 +376,7 @@ impl Device {
     }
 
     /// Query the DRM driver version.
+    #[must_use = "version info should be used"]
     pub fn version(&self) -> Result<Version> {
         // First call: get lengths
         let mut ver = DrmVersion::default();
@@ -417,6 +420,7 @@ impl Device {
     /// Query a DRM capability.
     ///
     /// Returns the capability value, or 0 if not supported.
+    #[must_use = "capability value should be used"]
     pub fn get_cap(&self, cap: Cap) -> Result<u64> {
         let mut get_cap = DrmGetCap {
             capability: cap as u64,
@@ -430,6 +434,7 @@ impl Device {
     }
 
     /// Query display mode resources (connectors, CRTCs, encoders, framebuffers).
+    #[must_use = "mode resources should be used"]
     pub fn mode_resources(&self) -> Result<ModeResources> {
         // First call: get counts
         let mut res = DrmModeCardRes::default();
@@ -473,6 +478,7 @@ impl Device {
     }
 
     /// Query information about a specific connector by ID.
+    #[must_use = "connector info should be used"]
     pub fn connector_info(&self, connector_id: u32) -> Result<ConnectorInfo> {
         let mut conn = DrmModeGetConnector {
             connector_id,

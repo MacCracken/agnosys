@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 /// TPM 2.0 PCR hash bank.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TpmPcrBank {
     Sha1,
@@ -26,6 +27,7 @@ pub enum TpmPcrBank {
 }
 
 impl TpmPcrBank {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             TpmPcrBank::Sha1 => "sha1",
@@ -157,6 +159,7 @@ impl TpmDevice {
 }
 
 /// Check whether a TPM 2.0 device is available on this system.
+#[must_use]
 pub fn tpm_available() -> bool {
     #[cfg(target_os = "linux")]
     {

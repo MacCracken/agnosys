@@ -34,6 +34,7 @@ pub struct DeviceInfo {
 }
 
 /// Well-known device subsystems.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DeviceSubsystem {
     Block,
@@ -49,6 +50,7 @@ pub enum DeviceSubsystem {
 
 impl DeviceSubsystem {
     /// Parse a subsystem string into the enum.
+    #[must_use]
     pub fn parse(s: &str) -> Self {
         match s {
             "block" => Self::Block,
@@ -92,6 +94,7 @@ pub struct UdevRule {
 }
 
 /// Lifecycle events emitted by the kernel / udev.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DeviceEvent {
     Add,
@@ -380,6 +383,7 @@ pub fn trigger_device(syspath: &str) -> Result<()> {
 /// Render a `UdevRule` to the string content of a `.rules` file.
 ///
 /// This is a pure function with no side effects.
+#[must_use]
 pub fn render_udev_rule(rule: &UdevRule) -> String {
     let mut parts: Vec<String> = Vec::new();
 

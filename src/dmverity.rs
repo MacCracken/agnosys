@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Hash algorithm for dm-verity.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerityHashAlgorithm {
     Sha256,
@@ -18,6 +19,7 @@ pub enum VerityHashAlgorithm {
 
 impl VerityHashAlgorithm {
     /// Return the algorithm name as used by `veritysetup`.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             VerityHashAlgorithm::Sha256 => "sha256",
@@ -402,6 +404,7 @@ pub fn verity_verify(data_device: &Path, hash_device: &Path, root_hash: &str) ->
 /// Check if dm-verity is supported on this system.
 ///
 /// Checks for both the kernel module and the `veritysetup` tool.
+#[must_use]
 pub fn verity_supported() -> bool {
     #[cfg(target_os = "linux")]
     {

@@ -76,7 +76,7 @@ Flat crate (like ai-hwaccel, hisab, yukti). NOT a workspace. Modules under `src/
 | shakti | pam |
 | aegis | mac |
 | ark | fuse, update |
-| daimon | seccomp, certpin, agent |
+| daimon | seccomp, certpin |
 
 ## DO NOT
 - **Do not commit or push** — the user handles all git operations (commit, push, tag)

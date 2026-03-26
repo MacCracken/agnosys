@@ -339,6 +339,7 @@ pub const SECCOMP_RET_TRAP: u32 = 0x0003_0000;
 /// Map a syscall name to its x86_64 syscall number.
 ///
 /// Returns `None` for unrecognized names. Covers the most common Linux syscalls.
+#[must_use]
 pub fn syscall_name_to_nr(name: &str) -> Option<u32> {
     match name {
         "read" => Some(0),
@@ -704,6 +705,7 @@ impl FilesystemRule {
 }
 
 /// Filesystem access levels
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FsAccess {
     #[default]

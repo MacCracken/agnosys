@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 /// Represents an A/B update slot.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UpdateSlot {
     A,
@@ -59,6 +60,7 @@ impl fmt::Display for UpdateSlot {
 }
 
 /// Release channel for updates.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UpdateChannel {
     Stable,
@@ -114,6 +116,7 @@ pub struct UpdateManifest {
 }
 
 /// Phases of an in-progress update.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UpdatePhase {
     Downloading,
@@ -234,7 +237,7 @@ pub fn validate_version(version: &str) -> Result<()> {
             format!("Version must have exactly 3 parts (YYYY.M.D), got: {version}").into(),
         ));
     }
-    for (i, label) in [(0, "year"), (1, "day"), (2, "month")] {
+    for (i, label) in [(0, "year"), (1, "month"), (2, "day")] {
         parts[i].parse::<u32>().map_err(|_| {
             SysError::InvalidArgument(
                 format!("Version {label} component is not a number: '{}'", parts[i]).into(),
@@ -264,6 +267,7 @@ pub fn validate_version(version: &str) -> Result<()> {
 ///
 /// Returns `Ordering::Less` when `a` is older than `b`.  If either string
 /// is malformed the comparison falls back to lexicographic ordering.
+#[must_use]
 pub fn compare_versions(a: &str, b: &str) -> Ordering {
     let parse = |v: &str| -> Option<(u32, u32, u32)> {
         let p: Vec<&str> = v.split('.').collect();
@@ -759,6 +763,7 @@ pub fn mark_boot_successful(config: &UpdateConfig) -> Result<()> {
 /// Pure function: returns `true` if the system has exceeded the maximum
 /// allowed boot attempts since an update, indicating an automatic rollback
 /// should be triggered.
+#[must_use]
 pub fn needs_rollback(state: &UpdateState, max_boot_attempts: u32) -> bool {
     state.pending_update.is_some() && state.boot_count_since_update >= max_boot_attempts
 }
@@ -772,6 +777,7 @@ pub fn needs_rollback(state: &UpdateState, max_boot_attempts: u32) -> bool {
 /// Computes the `sha256_digest` automatically so that `verify_manifest`
 /// passes.
 #[doc(hidden)]
+#[must_use]
 pub fn build_test_manifest(version: &str, channel: UpdateChannel) -> UpdateManifest {
     let file_hash = "a".repeat(64); // valid hex
     let mut manifest = UpdateManifest {

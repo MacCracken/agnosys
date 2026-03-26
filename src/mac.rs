@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Which MAC system is active on this kernel.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MacSystem {
     SELinux,
@@ -29,6 +30,7 @@ impl std::fmt::Display for MacSystem {
 }
 
 /// SELinux enforcement mode.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SELinuxMode {
     Enforcing,
@@ -47,6 +49,7 @@ impl std::fmt::Display for SELinuxMode {
 }
 
 /// AppArmor profile enforcement state.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppArmorProfileState {
     Enforce,
@@ -137,6 +140,7 @@ impl AgentMacProfile {
 /// Reads `/sys/kernel/security/lsm` to determine the active LSMs.
 /// Returns `MacSystem::SELinux` if SELinux is present, `MacSystem::AppArmor` if
 /// AppArmor is present, or `MacSystem::None` if neither is active.
+#[must_use]
 pub fn detect_mac_system() -> MacSystem {
     #[cfg(target_os = "linux")]
     {

@@ -94,6 +94,7 @@ impl Default for AuditStatus {
 }
 
 /// Type of audit rule.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuditRuleType {
     /// Watch file access (equivalent to auditctl -w)

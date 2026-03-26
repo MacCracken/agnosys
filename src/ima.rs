@@ -15,6 +15,7 @@ use std::path::Path;
 // ---------------------------------------------------------------------------
 
 /// IMA policy action.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImaAction {
     /// Measure the file (record hash in measurement list).
@@ -32,6 +33,7 @@ pub enum ImaAction {
 }
 
 impl ImaAction {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             ImaAction::Measure => "measure",
@@ -51,6 +53,7 @@ impl std::fmt::Display for ImaAction {
 }
 
 /// Target type (func) for an IMA policy rule.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImaTarget {
     /// All files opened for read.
@@ -68,6 +71,7 @@ pub enum ImaTarget {
 }
 
 impl ImaTarget {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             ImaTarget::FileCheck => "FILE_CHECK",
@@ -185,6 +189,7 @@ impl ImaPolicyRule {
 
     /// Render this rule as a policy line suitable for
     /// `/sys/kernel/security/ima/policy`.
+    #[must_use = "policy line should be used"]
     pub fn to_policy_line(&self) -> Result<String> {
         self.validate()?;
 
@@ -241,6 +246,7 @@ impl ImaPolicy {
     }
 
     /// Render the full policy as a string (newline-separated rules).
+    #[must_use = "policy string should be used"]
     pub fn to_policy_string(&self) -> Result<String> {
         self.validate()?;
         let lines: Result<Vec<String>> = self.rules.iter().map(|r| r.to_policy_line()).collect();
@@ -285,6 +291,7 @@ pub struct ImaStatus {
 // ---------------------------------------------------------------------------
 
 /// Check whether IMA is active on this system.
+#[must_use = "IMA status should be used"]
 pub fn get_ima_status() -> Result<ImaStatus> {
     #[cfg(target_os = "linux")]
     {
@@ -333,6 +340,7 @@ pub fn get_ima_status() -> Result<ImaStatus> {
 ///
 /// Example:
 /// `10 abc123...def ima-ng sha256:deadbeef...cafe /usr/bin/bash`
+#[must_use = "IMA measurements should be used"]
 pub fn read_ima_ascii_runtime_measurements(path: &Path) -> Result<Vec<ImaMeasurement>> {
     let content = std::fs::read_to_string(path).map_err(|e| {
         SysError::Unknown(
@@ -349,6 +357,7 @@ pub fn read_ima_ascii_runtime_measurements(path: &Path) -> Result<Vec<ImaMeasure
 }
 
 /// Parse IMA measurement lines from a string.
+#[must_use = "parsed IMA measurements should be used"]
 pub fn parse_ima_measurements(content: &str) -> Result<Vec<ImaMeasurement>> {
     let mut measurements = Vec::new();
 

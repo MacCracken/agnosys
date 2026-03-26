@@ -111,6 +111,7 @@ impl LuksConfig {
 }
 
 /// Supported filesystems for LUKS volumes.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LuksFilesystem {
     Ext4,
@@ -120,6 +121,7 @@ pub enum LuksFilesystem {
 
 impl LuksFilesystem {
     /// Return the mkfs command name.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             LuksFilesystem::Ext4 => "ext4",
@@ -129,6 +131,7 @@ impl LuksFilesystem {
     }
 
     /// Return the mkfs binary name.
+    #[must_use]
     pub fn mkfs_cmd(&self) -> &str {
         match self {
             LuksFilesystem::Ext4 => "mkfs.ext4",
@@ -164,12 +167,14 @@ impl Default for LuksCipher {
 
 impl LuksCipher {
     /// Return the cipher string for cryptsetup (e.g., "aes-xts-plain64").
+    #[must_use]
     pub fn as_cryptsetup_str(&self) -> String {
         format!("{}-{}", self.algorithm, self.mode)
     }
 }
 
 /// Password-based key derivation function.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LuksPbkdf {
     Argon2id,
@@ -177,6 +182,7 @@ pub enum LuksPbkdf {
 }
 
 impl LuksPbkdf {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             LuksPbkdf::Argon2id => "argon2id",
@@ -668,6 +674,7 @@ pub fn teardown_agent_volume(name: &str) -> Result<()> {
 }
 
 /// Check if `cryptsetup` is available on this system.
+#[must_use]
 pub fn cryptsetup_available() -> bool {
     std::process::Command::new("cryptsetup")
         .arg("--version")
@@ -677,6 +684,7 @@ pub fn cryptsetup_available() -> bool {
 }
 
 /// Check if dm-crypt kernel module is loaded.
+#[must_use]
 pub fn dmcrypt_supported() -> bool {
     #[cfg(target_os = "linux")]
     {

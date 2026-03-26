@@ -28,6 +28,7 @@ pub struct JournalEntry {
 }
 
 /// Syslog priority levels as used in the journal.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum JournalPriority {
     Emergency = 0,
@@ -43,6 +44,7 @@ pub enum JournalPriority {
 impl JournalPriority {
     /// Convert a `u8` value (0-7) into a `JournalPriority`.
     /// Returns `None` if the value is out of range.
+    #[must_use]
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(Self::Emergency),
@@ -114,6 +116,7 @@ pub struct JournalStats {
 /// Build the argument list for a `journalctl` invocation from a filter.
 ///
 /// This is a pure function with no side effects, suitable for unit testing.
+#[must_use]
 pub fn build_journalctl_args(filter: &JournalFilter) -> Vec<String> {
     let mut args: Vec<String> = vec!["--output=json".to_string(), "--no-pager".to_string()];
 

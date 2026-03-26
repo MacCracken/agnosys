@@ -63,6 +63,7 @@ impl Default for FuseMountOptions {
 }
 
 /// Well-known FUSE filesystem types.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FuseFilesystem {
     /// SSH filesystem
@@ -81,6 +82,7 @@ pub enum FuseFilesystem {
 
 impl FuseFilesystem {
     /// Return the binary name used to mount this filesystem.
+    #[must_use]
     pub fn binary_name(&self) -> &str {
         match self {
             FuseFilesystem::Sshfs => "sshfs",
@@ -157,6 +159,7 @@ pub struct AgentFuseConfig {
 /// Parse the content of `/proc/mounts` and return all FUSE entries.
 ///
 /// This is a pure function suitable for unit testing.
+#[must_use = "parsed FUSE mounts should be used"]
 pub fn parse_proc_mounts(content: &str) -> Vec<FuseMount> {
     content
         .lines()
@@ -184,6 +187,7 @@ pub fn parse_proc_mounts(content: &str) -> Vec<FuseMount> {
 /// Render [`FuseMountOptions`] into a comma-separated `-o` option string.
 ///
 /// This is a pure function suitable for unit testing.
+#[must_use = "rendered mount options should be used"]
 pub fn render_mount_options(opts: &FuseMountOptions) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -252,6 +256,7 @@ pub fn validate_mountpoint(path: &Path) -> Result<()> {
 }
 
 /// Check whether FUSE is available on this system by testing for `/dev/fuse`.
+#[must_use = "FUSE availability should be checked"]
 pub fn is_fuse_available() -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -269,6 +274,7 @@ pub fn is_fuse_available() -> bool {
 // ---------------------------------------------------------------------------
 
 /// List all currently mounted FUSE filesystems by reading `/proc/mounts`.
+#[must_use = "listed FUSE mounts should be used"]
 pub fn list_fuse_mounts() -> Result<Vec<FuseMount>> {
     #[cfg(target_os = "linux")]
     {
@@ -436,6 +442,7 @@ pub fn unmount_fuse(mountpoint: &Path) -> Result<()> {
 }
 
 /// Get the status of a FUSE mount at the given mountpoint.
+#[must_use = "FUSE status should be used"]
 pub fn get_fuse_status(mountpoint: &Path) -> Result<FuseStatus> {
     #[cfg(target_os = "linux")]
     {

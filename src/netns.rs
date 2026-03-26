@@ -95,6 +95,7 @@ pub struct NetNamespaceHandle {
 /// Generate IP addresses for an agent based on a hash of its name.
 ///
 /// Uses the 10.100.x.y/30 range. Returns (host_ip, agent_ip).
+#[must_use]
 pub fn generate_agent_ips(agent_name: &str) -> (String, String) {
     let mut hasher = DefaultHasher::new();
     agent_name.hash(&mut hasher);
