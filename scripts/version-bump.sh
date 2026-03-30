@@ -13,3 +13,9 @@ sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
 cargo check --quiet 2>/dev/null || true
 
 echo "Bumped to $NEW_VERSION"
+echo ""
+echo "Next steps:"
+echo "  git add VERSION Cargo.toml Cargo.lock"
+echo "  git commit -m 'release: $NEW_VERSION'"
+echo "  git tag $NEW_VERSION"
+echo "  git push origin main --tags"

@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["*"]
+    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
 
 permissions:
   contents: write
@@ -32,7 +32,22 @@ jobs:
             exit 1
           fi
           echo "Version verified: $TAG_VERSION"
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          # Extract the section for this version from CHANGELOG.md
+          # Matches from "## [VERSION]" until the next "## [" or EOF
+          BODY=$(awk "/^## \\[$VERSION\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            echo "WARNING: No CHANGELOG entry found for $VERSION"
+            BODY="No changelog entry for this release."
+          fi
+          # Write to file to preserve multiline content
+          echo "$BODY" > /tmp/release-body.md
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          name: "agnosys ${{ github.ref_name }}"
+          body_path: /tmp/release-body.md
+          prerelease: ${{ startsWith(github.ref_name, '0.') }}
