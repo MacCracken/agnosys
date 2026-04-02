@@ -91,7 +91,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-semver-checks
-      - run: cargo semver-checks check-release --all-features
+      - run: cargo semver-checks check-release --all-features --baseline-rev HEAD~1
