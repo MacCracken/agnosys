@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
 
 /// Configuration for a LUKS encrypted volume.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LuksConfig {
     /// Volume name (used for dm-crypt mapping: `/dev/mapper/{name}`)
@@ -121,6 +122,7 @@ pub enum LuksFilesystem {
 
 impl LuksFilesystem {
     /// Return the mkfs command name.
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -131,6 +133,7 @@ impl LuksFilesystem {
     }
 
     /// Return the mkfs binary name.
+    #[inline]
     #[must_use]
     pub fn mkfs_cmd(&self) -> &str {
         match self {
@@ -148,6 +151,7 @@ impl std::fmt::Display for LuksFilesystem {
 }
 
 /// Cipher specification for LUKS.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LuksCipher {
     /// Algorithm name (e.g., "aes")
@@ -167,6 +171,7 @@ impl Default for LuksCipher {
 
 impl LuksCipher {
     /// Return the cipher string for cryptsetup (e.g., "aes-xts-plain64").
+    #[inline]
     #[must_use]
     pub fn as_cryptsetup_str(&self) -> String {
         format!("{}-{}", self.algorithm, self.mode)
@@ -182,6 +187,7 @@ pub enum LuksPbkdf {
 }
 
 impl LuksPbkdf {
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -192,6 +198,7 @@ impl LuksPbkdf {
 }
 
 /// Status of a LUKS volume.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LuksStatus {
     /// Volume name
@@ -211,6 +218,7 @@ pub struct LuksStatus {
 }
 
 /// A LUKS encryption key that zeroes its memory on drop.
+#[non_exhaustive]
 pub struct LuksKey {
     data: Vec<u8>,
 }

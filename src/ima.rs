@@ -33,6 +33,7 @@ pub enum ImaAction {
 }
 
 impl ImaAction {
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -71,6 +72,7 @@ pub enum ImaTarget {
 }
 
 impl ImaTarget {
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -91,6 +93,7 @@ impl std::fmt::Display for ImaTarget {
 }
 
 /// A single IMA policy rule.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImaPolicyRule {
     /// Action to take.
@@ -154,6 +157,7 @@ impl ImaPolicyRule {
     }
 
     /// Validate the rule.
+    #[must_use = "validation result should be checked"]
     pub fn validate(&self) -> Result<()> {
         if let Some(ref uuid) = self.fsuuid {
             if uuid.is_empty() {
@@ -225,6 +229,7 @@ impl ImaPolicyRule {
 }
 
 /// A complete IMA policy (set of rules).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImaPolicy {
     pub rules: Vec<ImaPolicyRule>,
@@ -242,6 +247,7 @@ impl ImaPolicy {
     }
 
     /// Validate all rules in the policy.
+    #[must_use = "validation result should be checked"]
     pub fn validate(&self) -> Result<()> {
         if self.rules.is_empty() {
             return Err(SysError::InvalidArgument("IMA policy has no rules".into()));
@@ -277,6 +283,7 @@ impl Default for ImaPolicy {
 }
 
 /// A parsed IMA measurement from `ascii_runtime_measurements`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImaMeasurement {
     /// PCR register index (typically 10).
@@ -292,6 +299,7 @@ pub struct ImaMeasurement {
 }
 
 /// IMA subsystem status.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImaStatus {
     /// Whether IMA is active (securityfs path exists).

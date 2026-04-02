@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// A mounted FUSE filesystem.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuseMount {
     /// Where the filesystem is mounted
@@ -27,6 +28,7 @@ pub struct FuseMount {
 }
 
 /// Options controlling FUSE mount behaviour.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuseMountOptions {
     /// Allow other users to access the mount
@@ -82,6 +84,7 @@ pub enum FuseFilesystem {
 
 impl FuseFilesystem {
     /// Return the binary name used to mount this filesystem.
+    #[inline]
     #[must_use]
     pub fn binary_name(&self) -> &str {
         match self {
@@ -95,6 +98,7 @@ impl FuseFilesystem {
     }
 
     /// Return the `fuse.` type string as it appears in `/proc/mounts`.
+    #[inline]
     pub fn fstype_str(&self) -> String {
         match self {
             FuseFilesystem::Sshfs => "fuse.sshfs".to_string(),
@@ -121,6 +125,7 @@ impl std::fmt::Display for FuseFilesystem {
 }
 
 /// Runtime status of a FUSE mount.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuseStatus {
     /// Whether the filesystem is currently mounted
@@ -136,6 +141,7 @@ pub struct FuseStatus {
 }
 
 /// Per-agent FUSE configuration.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentFuseConfig {
     /// Agent identifier

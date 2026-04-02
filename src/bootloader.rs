@@ -34,6 +34,7 @@ impl std::fmt::Display for Bootloader {
 }
 
 /// A single boot entry (kernel + initrd + options).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BootEntry {
     /// Unique identifier (filename stem for systemd-boot, menuentry index/id for GRUB2)
@@ -53,6 +54,7 @@ pub struct BootEntry {
 }
 
 /// Aggregate boot configuration.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootConfig {
     /// Detected bootloader
@@ -98,6 +100,7 @@ const DANGEROUS_CMDLINE_TOKENS: &[&str] = &[
 /// Checks for systemd-boot first (presence of `/boot/efi/EFI/systemd/`),
 /// then GRUB2 (`/boot/grub/grub.cfg`). Returns `Bootloader::Unknown` if
 /// neither is found.
+#[must_use = "detected bootloader should be used"]
 pub fn detect_bootloader() -> Result<Bootloader> {
     #[cfg(target_os = "linux")]
     {
@@ -123,6 +126,7 @@ pub fn detect_bootloader() -> Result<Bootloader> {
 // ---------------------------------------------------------------------------
 
 /// Read the full boot configuration (bootloader type, timeout, default entry, and all entries).
+#[must_use = "boot config should be used"]
 pub fn read_boot_config() -> Result<BootConfig> {
     #[cfg(target_os = "linux")]
     {
@@ -145,12 +149,14 @@ pub fn read_boot_config() -> Result<BootConfig> {
 }
 
 /// List all available boot entries for the detected bootloader.
+#[must_use = "boot entries should be used"]
 pub fn list_boot_entries() -> Result<Vec<BootEntry>> {
     let config = read_boot_config()?;
     Ok(config.entries)
 }
 
 /// Get the current default boot entry.
+#[must_use = "default entry should be used"]
 pub fn get_default_entry() -> Result<BootEntry> {
     let config = read_boot_config()?;
     config
@@ -162,6 +168,7 @@ pub fn get_default_entry() -> Result<BootEntry> {
 }
 
 /// Set the default boot entry by its ID.
+#[must_use = "set result should be checked"]
 pub fn set_default_entry(id: &str) -> Result<()> {
     validate_entry_id(id)?;
 
@@ -187,6 +194,7 @@ pub fn set_default_entry(id: &str) -> Result<()> {
 }
 
 /// Modify the kernel command line for a specific boot entry.
+#[must_use = "set result should be checked"]
 pub fn set_kernel_cmdline(entry_id: &str, options: &str) -> Result<()> {
     validate_entry_id(entry_id)?;
     validate_kernel_cmdline(options)?;
@@ -213,6 +221,7 @@ pub fn set_kernel_cmdline(entry_id: &str, options: &str) -> Result<()> {
 }
 
 /// Set the boot menu timeout in seconds (capped at 300).
+#[must_use = "set result should be checked"]
 pub fn set_timeout(seconds: u32) -> Result<()> {
     if seconds > 300 {
         return Err(SysError::InvalidArgument(
@@ -249,6 +258,7 @@ pub fn set_timeout(seconds: u32) -> Result<()> {
 ///
 /// Rejects dangerous options such as `init=/bin/sh`, `single`, `rd.break`,
 /// and `debug_shell` that could bypass normal boot security.
+#[must_use = "validation result should be checked"]
 pub fn validate_kernel_cmdline(options: &str) -> Result<()> {
     if options.len() > 4096 {
         return Err(SysError::InvalidArgument(

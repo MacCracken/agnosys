@@ -72,6 +72,7 @@ fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, String> {
 // ---------------------------------------------------------------------------
 
 /// A pinned certificate entry for a specific host.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PinnedCert {
     /// Hostname (e.g. "api.openai.com")
@@ -87,6 +88,7 @@ pub struct PinnedCert {
 }
 
 /// A set of pinned certificates with metadata.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CertPinSet {
     /// All pinned certificate entries.
@@ -121,6 +123,7 @@ pub enum CertPinResult {
 }
 
 /// Configuration for the cert pinning subsystem.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CertPinConfig {
     /// Path to the JSON pin-set file on disk.
@@ -143,6 +146,7 @@ fn default_max_age() -> u64 {
 }
 
 /// Information extracted from an X.509 certificate.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CertInfo {
     pub subject: String,

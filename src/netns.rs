@@ -15,6 +15,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// Configuration for creating a per-agent network namespace.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetNamespaceConfig {
     /// Agent identifier (used for naming)
@@ -281,6 +282,7 @@ pub fn apply_firewall_rules(handle: &NetNamespaceHandle, policy: &FirewallPolicy
 }
 
 /// Handle for an active network namespace.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetNamespaceHandle {
     /// Namespace name (`agnos-agent-{id}`)

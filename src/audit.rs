@@ -34,6 +34,7 @@ const SYS_AGNOS_AUDIT_LOG: libc::c_long = 520;
 const NLMSG_HDRLEN: usize = 16;
 
 /// Handle wrapping a netlink audit socket file descriptor.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct AuditHandle {
     /// The netlink socket fd (-1 if using proc-only mode)
@@ -43,6 +44,7 @@ pub struct AuditHandle {
 }
 
 /// Configuration for opening an audit connection.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditConfig {
     /// Use the netlink audit socket (AF_NETLINK, NETLINK_AUDIT)
@@ -64,6 +66,7 @@ impl Default for AuditConfig {
 }
 
 /// Current audit subsystem status (from AUDIT_GET).
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditStatus {
     /// Whether auditing is enabled (1) or disabled (0)
@@ -104,6 +107,7 @@ pub enum AuditRuleType {
 }
 
 /// An audit rule to add or delete.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditRule {
     /// Type of rule
@@ -183,6 +187,7 @@ impl AuditRule {
 }
 
 /// A raw audit entry from `/proc/agnos/audit`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawAuditEntry {
     /// Sequence number

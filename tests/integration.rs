@@ -173,11 +173,11 @@ mod udev_integration {
 
     #[test]
     fn render_udev_rule_round_trip() {
-        let rule = agnosys::udev::UdevRule {
-            name: "test".to_string(),
-            match_attrs: vec![("SUBSYSTEM".to_string(), "net".to_string())],
-            actions: vec![("RUN".to_string(), "/bin/true".to_string())],
-        };
+        let rule = agnosys::udev::UdevRule::new(
+            "test",
+            vec![("SUBSYSTEM".to_string(), "net".to_string())],
+            vec![("RUN".to_string(), "/bin/true".to_string())],
+        );
         let rendered = agnosys::udev::render_udev_rule(&rule);
         assert!(rendered.contains("SUBSYSTEM"));
         assert!(rendered.contains("RUN"));
@@ -599,14 +599,7 @@ mod update_integration {
 
     #[test]
     fn needs_rollback_logic() {
-        let state = agnosys::update::UpdateState {
-            current_slot: agnosys::update::UpdateSlot::A,
-            current_version: "2025.01.0".to_string(),
-            pending_update: None,
-            last_update: None,
-            rollback_available: false,
-            boot_count_since_update: 0,
-        };
+        let state = agnosys::update::UpdateState::new(agnosys::update::UpdateSlot::A, "2025.01.0");
         let _ = agnosys::update::needs_rollback(&state, 3);
     }
 }

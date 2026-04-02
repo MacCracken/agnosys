@@ -68,6 +68,7 @@ impl std::fmt::Display for AppArmorProfileState {
 }
 
 /// MAC profile for a specific agent type.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMacProfile {
     /// Agent type this profile applies to (User, Service, System)

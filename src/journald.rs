@@ -8,9 +8,10 @@
 use crate::error::{Result, SysError};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// A single journal entry parsed from `journalctl --output=json`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalEntry {
     /// Timestamp of the log entry (UTC)
@@ -24,7 +25,7 @@ pub struct JournalEntry {
     /// PID of the originating process
     pub pid: u32,
     /// Additional journal fields (_SYSTEMD_UNIT, _COMM, _TRANSPORT, etc.)
-    pub fields: HashMap<String, String>,
+    pub fields: BTreeMap<String, String>,
 }
 
 /// Syslog priority levels as used in the journal.
@@ -82,6 +83,7 @@ impl std::fmt::Display for JournalPriority {
 }
 
 /// Filter criteria for journal queries.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JournalFilter {
     /// Restrict to a specific systemd unit
@@ -101,6 +103,7 @@ pub struct JournalFilter {
 }
 
 /// Statistics about the journal on disk.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalStats {
     /// Total number of journal entries
@@ -200,7 +203,7 @@ pub fn parse_journal_json(json_line: &str) -> Result<JournalEntry> {
         "__CURSOR",
         "__MONOTONIC_TIMESTAMP",
     ];
-    let mut fields = HashMap::new();
+    let mut fields = BTreeMap::new();
     for (k, v) in obj.iter() {
         if !known_keys.contains(&k.as_str())
             && let Some(s) = v.as_str()
@@ -753,7 +756,7 @@ mod tests {
             priority: 4,
             message: "warning message".into(),
             pid: 42,
-            fields: HashMap::new(),
+            fields: BTreeMap::new(),
         };
         let json = serde_json::to_string(&entry).unwrap();
         let deserialized: JournalEntry = serde_json::from_str(&json).unwrap();
@@ -1103,7 +1106,7 @@ Disk usage: 64.0M
             priority: 4,
             message: "cloned".into(),
             pid: 42,
-            fields: HashMap::new(),
+            fields: BTreeMap::new(),
         };
         let cloned = entry.clone();
         assert_eq!(cloned.unit, entry.unit);
@@ -1120,7 +1123,7 @@ Disk usage: 64.0M
             priority: 6,
             message: "debug test".into(),
             pid: 1,
-            fields: HashMap::new(),
+            fields: BTreeMap::new(),
         };
         let dbg = format!("{:?}", entry);
         assert!(dbg.contains("JournalEntry"));

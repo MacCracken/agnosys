@@ -28,6 +28,8 @@ pub enum SecureBootState {
 }
 
 impl SecureBootState {
+    #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             SecureBootState::Enabled => "enabled",
@@ -38,6 +40,8 @@ impl SecureBootState {
     }
 
     /// Whether enforcement is active.
+    #[inline]
+    #[must_use]
     pub fn is_enforcing(&self) -> bool {
         matches!(self, SecureBootState::Enabled)
     }
@@ -50,6 +54,7 @@ impl std::fmt::Display for SecureBootState {
 }
 
 /// An enrolled MOK (Machine Owner Key).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnrolledKey {
     /// Subject / Common Name.
@@ -65,6 +70,7 @@ pub struct EnrolledKey {
 }
 
 /// Information about a kernel module's signature.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleSignatureInfo {
     /// Module file path.
@@ -78,6 +84,7 @@ pub struct ModuleSignatureInfo {
 }
 
 /// An EFI variable read from sysfs.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EfiVariable {
     /// Variable name (e.g. `SecureBoot-8be4df61-...`).
@@ -95,6 +102,7 @@ pub struct EfiVariable {
 /// Get the current Secure Boot state.
 ///
 /// Reads `/sys/firmware/efi/efivars/SecureBoot-*` or falls back to `mokutil`.
+#[must_use = "secure boot status should be used"]
 pub fn get_secureboot_status() -> Result<SecureBootState> {
     #[cfg(target_os = "linux")]
     {
@@ -178,6 +186,7 @@ fn read_secureboot_efivar(efivars_dir: &Path) -> Option<SecureBootState> {
 /// List enrolled MOK (Machine Owner Key) certificates.
 ///
 /// Uses `mokutil --list-enrolled`.
+#[must_use = "enrolled keys should be used"]
 pub fn list_enrolled_keys() -> Result<Vec<EnrolledKey>> {
     #[cfg(target_os = "linux")]
     {
@@ -204,6 +213,7 @@ pub fn list_enrolled_keys() -> Result<Vec<EnrolledKey>> {
 ///   Valid from: ...
 ///   Valid until: ...
 /// ```
+#[must_use = "parsed keys should be used"]
 pub fn parse_mokutil_list(output: &str) -> Result<Vec<EnrolledKey>> {
     // Pre-count key blocks to avoid repeated Vec reallocation
     let key_count = output
@@ -276,6 +286,7 @@ pub fn parse_mokutil_list(output: &str) -> Result<Vec<EnrolledKey>> {
 /// Enroll a DER-encoded certificate into the MOK list.
 ///
 /// Uses `mokutil --import <path>`. A reboot is required to complete enrollment.
+#[must_use = "enrollment result should be checked"]
 pub fn enroll_key(der_path: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -389,6 +400,7 @@ pub fn sign_kernel_module(
 }
 
 /// Verify a kernel module's signature using `modinfo`.
+#[must_use = "signature info should be used"]
 pub fn verify_module_signature(module_path: &Path) -> Result<ModuleSignatureInfo> {
     #[cfg(target_os = "linux")]
     {
@@ -430,6 +442,7 @@ pub fn verify_module_signature(module_path: &Path) -> Result<ModuleSignatureInfo
 }
 
 /// List relevant EFI variables from sysfs.
+#[must_use = "EFI variables should be used"]
 pub fn get_efi_variables() -> Result<Vec<EfiVariable>> {
     #[cfg(target_os = "linux")]
     {

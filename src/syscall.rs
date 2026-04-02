@@ -63,6 +63,7 @@ pub fn is_root() -> bool {
 ///
 /// Use [`query_sysinfo`] to fetch, then access fields directly.
 /// This avoids redundant kernel roundtrips when you need multiple values.
+#[non_exhaustive]
 pub struct SysInfo {
     inner: libc::sysinfo,
 }

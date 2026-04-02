@@ -146,11 +146,11 @@ fn bench_udev(c: &mut Criterion) {
         b.iter(|| agnosys::udev::get_device_info(black_box("/sys/class/net/lo")))
     });
     group.bench_function("render_udev_rule", |b| {
-        let rule = agnosys::udev::UdevRule {
-            name: "test".to_string(),
-            match_attrs: vec![("SUBSYSTEM".to_string(), "net".to_string())],
-            actions: vec![("RUN".to_string(), "/bin/true".to_string())],
-        };
+        let rule = agnosys::udev::UdevRule::new(
+            "test",
+            vec![("SUBSYSTEM".to_string(), "net".to_string())],
+            vec![("RUN".to_string(), "/bin/true".to_string())],
+        );
         b.iter(|| agnosys::udev::render_udev_rule(black_box(&rule)))
     });
 

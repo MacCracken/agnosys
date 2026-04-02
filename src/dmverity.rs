@@ -19,6 +19,7 @@ pub enum VerityHashAlgorithm {
 
 impl VerityHashAlgorithm {
     /// Return the algorithm name as used by `veritysetup`.
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -28,6 +29,7 @@ impl VerityHashAlgorithm {
     }
 
     /// Expected hex length of the root hash for this algorithm.
+    #[inline]
     pub fn hash_hex_len(&self) -> usize {
         match self {
             VerityHashAlgorithm::Sha256 => 64,
@@ -43,6 +45,7 @@ impl std::fmt::Display for VerityHashAlgorithm {
 }
 
 /// Configuration for a dm-verity volume.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerityConfig {
     /// Name for the dm-verity device mapping
@@ -112,6 +115,7 @@ impl VerityConfig {
 }
 
 /// Status of a dm-verity volume.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerityStatus {
     /// Device mapping name

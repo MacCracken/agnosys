@@ -7,7 +7,7 @@
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 /// Information about a single device as reported by udev / sysfs.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceInfo {
     /// Kernel sysfs path (e.g. `/sys/devices/pci0000:00/...`)
@@ -30,7 +31,7 @@ pub struct DeviceInfo {
     /// Device node path (e.g. `/dev/sda`, optional)
     pub devnode: Option<String>,
     /// All udev properties as key-value pairs
-    pub properties: HashMap<String, String>,
+    pub properties: BTreeMap<String, String>,
 }
 
 /// Well-known device subsystems.
@@ -83,6 +84,7 @@ impl std::fmt::Display for DeviceSubsystem {
 }
 
 /// A udev rule definition.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UdevRule {
     /// Rule file stem (e.g. `99-agnos-agent`), without `.rules` extension
@@ -91,6 +93,22 @@ pub struct UdevRule {
     pub match_attrs: Vec<(String, String)>,
     /// Assignment actions (`MODE="0660"`, `OWNER="agnos"`, `TAG+="systemd"`, etc.)
     pub actions: Vec<(String, String)>,
+}
+
+impl UdevRule {
+    /// Create a new udev rule.
+    #[inline]
+    pub fn new(
+        name: impl Into<String>,
+        match_attrs: Vec<(String, String)>,
+        actions: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            match_attrs,
+            actions,
+        }
+    }
 }
 
 /// Lifecycle events emitted by the kernel / udev.
@@ -133,6 +151,7 @@ impl DeviceEvent {
 }
 
 /// Configuration for spawning a udev monitor process.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceMonitorConfig {
     /// Only report events for this subsystem (e.g. `"block"`)
@@ -259,7 +278,7 @@ pub fn get_device_info(syspath: &str) -> Result<DeviceInfo> {
 pub fn parse_udevadm_info(output: &str) -> Result<DeviceInfo> {
     let mut devpath = String::new();
     let mut devnode: Option<String> = None;
-    let mut properties: HashMap<String, String> = HashMap::new();
+    let mut properties: BTreeMap<String, String> = BTreeMap::new();
 
     for line in output.lines() {
         let line = line.trim();
@@ -938,7 +957,7 @@ E: SUBSYSTEM=net
             driver: None,
             devnode: Some("/dev/sda".into()),
             properties: {
-                let mut m = HashMap::new();
+                let mut m = BTreeMap::new();
                 m.insert("ID_SERIAL".into(), "VBOX123".into());
                 m
             },
@@ -1431,7 +1450,7 @@ E: SUBSYSTEM=tty
             devtype: None,
             driver: None,
             devnode: None,
-            properties: HashMap::new(),
+            properties: BTreeMap::new(),
         };
         let json = serde_json::to_string(&info).unwrap();
         let back: DeviceInfo = serde_json::from_str(&json).unwrap();

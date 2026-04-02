@@ -34,6 +34,7 @@ pub enum UpdateSlot {
 
 impl UpdateSlot {
     /// Return the opposite slot.
+    #[inline]
     pub fn other(&self) -> UpdateSlot {
         match self {
             UpdateSlot::A => UpdateSlot::B,
@@ -42,6 +43,7 @@ impl UpdateSlot {
     }
 
     /// Return the partition suffix string (`"a"` or `"b"`).
+    #[inline]
     pub fn partition_suffix(&self) -> &'static str {
         match self {
             UpdateSlot::A => "a",
@@ -81,6 +83,7 @@ impl fmt::Display for UpdateChannel {
 }
 
 /// A single file within an update manifest.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateFile {
     /// Relative path within the update image.
@@ -96,6 +99,7 @@ pub struct UpdateFile {
 }
 
 /// Manifest describing an available update.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateManifest {
     /// Target version string (CalVer YYYY.M.D).
@@ -144,6 +148,7 @@ impl fmt::Display for UpdatePhase {
 }
 
 /// Progress information for an active update operation.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateProgress {
     /// Current phase.
@@ -156,6 +161,7 @@ pub struct UpdateProgress {
 
 impl UpdateProgress {
     /// Create a new progress value, clamping percent to 0..=100.
+    #[inline]
     pub fn new(phase: UpdatePhase, percent: u8, message: impl Into<String>) -> Self {
         Self {
             phase,
@@ -166,6 +172,7 @@ impl UpdateProgress {
 }
 
 /// Persistent update state stored on disk.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateState {
     /// Slot that is currently booted.
@@ -182,7 +189,23 @@ pub struct UpdateState {
     pub boot_count_since_update: u32,
 }
 
+impl UpdateState {
+    /// Create a new update state.
+    #[inline]
+    pub fn new(current_slot: UpdateSlot, current_version: impl Into<String>) -> Self {
+        Self {
+            current_slot,
+            current_version: current_version.into(),
+            pending_update: None,
+            last_update: None,
+            rollback_available: false,
+            boot_count_since_update: 0,
+        }
+    }
+}
+
 /// Configuration for the update subsystem.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateConfig {
     /// Base URL of the update server (or path to a local manifest).

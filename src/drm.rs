@@ -241,6 +241,7 @@ impl ConnectionStatus {
 // ── Public types ────────────────────────────────────────────────────
 
 /// DRM driver version information.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Version {
     pub major: i32,
@@ -252,6 +253,7 @@ pub struct Version {
 }
 
 /// Display mode resources (counts of CRTCs, connectors, encoders).
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ModeResources {
     pub crtc_ids: Vec<u32>,
@@ -265,6 +267,7 @@ pub struct ModeResources {
 }
 
 /// Information about a display connector.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ConnectorInfo {
     pub id: u32,
@@ -343,6 +346,7 @@ pub fn enumerate_render_nodes() -> Result<Vec<PathBuf>> {
 /// An open DRM device.
 ///
 /// Wraps a file descriptor to a `/dev/dri/card*` or `/dev/dri/renderD*` node.
+#[non_exhaustive]
 pub struct Device {
     fd: OwnedFd,
     path: PathBuf,

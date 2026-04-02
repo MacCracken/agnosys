@@ -27,6 +27,7 @@ pub enum TpmPcrBank {
 }
 
 impl TpmPcrBank {
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -38,6 +39,8 @@ impl TpmPcrBank {
     }
 
     /// Expected hex-encoded hash length for this bank.
+    #[inline]
+    #[must_use]
     pub fn hash_hex_len(&self) -> usize {
         match self {
             TpmPcrBank::Sha1 => 40,
@@ -55,6 +58,7 @@ impl std::fmt::Display for TpmPcrBank {
 }
 
 /// A single PCR value.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TpmPcrValue {
     /// PCR index (0–23).
@@ -66,6 +70,7 @@ pub struct TpmPcrValue {
 }
 
 /// Policy that describes which PCR values must match for seal/unseal.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TpmPcrPolicy {
     /// PCR indices that must match.
@@ -92,6 +97,8 @@ impl TpmPcrPolicy {
     }
 
     /// Render the PCR selection string for tpm2-tools (e.g. `sha256:0,1,7`).
+    #[inline]
+    #[must_use]
     pub fn pcr_selection(&self) -> String {
         let indices: Vec<String> = self.pcr_indices.iter().map(|i| i.to_string()).collect();
         format!("{}:{}", self.bank, indices.join(","))
@@ -99,6 +106,7 @@ impl TpmPcrPolicy {
 }
 
 /// Sealed secret handle (context file path + policy).
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SealedSecret {
     /// Path to the sealed object context file.
@@ -108,6 +116,7 @@ pub struct SealedSecret {
 }
 
 /// Known-good PCR values for measured boot verification.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeasuredBootBaseline {
     /// Expected PCR values (index → hex value).
@@ -115,6 +124,7 @@ pub struct MeasuredBootBaseline {
 }
 
 /// Handle to the TPM device.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct TpmDevice {
     /// Path to the TPM resource-manager device.
@@ -175,6 +185,7 @@ pub fn tpm_available() -> bool {
 /// Read one or more PCR values.
 ///
 /// Uses `tpm2_pcrread` to read the specified bank+indices.
+#[must_use = "PCR values should be used"]
 pub fn read_pcr(bank: TpmPcrBank, indices: &[u32]) -> Result<Vec<TpmPcrValue>> {
     #[cfg(target_os = "linux")]
     {
@@ -251,6 +262,7 @@ pub fn parse_pcr_read_output(
 /// Extend a PCR with a measurement hash.
 ///
 /// Uses `tpm2_pcrextend`.
+#[must_use = "extend result should be checked"]
 pub fn extend_pcr(bank: TpmPcrBank, index: u32, hash: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -286,6 +298,7 @@ pub fn extend_pcr(bank: TpmPcrBank, index: u32, hash: &str) -> Result<()> {
 /// Seal data to specific PCR state.
 ///
 /// Returns a `SealedSecret` handle that can be used with `unseal_secret`.
+#[must_use = "sealed secret should be used"]
 pub fn seal_secret(policy: &TpmPcrPolicy, data: &[u8], output_dir: &Path) -> Result<SealedSecret> {
     #[cfg(target_os = "linux")]
     {
@@ -366,6 +379,7 @@ pub fn seal_secret(policy: &TpmPcrPolicy, data: &[u8], output_dir: &Path) -> Res
 }
 
 /// Unseal a secret; only succeeds if current PCR values match the policy.
+#[must_use = "unsealed secret should be used"]
 pub fn unseal_secret(sealed: &SealedSecret) -> Result<Vec<u8>> {
     #[cfg(target_os = "linux")]
     {

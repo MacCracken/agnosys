@@ -28,6 +28,7 @@ pub enum PamService {
 
 impl PamService {
     /// Returns the service name string used in `/etc/pam.d/`.
+    #[inline]
     #[must_use]
     pub fn service_name(&self) -> &str {
         match self {
@@ -72,6 +73,7 @@ impl fmt::Display for AuthResult {
 }
 
 /// Information about a system user (parsed from `/etc/passwd` and groups).
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserInfo {
     pub username: String,
@@ -91,6 +93,7 @@ impl UserInfo {
 }
 
 /// Information about an active login session.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub session_id: String,
@@ -102,6 +105,7 @@ pub struct SessionInfo {
 }
 
 /// PAM configuration for a service.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PamConfig {
     pub service: PamService,
@@ -109,6 +113,7 @@ pub struct PamConfig {
 }
 
 /// A single PAM rule line.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PamRule {
     pub rule_type: PamRuleType,
@@ -135,6 +140,7 @@ pub enum PamRuleType {
 }
 
 impl PamRuleType {
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
@@ -176,6 +182,7 @@ pub enum PamControl {
 }
 
 impl PamControl {
+    #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {

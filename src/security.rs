@@ -679,6 +679,7 @@ pub fn create_namespace(flags: NamespaceFlags) -> Result<()> {
 }
 
 /// Filesystem access rule for Landlock
+#[non_exhaustive]
 pub struct FilesystemRule {
     pub path: std::path::PathBuf,
     pub access: FsAccess,
