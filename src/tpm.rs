@@ -1642,9 +1642,9 @@ mod tests {
             parse_pcr_read_output(output, TpmPcrBank::Sha256, &[0, 1, 2, 3, 4, 5, 6, 7]).unwrap();
         assert_eq!(values.len(), 8);
         // PCRs 0-6 should have the same value
-        for i in 0..7 {
+        for val in values.iter().take(7) {
             assert_eq!(
-                values[i].value,
+                val.value,
                 "3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969"
             );
         }

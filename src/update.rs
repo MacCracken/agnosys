@@ -2399,7 +2399,7 @@ mod tests {
     fn test_slot_clone_and_copy() {
         let a = UpdateSlot::A;
         let b = a; // Copy
-        let c = a.clone(); // Clone
+        let c = a; // Copy again
         assert_eq!(a, b);
         assert_eq!(a, c);
     }
@@ -2410,7 +2410,7 @@ mod tests {
     fn test_phase_clone_and_copy() {
         let p = UpdatePhase::Applying;
         let p2 = p; // Copy
-        let p3 = p.clone(); // Clone
+        let p3 = p; // Copy again
         assert_eq!(p, p2);
         assert_eq!(p, p3);
     }
