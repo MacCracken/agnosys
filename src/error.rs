@@ -1,4 +1,13 @@
 //! Unified error type with errno mapping.
+//!
+//! # Security Considerations
+//!
+//! - Error messages may embed file paths or operation names that could reveal
+//!   sensitive system layout. Avoid exposing `SysError::Display` output to
+//!   untrusted consumers without sanitization.
+//! - Errno integer values are safe to expose — they carry no privileged data.
+//! - `Cow<'static, str>` messages are caller-supplied; callers must not embed
+//!   secrets (keys, tokens, passwords) in error context strings.
 
 use std::borrow::Cow;
 

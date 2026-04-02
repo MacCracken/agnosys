@@ -4,6 +4,17 @@
 //! storage. Shells out to `cryptsetup` (standard tool from the cryptsetup package).
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Key material is zeroized on drop via the `zeroize` crate. Callers must
+//!   never log, serialize, or persist `LuksKey` values.
+//! - `cryptsetup` runs as a subprocess with root privileges; command arguments
+//!   are validated but callers must ensure volume names and paths are trusted.
+//! - Backing files contain encrypted data — their mere existence and size may
+//!   reveal information about agent storage.
+//! - Failed unlock attempts may be logged by the kernel; rate-limiting is the
+//!   caller's responsibility.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1997,5 +2008,275 @@ mod tests {
             "Should fail on size, got: {}",
             err
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage — untested code paths
+    // -----------------------------------------------------------------------
+
+    // --- LuksConfig: validation order (name length checked before chars) ---
+
+    #[test]
+    fn test_luks_config_validate_name_too_long_takes_precedence_over_bad_chars() {
+        let config = LuksConfig {
+            name: "/".repeat(129),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("too long"),
+            "Should fail on length, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_luks_config_validate_name_128_with_bad_chars() {
+        // Exactly 128 chars but with invalid chars -> fails on char check
+        let config = LuksConfig {
+            name: format!("{}!", "a".repeat(127)),
+            ..LuksConfig::for_agent("x", 64)
+        };
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("invalid characters"),
+            "Should fail on chars, got: {}",
+            err
+        );
+    }
+
+    // --- LuksFilesystem: serde deserialization from known JSON ---
+
+    #[test]
+    fn test_luks_filesystem_deserialize_from_json() {
+        let ext4: LuksFilesystem = serde_json::from_str("\"Ext4\"").unwrap();
+        assert_eq!(ext4, LuksFilesystem::Ext4);
+        let xfs: LuksFilesystem = serde_json::from_str("\"Xfs\"").unwrap();
+        assert_eq!(xfs, LuksFilesystem::Xfs);
+        let btrfs: LuksFilesystem = serde_json::from_str("\"Btrfs\"").unwrap();
+        assert_eq!(btrfs, LuksFilesystem::Btrfs);
+    }
+
+    #[test]
+    fn test_luks_filesystem_invalid_json() {
+        let result = serde_json::from_str::<LuksFilesystem>("\"Zfs\"");
+        assert!(result.is_err());
+    }
+
+    // --- LuksPbkdf: serde deserialization ---
+
+    #[test]
+    fn test_luks_pbkdf_deserialize_from_json() {
+        let argon: LuksPbkdf = serde_json::from_str("\"Argon2id\"").unwrap();
+        assert_eq!(argon, LuksPbkdf::Argon2id);
+        let pbkdf2: LuksPbkdf = serde_json::from_str("\"Pbkdf2\"").unwrap();
+        assert_eq!(pbkdf2, LuksPbkdf::Pbkdf2);
+    }
+
+    #[test]
+    fn test_luks_pbkdf_invalid_json() {
+        let result = serde_json::from_str::<LuksPbkdf>("\"Scrypt\"");
+        assert!(result.is_err());
+    }
+
+    // --- LuksCipher: as_cryptsetup_str edge cases ---
+
+    #[test]
+    fn test_luks_cipher_single_char_fields() {
+        let cipher = LuksCipher {
+            algorithm: "a".to_string(),
+            mode: "b".to_string(),
+        };
+        assert_eq!(cipher.as_cryptsetup_str(), "a-b");
+    }
+
+    #[test]
+    fn test_luks_cipher_serde_roundtrip() {
+        let cipher = LuksCipher::default();
+        let json = serde_json::to_string(&cipher).unwrap();
+        let back: LuksCipher = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.algorithm, "aes");
+        assert_eq!(back.mode, "xts-plain64");
+    }
+
+    // --- LuksKey: edge cases ---
+
+    #[test]
+    fn test_luks_key_from_bytes_all_zeros() {
+        let key = LuksKey::from_bytes(vec![0; 64]).unwrap();
+        assert_eq!(key.len(), 64);
+        assert!(key.as_bytes().iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn test_luks_key_from_passphrase_exactly_8_unicode_chars() {
+        // 8 unicode chars, each multibyte -> passes length >= 8 check on char count
+        // but from_passphrase checks .len() which is byte count
+        let pass = "\u{00e9}".repeat(8); // e-acute, 2 bytes each = 16 bytes
+        let key = LuksKey::from_passphrase(&pass).unwrap();
+        assert_eq!(key.len(), 16); // 8 * 2 bytes
+    }
+
+    // --- LuksStatus: field permutations ---
+
+    #[test]
+    fn test_luks_status_open_not_mounted() {
+        let status = LuksStatus {
+            name: "open-only".to_string(),
+            is_open: true,
+            is_mounted: false,
+            backing_path: PathBuf::from("/dev/loop0"),
+            mount_point: None,
+            cipher: "aes-xts-plain64".to_string(),
+            key_size_bits: 512,
+        };
+        assert!(status.is_open);
+        assert!(!status.is_mounted);
+        assert!(status.mount_point.is_none());
+        let json = serde_json::to_string(&status).unwrap();
+        let back: LuksStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "open-only");
+        assert!(back.is_open);
+        assert!(!back.is_mounted);
+    }
+
+    #[test]
+    fn test_luks_status_not_open_not_mounted() {
+        let status = LuksStatus {
+            name: "closed".to_string(),
+            is_open: false,
+            is_mounted: false,
+            backing_path: PathBuf::from("/var/lib/vol.img"),
+            mount_point: None,
+            cipher: "serpent-cbc-essiv".to_string(),
+            key_size_bits: 256,
+        };
+        assert!(!status.is_open);
+        assert!(!status.is_mounted);
+    }
+
+    // --- LuksConfig: serde with all non-default values ---
+
+    #[test]
+    fn test_luks_config_serde_custom_values() {
+        let config = LuksConfig {
+            name: "custom-vol".to_string(),
+            backing_path: PathBuf::from("/custom/path.img"),
+            size_mb: 4096,
+            mount_point: PathBuf::from("/custom/mount"),
+            filesystem: LuksFilesystem::Btrfs,
+            cipher: LuksCipher {
+                algorithm: "serpent".to_string(),
+                mode: "cbc-essiv".to_string(),
+            },
+            key_size_bits: 256,
+            pbkdf: LuksPbkdf::Pbkdf2,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: LuksConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "custom-vol");
+        assert_eq!(back.backing_path, PathBuf::from("/custom/path.img"));
+        assert_eq!(back.size_mb, 4096);
+        assert_eq!(back.filesystem, LuksFilesystem::Btrfs);
+        assert_eq!(back.cipher.algorithm, "serpent");
+        assert_eq!(back.cipher.mode, "cbc-essiv");
+        assert_eq!(back.key_size_bits, 256);
+        assert_eq!(back.pbkdf, LuksPbkdf::Pbkdf2);
+    }
+
+    // --- LuksConfig: validate key size exactly at boundaries ---
+
+    #[test]
+    fn test_luks_config_validate_key_size_255_rejected() {
+        let config = LuksConfig {
+            key_size_bits: 255,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_key_size_257_rejected() {
+        let config = LuksConfig {
+            key_size_bits: 257,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_key_size_511_rejected() {
+        let config = LuksConfig {
+            key_size_bits: 511,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_luks_config_validate_key_size_513_rejected() {
+        let config = LuksConfig {
+            key_size_bits: 513,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(config.validate().is_err());
+    }
+
+    // --- LuksConfig: validate size at exact boundaries ---
+
+    #[test]
+    fn test_luks_config_validate_size_exactly_1tb_boundary() {
+        // 1 TB = 1024 * 1024 MB = 1048576 MB
+        let ok = LuksConfig {
+            size_mb: 1048576,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(ok.validate().is_ok());
+
+        let too_big = LuksConfig {
+            size_mb: 1048577,
+            ..LuksConfig::for_agent("x", 64)
+        };
+        assert!(too_big.validate().is_err());
+    }
+
+    // --- LuksKey: from_passphrase length check is byte-based ---
+
+    #[test]
+    fn test_luks_key_from_passphrase_7_byte_utf8_rejected() {
+        // "1234567" is 7 ASCII bytes -> too short
+        let err = LuksKey::from_passphrase("1234567").unwrap_err();
+        assert!(err.to_string().contains("minimum 8"));
+    }
+
+    #[test]
+    fn test_luks_key_from_passphrase_7_char_multibyte_accepted() {
+        // 7 chars but each is 2 bytes = 14 bytes > 8 -> should be accepted
+        let pass = "\u{00e9}".repeat(7); // 14 bytes
+        assert!(LuksKey::from_passphrase(&pass).is_ok());
+    }
+
+    // --- LuksConfig: Debug includes all fields ---
+
+    #[test]
+    fn test_luks_config_debug_includes_filesystem() {
+        let config = LuksConfig::for_agent("debug-fs", 64);
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("Ext4"));
+        assert!(debug.contains("Argon2id"));
+        assert!(debug.contains("512"));
+    }
+
+    // --- LuksCipher: Debug ---
+
+    #[test]
+    fn test_luks_cipher_debug_custom() {
+        let cipher = LuksCipher {
+            algorithm: "twofish".to_string(),
+            mode: "ecb".to_string(),
+        };
+        let debug = format!("{:?}", cipher);
+        assert!(debug.contains("twofish"));
+        assert!(debug.contains("ecb"));
     }
 }

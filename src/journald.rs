@@ -4,6 +4,18 @@
 //! systemd journal via the `journalctl` CLI tool.
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Journal entries may contain sensitive data (passwords in failed sudo
+//!   attempts, service tokens in debug output). Treat query results as
+//!   potentially sensitive.
+//! - Filtering by unit name is a convenience, not access control — any user
+//!   in the `systemd-journal` group can read all journal entries.
+//! - Journal vacuum (`journalctl --vacuum-*`) is destructive and irreversible;
+//!   it permanently deletes log data that may be needed for forensics.
+//! - `journalctl` runs as a subprocess; callers must validate unit names and
+//!   filter parameters to prevent argument injection.
 
 use crate::error::{Result, SysError};
 use chrono::{DateTime, TimeZone, Utc};
@@ -253,6 +265,9 @@ pub fn query_journal(filter: &JournalFilter) -> Result<Vec<JournalEntry>> {
     Ok(entries)
 }
 
+/// Query the systemd journal with the given filter, returning parsed entries.
+///
+/// Shells out to `journalctl --output=json` and parses each line.
 #[cfg(not(target_os = "linux"))]
 pub fn query_journal(_filter: &JournalFilter) -> Result<Vec<JournalEntry>> {
     Err(SysError::NotSupported {
@@ -293,6 +308,7 @@ pub fn get_journal_stats() -> Result<JournalStats> {
     })
 }
 
+/// Get journal statistics (disk usage, entry count, time range).
 #[cfg(not(target_os = "linux"))]
 pub fn get_journal_stats() -> Result<JournalStats> {
     Err(SysError::NotSupported {
@@ -317,6 +333,10 @@ pub fn follow_journal(filter: &JournalFilter) -> Result<std::process::Child> {
         .map_err(|e| SysError::Unknown(format!("Failed to spawn journalctl -f: {}", e).into()))
 }
 
+/// Spawn a `journalctl -f` process for live-streaming journal entries.
+///
+/// The caller is responsible for reading from the child's stdout and
+/// eventually killing/waiting on the child process.
 #[cfg(not(target_os = "linux"))]
 pub fn follow_journal(_filter: &JournalFilter) -> Result<std::process::Child> {
     Err(SysError::NotSupported {
@@ -367,6 +387,7 @@ pub fn get_boot_list() -> Result<Vec<(String, DateTime<Utc>)>> {
     Ok(boots)
 }
 
+/// List all boot IDs known to the journal, each with its first timestamp.
 #[cfg(not(target_os = "linux"))]
 pub fn get_boot_list() -> Result<Vec<(String, DateTime<Utc>)>> {
     Err(SysError::NotSupported {
@@ -408,6 +429,9 @@ pub fn vacuum_journal(max_size: &str) -> Result<()> {
     Ok(())
 }
 
+/// Run `journalctl --vacuum-size=<max_size>` to reclaim disk space.
+///
+/// `max_size` should be a value like "500M", "1G", etc.
 #[cfg(not(target_os = "linux"))]
 pub fn vacuum_journal(_max_size: &str) -> Result<()> {
     Err(SysError::NotSupported {

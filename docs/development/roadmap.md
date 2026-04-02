@@ -68,14 +68,14 @@ All 20 modules implemented (agent/llm moved to agnosai/hoosh). All 13 consumers 
 ## V1.0 — Stable API (Next)
 
 - [x] All 20 modules implemented (agent/llm moved to agnosai/hoosh)
-- [ ] API stabilization review — freeze public API signatures
-- [ ] Comprehensive documentation with security considerations per module
+- [x] API stabilization review — public API signatures reviewed, breaking changes resolved (0.50.0)
+- [x] Comprehensive documentation with security considerations per module
 - [ ] All consumers migrated from monolith `agnos-sys` to path dependency on `agnosys`
 - [ ] Monolith `userland/agnos-sys/` deprecated (thin wrapper that re-exports agnosys)
-- [ ] Fuzz testing for parsers (LUKS header, verity superblock, DER/SPKI, audit lines, PAM config)
-- [ ] `cargo-semver-checks` integration for API stability
-- [ ] Example programs for each major module
-- [ ] Coverage target: 80%+ line coverage via `cargo llvm-cov`
+- [x] Fuzz testing for parsers (8 targets: LUKS, verity, DER/SPKI, audit, PAM, boot, IMA, uevent)
+- [x] `cargo-semver-checks` integration for API stability
+- [x] Example programs for each major module (14 examples)
+- [x] Coverage target: 80%+ line coverage via `cargo llvm-cov` (86.56%)
 
 > **Note:** Agnosys is an internal library crate — it is NOT published to crates.io.
 > Consumers depend on it via path or git dependency within the AGNOS workspace.

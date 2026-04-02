@@ -12,6 +12,17 @@
 //! - Boot-count based automatic rollback detection
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Manifest verification (SHA-256) is critical — an unverified manifest can
+//!   direct writes of arbitrary data to system partitions.
+//! - Atomic slot writes prevent partial updates, but callers must verify the
+//!   manifest signature before calling any write operations.
+//! - Slot switching modifies boot configuration; incorrect ordering can leave
+//!   the system unbootable (rollback count protects against this).
+//! - Update images and manifests should be fetched over authenticated channels;
+//!   this module does not handle transport security.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -343,6 +354,8 @@ pub fn get_current_slot() -> Result<UpdateSlot> {
     Ok(UpdateSlot::A)
 }
 
+/// Determine the currently booted slot by inspecting `/proc/cmdline` for a
+/// `agnos.slot=` parameter.  Falls back to reading the state file.
 #[cfg(not(target_os = "linux"))]
 pub fn get_current_slot() -> Result<UpdateSlot> {
     Err(SysError::NotSupported {
@@ -528,6 +541,11 @@ pub fn check_for_update(
     }
 }
 
+/// Check the update server (or a local manifest file) for a newer version.
+///
+/// If `config.update_url` starts with `file://` or `/`, it is treated as a
+/// local path to a manifest JSON file.  Otherwise a network fetch is
+/// attempted (currently shells out to `curl`).
 #[cfg(not(target_os = "linux"))]
 pub fn check_for_update(
     _config: &UpdateConfig,
@@ -629,6 +647,11 @@ pub fn apply_update(config: &UpdateConfig, manifest: &UpdateManifest) -> Result<
     Ok(())
 }
 
+/// Apply an update to the inactive slot.
+///
+/// On a real system this writes the update image to the block device of the
+/// inactive slot.  Here we shell out to `dd` to write the first file listed
+/// in the manifest.
 #[cfg(not(target_os = "linux"))]
 pub fn apply_update(_config: &UpdateConfig, _manifest: &UpdateManifest) -> Result<()> {
     Err(SysError::NotSupported {
@@ -680,6 +703,7 @@ pub fn verify_update(config: &UpdateConfig, manifest: &UpdateManifest) -> Result
     Ok(actual == *expected)
 }
 
+/// SHA-256 verify the data written to the inactive slot against the manifest.
 #[cfg(not(target_os = "linux"))]
 pub fn verify_update(_config: &UpdateConfig, _manifest: &UpdateManifest) -> Result<bool> {
     Err(SysError::NotSupported {
@@ -725,6 +749,10 @@ pub fn switch_active_slot(config: &UpdateConfig, slot: UpdateSlot) -> Result<()>
     Ok(())
 }
 
+/// Mark a slot as active for the next boot.
+///
+/// Writes the slot marker file for argonaut to read at next boot.
+/// Falls back to direct EFI variable if `efibootmgr` is available.
 #[cfg(not(target_os = "linux"))]
 pub fn switch_active_slot(_config: &UpdateConfig, _slot: UpdateSlot) -> Result<()> {
     Err(SysError::NotSupported {
@@ -764,6 +792,7 @@ pub fn rollback(config: &UpdateConfig) -> Result<()> {
     Ok(())
 }
 
+/// Rollback to the previous slot.
 #[cfg(not(target_os = "linux"))]
 pub fn rollback(_config: &UpdateConfig) -> Result<()> {
     Err(SysError::NotSupported {
@@ -1610,5 +1639,780 @@ mod tests {
         assert_eq!(back.size_bytes, 42);
         assert!(back.compressed);
         assert_eq!(back.delta_from, Some("2026.3.5".into()));
+    }
+
+    // ---- UpdateState::new constructor ----
+
+    #[test]
+    fn test_state_new_defaults() {
+        let state = UpdateState::new(UpdateSlot::A, "2026.4.5");
+        assert_eq!(state.current_slot, UpdateSlot::A);
+        assert_eq!(state.current_version, "2026.4.5");
+        assert!(state.pending_update.is_none());
+        assert!(state.last_update.is_none());
+        assert!(!state.rollback_available);
+        assert_eq!(state.boot_count_since_update, 0);
+    }
+
+    #[test]
+    fn test_state_new_slot_b() {
+        let state = UpdateState::new(UpdateSlot::B, "2026.1.1");
+        assert_eq!(state.current_slot, UpdateSlot::B);
+        assert_eq!(state.current_version, "2026.1.1");
+    }
+
+    #[test]
+    fn test_state_new_accepts_string() {
+        let version = String::from("2026.5.10");
+        let state = UpdateState::new(UpdateSlot::A, version);
+        assert_eq!(state.current_version, "2026.5.10");
+    }
+
+    // ---- UpdateState mutation and serde ----
+
+    #[test]
+    fn test_state_with_pending_update_serde() {
+        let mut state = UpdateState::new(UpdateSlot::A, "2026.3.5");
+        state.pending_update = Some("2026.4.5".into());
+        state.rollback_available = true;
+        state.boot_count_since_update = 7;
+        state.last_update = Some(chrono::Utc::now());
+
+        let json = serde_json::to_string_pretty(&state).unwrap();
+        let back: UpdateState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pending_update, Some("2026.4.5".into()));
+        assert!(back.rollback_available);
+        assert_eq!(back.boot_count_since_update, 7);
+        assert!(back.last_update.is_some());
+    }
+
+    #[test]
+    fn test_state_serde_preserves_all_fields() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::B,
+            current_version: "2026.12.31".into(),
+            pending_update: Some("2027.1.1".into()),
+            last_update: Some(chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc)),
+            rollback_available: true,
+            boot_count_since_update: u32::MAX,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: UpdateState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.current_slot, UpdateSlot::B);
+        assert_eq!(back.current_version, "2026.12.31");
+        assert_eq!(back.pending_update.as_deref(), Some("2027.1.1"));
+        assert!(back.rollback_available);
+        assert_eq!(back.boot_count_since_update, u32::MAX);
+    }
+
+    // ---- UpdateFile serde without delta ----
+
+    #[test]
+    fn test_update_file_no_delta_serde() {
+        let file = UpdateFile {
+            path: "rootfs.img".into(),
+            sha256: "f".repeat(64),
+            size_bytes: 0,
+            delta_from: None,
+            compressed: false,
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        let back: UpdateFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.path, "rootfs.img");
+        assert_eq!(back.size_bytes, 0);
+        assert!(!back.compressed);
+        assert!(back.delta_from.is_none());
+    }
+
+    #[test]
+    fn test_update_file_large_size() {
+        let file = UpdateFile {
+            path: "big.img".into(),
+            sha256: "c".repeat(64),
+            size_bytes: u64::MAX,
+            delta_from: None,
+            compressed: true,
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        let back: UpdateFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.size_bytes, u64::MAX);
+    }
+
+    // ---- Manifest full serde roundtrip ----
+
+    #[test]
+    fn test_manifest_full_serde_roundtrip() {
+        let manifest = build_test_manifest("2026.6.15", UpdateChannel::Nightly);
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        let back: UpdateManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.version, "2026.6.15");
+        assert_eq!(back.channel, UpdateChannel::Nightly);
+        assert_eq!(back.files.len(), 1);
+        assert_eq!(back.release_date, "2026-03-06T00:00:00Z");
+        assert_eq!(back.changelog.as_deref(), Some("Test release"));
+        assert!(back.min_version.is_none());
+        assert_eq!(back.sha256_digest, manifest.sha256_digest);
+    }
+
+    #[test]
+    fn test_manifest_serde_with_all_optional_fields() {
+        let file_hash = "d".repeat(64);
+        let mut manifest = UpdateManifest {
+            version: "2026.7.20".into(),
+            channel: UpdateChannel::Custom("internal".into()),
+            files: vec![
+                UpdateFile {
+                    path: "rootfs.img".into(),
+                    sha256: file_hash.clone(),
+                    size_bytes: 4096,
+                    delta_from: Some("2026.7.19".into()),
+                    compressed: true,
+                },
+                UpdateFile {
+                    path: "boot.img".into(),
+                    sha256: "e".repeat(64),
+                    size_bytes: 2048,
+                    delta_from: None,
+                    compressed: false,
+                },
+            ],
+            release_date: "2026-07-20T12:00:00Z".into(),
+            min_version: Some("2026.7.1".into()),
+            changelog: Some("Multi-file update with deltas".into()),
+            sha256_digest: String::new(),
+        };
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        let json = serde_json::to_string(&manifest).unwrap();
+        let back: UpdateManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.files.len(), 2);
+        assert_eq!(back.min_version.as_deref(), Some("2026.7.1"));
+        assert!(back.files[0].compressed);
+        assert!(!back.files[1].compressed);
+        assert_eq!(back.files[0].delta_from.as_deref(), Some("2026.7.19"));
+        assert!(back.files[1].delta_from.is_none());
+    }
+
+    // ---- compute_manifest_digest coverage ----
+
+    #[test]
+    fn test_digest_changes_with_file_path() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.files[0].path = "other.img".into();
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_changes_with_file_size() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.files[0].size_bytes = 9999;
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_changes_with_compressed_flag() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.files[0].compressed = true;
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_changes_with_delta_from() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.files[0].delta_from = Some("2026.3.1".into());
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_changes_with_release_date() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.release_date = "2026-04-06T00:00:00Z".into();
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_changes_with_min_version() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.min_version = Some("2026.3.1".into());
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_changes_with_changelog() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.changelog = Some("Different changelog".into());
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_none_vs_some_changelog() {
+        let mut m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m1.changelog = None;
+        m1.sha256_digest = compute_manifest_digest(&m1);
+
+        let m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        // m2 has changelog = Some("Test release")
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_none_vs_some_min_version() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        // m1.min_version is None
+
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.min_version = Some("2026.1.1".into());
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    #[test]
+    fn test_digest_changes_with_file_hash() {
+        let m1 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut m2 = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        m2.files[0].sha256 = "b".repeat(64);
+        m2.sha256_digest = compute_manifest_digest(&m2);
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    // ---- Manifest verification additional edge cases ----
+
+    #[test]
+    fn test_verify_manifest_file_hash_65_chars() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.files[0].sha256 = "a".repeat(65);
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_file_hash_63_chars() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.files[0].sha256 = "a".repeat(63);
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_file_hash_empty() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.files[0].sha256 = String::new();
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_second_file_bad_hash() {
+        let mut manifest = UpdateManifest {
+            version: "2026.4.5".into(),
+            channel: UpdateChannel::Stable,
+            files: vec![
+                UpdateFile {
+                    path: "rootfs.img".into(),
+                    sha256: "a".repeat(64),
+                    size_bytes: 1024,
+                    delta_from: None,
+                    compressed: false,
+                },
+                UpdateFile {
+                    path: "boot.img".into(),
+                    sha256: "not-valid-hex".into(),
+                    size_bytes: 512,
+                    delta_from: None,
+                    compressed: false,
+                },
+            ],
+            release_date: "2026-03-06T00:00:00Z".into(),
+            min_version: None,
+            changelog: None,
+            sha256_digest: String::new(),
+        };
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        let err = verify_manifest(&manifest).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("boot.img"), "Error should mention the bad file");
+    }
+
+    #[test]
+    fn test_verify_manifest_file_hash_uppercase_hex() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.files[0].sha256 = "A".repeat(64);
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        // Uppercase hex is valid ascii hex
+        assert!(verify_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn test_verify_manifest_file_hash_mixed_case_hex() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.files[0].sha256 = "aAbBcCdDeEfF".repeat(5) + "aAbB";
+        assert_eq!(manifest.files[0].sha256.len(), 64);
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_ok());
+    }
+
+    // ---- Version validation additional edge cases ----
+
+    #[test]
+    fn test_validate_version_with_spaces() {
+        assert!(validate_version(" 2026.1.1").is_err());
+        assert!(validate_version("2026 .1.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_only_dots() {
+        assert!(validate_version("..").is_err());
+        assert!(validate_version("...").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_with_trailing_dot() {
+        assert!(validate_version("2026.1.1.").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_with_leading_dot() {
+        assert!(validate_version(".2026.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_whitespace_parts() {
+        assert!(validate_version("2026. .1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_very_large_year() {
+        // 99999 > 2100
+        assert!(validate_version("99999.1.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_zero_year() {
+        assert!(validate_version("0.1.1").is_err());
+    }
+
+    // ---- Version comparison additional ----
+
+    #[test]
+    fn test_compare_versions_same_year_month_different_day() {
+        assert_eq!(compare_versions("2026.6.1", "2026.6.30"), Ordering::Less);
+    }
+
+    #[test]
+    fn test_compare_versions_partial_malformed() {
+        // Two parts only
+        assert_eq!(compare_versions("2026.1", "2026.1.1"), "2026.1".cmp("2026.1.1"));
+    }
+
+    #[test]
+    fn test_compare_versions_four_parts() {
+        // Falls back to lexicographic
+        assert_eq!(
+            compare_versions("2026.1.1.1", "2026.1.1"),
+            "2026.1.1.1".cmp("2026.1.1")
+        );
+    }
+
+    #[test]
+    fn test_compare_versions_numeric_vs_alpha() {
+        // One numeric, one alpha -- both fail parse, lexicographic
+        let result = compare_versions("hello", "2026.1.1");
+        assert_eq!(result, "hello".cmp("2026.1.1"));
+    }
+
+    #[test]
+    fn test_compare_versions_zero_components() {
+        assert_eq!(compare_versions("0.0.0", "0.0.0"), Ordering::Equal);
+        assert_eq!(compare_versions("0.0.0", "0.0.1"), Ordering::Less);
+    }
+
+    // ---- UpdateConfig custom values ----
+
+    #[test]
+    fn test_config_custom_device_for_slot() {
+        let config = UpdateConfig {
+            slot_a_device: PathBuf::from("/dev/sda1"),
+            slot_b_device: PathBuf::from("/dev/sda2"),
+            ..UpdateConfig::default()
+        };
+        assert_eq!(config.device_for_slot(UpdateSlot::A), Path::new("/dev/sda1"));
+        assert_eq!(config.device_for_slot(UpdateSlot::B), Path::new("/dev/sda2"));
+    }
+
+    #[test]
+    fn test_config_custom_all_fields() {
+        let config = UpdateConfig {
+            update_url: "https://custom.example.com".into(),
+            slot_a_device: PathBuf::from("/dev/nvme0n1p1"),
+            slot_b_device: PathBuf::from("/dev/nvme0n1p2"),
+            state_file: PathBuf::from("/tmp/state.json"),
+            backup_dir: PathBuf::from("/tmp/backups"),
+            max_retries: 10,
+            verify_after_apply: false,
+        };
+        assert_eq!(config.update_url, "https://custom.example.com");
+        assert_eq!(config.max_retries, 10);
+        assert!(!config.verify_after_apply);
+        assert_eq!(config.backup_dir, PathBuf::from("/tmp/backups"));
+    }
+
+    // ---- UpdateChannel equality and clone ----
+
+    #[test]
+    fn test_channel_equality() {
+        assert_eq!(UpdateChannel::Stable, UpdateChannel::Stable);
+        assert_eq!(UpdateChannel::Beta, UpdateChannel::Beta);
+        assert_eq!(UpdateChannel::Nightly, UpdateChannel::Nightly);
+        assert_eq!(
+            UpdateChannel::Custom("x".into()),
+            UpdateChannel::Custom("x".into())
+        );
+        assert_ne!(UpdateChannel::Stable, UpdateChannel::Beta);
+        assert_ne!(
+            UpdateChannel::Custom("x".into()),
+            UpdateChannel::Custom("y".into())
+        );
+    }
+
+    #[test]
+    fn test_channel_custom_empty_name() {
+        let ch = UpdateChannel::Custom(String::new());
+        assert_eq!(format!("{ch}"), "custom:");
+        let json = serde_json::to_string(&ch).unwrap();
+        let back: UpdateChannel = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ch);
+    }
+
+    // ---- build_test_manifest ----
+
+    #[test]
+    fn test_build_test_manifest_valid_digest() {
+        let m = build_test_manifest("2026.4.5", UpdateChannel::Beta);
+        // The digest should match what verify_manifest expects
+        assert!(!m.sha256_digest.is_empty());
+        assert_eq!(m.sha256_digest.len(), 64);
+        assert!(m.sha256_digest.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_build_test_manifest_fields() {
+        let m = build_test_manifest("2026.8.1", UpdateChannel::Custom("test".into()));
+        assert_eq!(m.version, "2026.8.1");
+        assert_eq!(m.channel, UpdateChannel::Custom("test".into()));
+        assert_eq!(m.files.len(), 1);
+        assert_eq!(m.files[0].path, "rootfs.img");
+        assert_eq!(m.files[0].size_bytes, 1024);
+        assert!(!m.files[0].compressed);
+        assert!(m.files[0].delta_from.is_none());
+        assert_eq!(m.release_date, "2026-03-06T00:00:00Z");
+        assert_eq!(m.changelog.as_deref(), Some("Test release"));
+        assert!(m.min_version.is_none());
+    }
+
+    // ---- Manifest parsing edge cases ----
+
+    #[test]
+    fn test_parse_manifest_empty_string() {
+        assert!(parse_update_manifest("").is_err());
+    }
+
+    #[test]
+    fn test_parse_manifest_empty_object() {
+        assert!(parse_update_manifest("{}").is_err());
+    }
+
+    #[test]
+    fn test_parse_manifest_missing_required_field() {
+        let json = r#"{"version":"2026.4.5","channel":"Stable","files":[]}"#;
+        assert!(parse_update_manifest(json).is_err());
+    }
+
+    #[test]
+    fn test_parse_manifest_extra_fields_ignored() {
+        let manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        let mut json_val: serde_json::Value = serde_json::to_value(&manifest).unwrap();
+        json_val["extra_field"] = serde_json::Value::String("ignored".into());
+        let json = serde_json::to_string(&json_val).unwrap();
+        let parsed = parse_update_manifest(&json).unwrap();
+        assert_eq!(parsed.version, "2026.4.5");
+    }
+
+    #[test]
+    fn test_parse_manifest_null_json() {
+        assert!(parse_update_manifest("null").is_err());
+    }
+
+    #[test]
+    fn test_parse_manifest_array_json() {
+        assert!(parse_update_manifest("[]").is_err());
+    }
+
+    // ---- State persistence edge cases ----
+
+    #[test]
+    fn test_save_and_load_state_minimal() {
+        let path = std::env::temp_dir().join("agnos-test-state-minimal.json");
+        let state = UpdateState::new(UpdateSlot::A, "2026.1.1");
+        save_update_state(&state, &path).unwrap();
+        let config = UpdateConfig {
+            state_file: path.clone(),
+            ..UpdateConfig::default()
+        };
+        let loaded = get_update_state(&config).unwrap();
+        assert_eq!(loaded.current_slot, UpdateSlot::A);
+        assert_eq!(loaded.current_version, "2026.1.1");
+        assert!(loaded.pending_update.is_none());
+        assert!(!loaded.rollback_available);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_get_update_state_invalid_json() {
+        let path = std::env::temp_dir().join("agnos-test-state-bad-json.json");
+        std::fs::write(&path, "not valid json").unwrap();
+        let config = UpdateConfig {
+            state_file: path.clone(),
+            ..UpdateConfig::default()
+        };
+        assert!(get_update_state(&config).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_save_state_overwrites_existing() {
+        let path = std::env::temp_dir().join("agnos-test-state-overwrite.json");
+        let state1 = UpdateState::new(UpdateSlot::A, "2026.1.1");
+        save_update_state(&state1, &path).unwrap();
+        let state2 = UpdateState::new(UpdateSlot::B, "2026.2.2");
+        save_update_state(&state2, &path).unwrap();
+        let config = UpdateConfig {
+            state_file: path.clone(),
+            ..UpdateConfig::default()
+        };
+        let loaded = get_update_state(&config).unwrap();
+        assert_eq!(loaded.current_slot, UpdateSlot::B);
+        assert_eq!(loaded.current_version, "2026.2.2");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- needs_rollback additional ----
+
+    #[test]
+    fn test_needs_rollback_one_below_threshold() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::A,
+            current_version: "2026.3.5".into(),
+            pending_update: Some("2026.4.5".into()),
+            last_update: None,
+            rollback_available: true,
+            boot_count_since_update: 4,
+        };
+        assert!(!needs_rollback(&state, 5));
+    }
+
+    #[test]
+    fn test_needs_rollback_well_above_threshold() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::B,
+            current_version: "2026.3.5".into(),
+            pending_update: Some("2026.4.5".into()),
+            last_update: None,
+            rollback_available: true,
+            boot_count_since_update: 100,
+        };
+        assert!(needs_rollback(&state, 3));
+    }
+
+    #[test]
+    fn test_needs_rollback_no_pending_high_count() {
+        let state = UpdateState {
+            current_slot: UpdateSlot::A,
+            current_version: "2026.3.5".into(),
+            pending_update: None,
+            last_update: None,
+            rollback_available: true,
+            boot_count_since_update: 100,
+        };
+        assert!(!needs_rollback(&state, 1));
+    }
+
+    // ---- Slot Debug formatting ----
+
+    #[test]
+    fn test_slot_debug() {
+        assert_eq!(format!("{:?}", UpdateSlot::A), "A");
+        assert_eq!(format!("{:?}", UpdateSlot::B), "B");
+    }
+
+    // ---- UpdateProgress edge cases ----
+
+    #[test]
+    fn test_progress_exactly_at_boundary() {
+        let p = UpdateProgress::new(UpdatePhase::Downloading, 99, "almost");
+        assert_eq!(p.percent, 99);
+        let p2 = UpdateProgress::new(UpdatePhase::Downloading, 101, "over");
+        assert_eq!(p2.percent, 100);
+    }
+
+    #[test]
+    fn test_progress_all_phases() {
+        let phases = [
+            UpdatePhase::Downloading,
+            UpdatePhase::Verifying,
+            UpdatePhase::Applying,
+            UpdatePhase::Finalizing,
+            UpdatePhase::RollingBack,
+            UpdatePhase::Complete,
+            UpdatePhase::Failed,
+        ];
+        for phase in &phases {
+            let p = UpdateProgress::new(*phase, 50, "test");
+            assert_eq!(p.phase, *phase);
+        }
+    }
+
+    #[test]
+    fn test_progress_empty_message() {
+        let p = UpdateProgress::new(UpdatePhase::Downloading, 0, "");
+        assert_eq!(p.message, "");
+    }
+
+    #[test]
+    fn test_progress_long_message() {
+        let long_msg = "x".repeat(10000);
+        let p = UpdateProgress::new(UpdatePhase::Applying, 50, long_msg.as_str());
+        assert_eq!(p.message.len(), 10000);
+    }
+
+    // ---- Manifest digest with multiple files and deltas ----
+
+    #[test]
+    fn test_digest_with_multiple_files_order_matters() {
+        let mut m1 = UpdateManifest {
+            version: "2026.4.5".into(),
+            channel: UpdateChannel::Stable,
+            files: vec![
+                UpdateFile {
+                    path: "a.img".into(),
+                    sha256: "a".repeat(64),
+                    size_bytes: 100,
+                    delta_from: None,
+                    compressed: false,
+                },
+                UpdateFile {
+                    path: "b.img".into(),
+                    sha256: "b".repeat(64),
+                    size_bytes: 200,
+                    delta_from: None,
+                    compressed: false,
+                },
+            ],
+            release_date: "2026-03-06T00:00:00Z".into(),
+            min_version: None,
+            changelog: None,
+            sha256_digest: String::new(),
+        };
+        m1.sha256_digest = compute_manifest_digest(&m1);
+
+        let mut m2 = UpdateManifest {
+            version: "2026.4.5".into(),
+            channel: UpdateChannel::Stable,
+            files: vec![
+                UpdateFile {
+                    path: "b.img".into(),
+                    sha256: "b".repeat(64),
+                    size_bytes: 200,
+                    delta_from: None,
+                    compressed: false,
+                },
+                UpdateFile {
+                    path: "a.img".into(),
+                    sha256: "a".repeat(64),
+                    size_bytes: 100,
+                    delta_from: None,
+                    compressed: false,
+                },
+            ],
+            release_date: "2026-03-06T00:00:00Z".into(),
+            min_version: None,
+            changelog: None,
+            sha256_digest: String::new(),
+        };
+        m2.sha256_digest = compute_manifest_digest(&m2);
+
+        // Different file order should produce different digests
+        assert_ne!(m1.sha256_digest, m2.sha256_digest);
+    }
+
+    // ---- Verify manifest with version out of range ----
+
+    #[test]
+    fn test_verify_manifest_with_year_out_of_range() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        manifest.version = "2023.1.1".into();
+        manifest.sha256_digest = compute_manifest_digest(&manifest);
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_verify_manifest_tampered_digest() {
+        let mut manifest = build_test_manifest("2026.4.5", UpdateChannel::Stable);
+        // Flip one character in the digest
+        let mut chars: Vec<char> = manifest.sha256_digest.chars().collect();
+        chars[0] = if chars[0] == 'a' { 'b' } else { 'a' };
+        manifest.sha256_digest = chars.into_iter().collect();
+        assert!(verify_manifest(&manifest).is_err());
+    }
+
+    // ---- Slot clone and copy ----
+
+    #[test]
+    fn test_slot_clone_and_copy() {
+        let a = UpdateSlot::A;
+        let b = a; // Copy
+        let c = a.clone(); // Clone
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    // ---- UpdatePhase clone and copy ----
+
+    #[test]
+    fn test_phase_clone_and_copy() {
+        let p = UpdatePhase::Applying;
+        let p2 = p; // Copy
+        let p3 = p.clone(); // Clone
+        assert_eq!(p, p2);
+        assert_eq!(p, p3);
+    }
+
+    // ---- State file JSON pretty format ----
+
+    #[test]
+    fn test_save_state_produces_valid_json() {
+        let path = std::env::temp_dir().join("agnos-test-state-json-format.json");
+        let state = UpdateState::new(UpdateSlot::B, "2026.5.5");
+        save_update_state(&state, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        // Should be valid JSON parseable to Value
+        let val: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(val.is_object());
+        assert_eq!(val["current_version"], "2026.5.5");
+        let _ = std::fs::remove_file(&path);
     }
 }

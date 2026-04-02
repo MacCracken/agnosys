@@ -5,6 +5,17 @@
 //! Linux tools).
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - FUSE mounts via `fusermount` are unprivileged; direct `mount` requires
+//!   root or `CAP_SYS_ADMIN`.
+//! - Mount options (e.g., `allow_other`, `default_permissions`) directly affect
+//!   access control — callers must validate options before passing them.
+//! - A malicious FUSE daemon can impersonate any filesystem, returning crafted
+//!   data for reads. Only mount trusted FUSE implementations.
+//! - Mountpoints must be validated to prevent path traversal or shadowing of
+//!   critical system directories.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1523,5 +1534,306 @@ none /sys sysfs rw 0 0";
         assert!(mounts[0].options.contains(&"lowerdir=/lower".to_string()));
         assert!(mounts[0].options.contains(&"upperdir=/upper".to_string()));
         assert!(mounts[0].options.contains(&"workdir=/work".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage — untested code paths
+    // -----------------------------------------------------------------------
+
+    // --- FuseFilesystem: remaining Display + fstype_str coverage ---
+
+    #[test]
+    fn test_fuse_filesystem_bindfs_display() {
+        assert_eq!(format!("{}", FuseFilesystem::BindFs), "bindfs");
+    }
+
+    #[test]
+    fn test_fuse_filesystem_s3fs_display() {
+        assert_eq!(format!("{}", FuseFilesystem::S3fs), "s3fs");
+    }
+
+    #[test]
+    fn test_fuse_filesystem_overlayfs_display() {
+        assert_eq!(format!("{}", FuseFilesystem::OverlayFs), "fuse-overlayfs");
+    }
+
+    #[test]
+    fn test_fuse_filesystem_rclone_fstype_str() {
+        assert_eq!(FuseFilesystem::Rclone.fstype_str(), "fuse.rclone");
+    }
+
+    #[test]
+    fn test_fuse_filesystem_bindfs_fstype_str() {
+        assert_eq!(FuseFilesystem::BindFs.fstype_str(), "fuse.bindfs");
+    }
+
+    // --- FuseFilesystem serde: deserialization from known JSON ---
+
+    #[test]
+    fn test_fuse_filesystem_deserialize_from_json() {
+        let sshfs: FuseFilesystem = serde_json::from_str("\"Sshfs\"").unwrap();
+        assert_eq!(sshfs, FuseFilesystem::Sshfs);
+        let s3fs: FuseFilesystem = serde_json::from_str("\"S3fs\"").unwrap();
+        assert_eq!(s3fs, FuseFilesystem::S3fs);
+        let rclone: FuseFilesystem = serde_json::from_str("\"Rclone\"").unwrap();
+        assert_eq!(rclone, FuseFilesystem::Rclone);
+        let overlayfs: FuseFilesystem = serde_json::from_str("\"OverlayFs\"").unwrap();
+        assert_eq!(overlayfs, FuseFilesystem::OverlayFs);
+        let bindfs: FuseFilesystem = serde_json::from_str("\"BindFs\"").unwrap();
+        assert_eq!(bindfs, FuseFilesystem::BindFs);
+    }
+
+    #[test]
+    fn test_fuse_filesystem_invalid_json() {
+        let result = serde_json::from_str::<FuseFilesystem>("\"NotAFilesystem\"");
+        assert!(result.is_err());
+    }
+
+    // --- FuseMount: edge cases ---
+
+    #[test]
+    fn test_fuse_mount_no_pid_serde() {
+        let mount = FuseMount {
+            mountpoint: PathBuf::from("/mnt/nopid"),
+            fstype: "fuse.test".to_string(),
+            source: "src".to_string(),
+            options: vec!["rw".to_string()],
+            pid: None,
+        };
+        let json = serde_json::to_string(&mount).unwrap();
+        assert!(json.contains("\"pid\":null"));
+        let back: FuseMount = serde_json::from_str(&json).unwrap();
+        assert!(back.pid.is_none());
+    }
+
+    #[test]
+    fn test_fuse_mount_many_options_serde() {
+        let mount = FuseMount {
+            mountpoint: PathBuf::from("/mnt"),
+            fstype: "fuse.test".to_string(),
+            source: "src".to_string(),
+            options: vec![
+                "rw".to_string(),
+                "nosuid".to_string(),
+                "nodev".to_string(),
+                "allow_other".to_string(),
+                "default_permissions".to_string(),
+            ],
+            pid: Some(99999),
+        };
+        let json = serde_json::to_string(&mount).unwrap();
+        let back: FuseMount = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.options.len(), 5);
+        assert_eq!(back.pid, Some(99999));
+    }
+
+    // --- FuseStatus: edge cases ---
+
+    #[test]
+    fn test_fuse_status_uptime_zero() {
+        let status = FuseStatus {
+            is_mounted: true,
+            mountpoint: PathBuf::from("/mnt"),
+            pid: Some(1),
+            filesystem: "fuse.test".to_string(),
+            uptime: Some(Duration::from_secs(0)),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: FuseStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.uptime, Some(Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn test_fuse_status_large_uptime() {
+        let status = FuseStatus {
+            is_mounted: true,
+            mountpoint: PathBuf::from("/mnt"),
+            pid: Some(1),
+            filesystem: "fuse.test".to_string(),
+            uptime: Some(Duration::from_secs(86400 * 365)),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: FuseStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.uptime, Some(Duration::from_secs(86400 * 365)));
+    }
+
+    // --- AgentFuseConfig: serde edge cases ---
+
+    #[test]
+    fn test_agent_fuse_config_with_all_options_serde() {
+        let config = AgentFuseConfig {
+            agent_id: "full-opts".to_string(),
+            filesystem: FuseFilesystem::OverlayFs,
+            source: "/lower".to_string(),
+            mountpoint: PathBuf::from("/mnt/overlay"),
+            options: FuseMountOptions {
+                allow_other: true,
+                allow_root: true,
+                default_permissions: true,
+                max_read: Some(131072),
+                max_write: Some(65536),
+                nonempty: true,
+                uid: Some(1000),
+                gid: Some(1000),
+            },
+            read_only: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: AgentFuseConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.agent_id, "full-opts");
+        assert_eq!(back.filesystem, FuseFilesystem::OverlayFs);
+        assert!(back.options.allow_other);
+        assert!(back.options.allow_root);
+        assert_eq!(back.options.max_read, Some(131072));
+        assert_eq!(back.options.max_write, Some(65536));
+        assert!(back.options.nonempty);
+        assert_eq!(back.options.uid, Some(1000));
+        assert_eq!(back.options.gid, Some(1000));
+    }
+
+    // --- render_mount_options: verify only nonempty flag ---
+
+    #[test]
+    fn test_render_mount_options_only_nonempty() {
+        let opts = FuseMountOptions {
+            allow_other: false,
+            allow_root: false,
+            default_permissions: false,
+            max_read: None,
+            max_write: None,
+            nonempty: true,
+            uid: None,
+            gid: None,
+        };
+        assert_eq!(render_mount_options(&opts), "nonempty");
+    }
+
+    // --- render_mount_options: only max_write ---
+
+    #[test]
+    fn test_render_mount_options_only_max_write() {
+        let opts = FuseMountOptions {
+            allow_other: false,
+            allow_root: false,
+            default_permissions: false,
+            max_read: None,
+            max_write: Some(8192),
+            nonempty: false,
+            uid: None,
+            gid: None,
+        };
+        assert_eq!(render_mount_options(&opts), "max_write=8192");
+    }
+
+    // --- render_mount_options: only default_permissions ---
+
+    #[test]
+    fn test_render_mount_options_only_default_permissions() {
+        let opts = FuseMountOptions {
+            allow_other: false,
+            allow_root: false,
+            default_permissions: true,
+            max_read: None,
+            max_write: None,
+            nonempty: false,
+            uid: None,
+            gid: None,
+        };
+        assert_eq!(render_mount_options(&opts), "default_permissions");
+    }
+
+    // --- render_mount_options: only allow_root ---
+
+    #[test]
+    fn test_render_mount_options_only_allow_root() {
+        let opts = FuseMountOptions {
+            allow_other: false,
+            allow_root: true,
+            default_permissions: false,
+            max_read: None,
+            max_write: None,
+            nonempty: false,
+            uid: None,
+            gid: None,
+        };
+        assert_eq!(render_mount_options(&opts), "allow_root");
+    }
+
+    // --- parse_proc_mounts: fuse subtype variations ---
+
+    #[test]
+    fn test_parse_proc_mounts_fuse_dot_only() {
+        // "fuse." with no subtype
+        let content = "src /mnt fuse. rw 0 0";
+        let mounts = parse_proc_mounts(content);
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].fstype, "fuse.");
+    }
+
+    #[test]
+    fn test_parse_proc_mounts_fuseblk() {
+        let content = "/dev/sdb1 /mnt/usb fuseblk rw,nosuid,nodev 0 0";
+        let mounts = parse_proc_mounts(content);
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].fstype, "fuseblk");
+    }
+
+    // --- FuseMountOptions Debug and Clone completeness ---
+
+    #[test]
+    fn test_fuse_mount_options_debug_with_all_fields() {
+        let opts = FuseMountOptions {
+            allow_other: true,
+            allow_root: true,
+            default_permissions: true,
+            max_read: Some(1),
+            max_write: Some(2),
+            nonempty: true,
+            uid: Some(3),
+            gid: Some(4),
+        };
+        let debug = format!("{:?}", opts);
+        assert!(debug.contains("allow_other: true"));
+        assert!(debug.contains("allow_root: true"));
+        assert!(debug.contains("max_read: Some(1)"));
+        assert!(debug.contains("max_write: Some(2)"));
+        assert!(debug.contains("nonempty: true"));
+        assert!(debug.contains("uid: Some(3)"));
+        assert!(debug.contains("gid: Some(4)"));
+    }
+
+    // --- FuseFilesystem Debug: all variants ---
+
+    #[test]
+    fn test_fuse_filesystem_debug_all_variants() {
+        assert!(format!("{:?}", FuseFilesystem::Sshfs).contains("Sshfs"));
+        assert!(format!("{:?}", FuseFilesystem::S3fs).contains("S3fs"));
+        assert!(format!("{:?}", FuseFilesystem::Rclone).contains("Rclone"));
+        assert!(format!("{:?}", FuseFilesystem::OverlayFs).contains("OverlayFs"));
+        assert!(format!("{:?}", FuseFilesystem::BindFs).contains("BindFs"));
+    }
+
+    // --- validate_mountpoint: symlink edge case ---
+
+    #[test]
+    fn test_validate_mountpoint_rejects_file_not_dir() {
+        let tmp = std::env::temp_dir().join("agnos_fuse_test_file_validate");
+        std::fs::write(&tmp, "I am a file").unwrap();
+        let result = validate_mountpoint(&tmp);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a directory"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // --- parse_proc_mounts: mountpoint with spaces (encoded) ---
+
+    #[test]
+    fn test_parse_proc_mounts_mountpoint_is_second_field() {
+        // Verify the parser always takes the second whitespace-separated field
+        let content = "my-source /my/mount/point fuse.custom rw,noexec 0 0";
+        let mounts = parse_proc_mounts(content);
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].mountpoint, PathBuf::from("/my/mount/point"));
+        assert_eq!(mounts[0].source, "my-source");
     }
 }

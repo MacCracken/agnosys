@@ -2,6 +2,15 @@
 //!
 //! Safe wrappers around raw Linux syscalls. These are the primitives
 //! that higher-level modules (landlock, seccomp, netns, etc.) build on.
+//!
+//! # Security Considerations
+//!
+//! - These wrappers are intentionally thin — callers receive raw kernel
+//!   behavior including all error codes. No additional validation is applied.
+//! - `gethostname` returns the system hostname, which may constitute PII in
+//!   some deployments. Treat the returned value as potentially sensitive.
+//! - Callers must validate their own inputs; these functions pass arguments
+//!   directly to the kernel with only basic return-value checking.
 
 use crate::error::{Result, SysError};
 

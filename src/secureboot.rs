@@ -4,6 +4,17 @@
 //! Shells out to `mokutil`, `kmodsign`, and `modinfo` where needed.
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - EFI variables under `/sys/firmware/efi/efivars/` are firmware-managed;
+//!   reading Secure Boot state is unprivileged but modifying keys requires root.
+//! - MOK (Machine Owner Key) enrollment via `mokutil` requires physical
+//!   presence at the next reboot to confirm — this is by design.
+//! - Signature verification trusts the kernel's built-in keyring; a
+//!   compromised kernel undermines all verification.
+//! - Module signing keys are security-critical and must be stored with
+//!   restricted permissions.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1042,5 +1053,195 @@ SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
     #[test]
     fn test_list_enrolled_keys_no_crash() {
         let _ = list_enrolled_keys();
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage — untested code paths
+    // -----------------------------------------------------------------------
+
+    // --- parse_mokutil_list: key blocks with extra/interleaved lines ---
+
+    #[test]
+    fn test_parse_mokutil_list_extra_unknown_lines() {
+        // Lines that don't match any prefix inside a key block are silently skipped
+        let output = r#"[key 1]
+SHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd
+        Subject: CN=Test
+        Issuer: CN=CA
+        SomeUnknownField: should be ignored
+        AnotherWeirdLine
+        Valid from: Jan 1 2026
+        Valid until: Dec 31 2030
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].subject, "CN=Test");
+        assert_eq!(keys[0].issuer, "CN=CA");
+        assert!(keys[0].not_before.contains("2026"));
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_fingerprint_only() {
+        // A key with only a fingerprint (no subject/issuer/dates) should still be captured
+        let output = "[key 1]\nSHA1 Fingerprint: aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd\n";
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].subject, "");
+        assert_eq!(keys[0].issuer, "");
+        assert_eq!(keys[0].not_before, "");
+        assert_eq!(keys[0].not_after, "");
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_two_keys_first_missing_fingerprint() {
+        // First key has no fingerprint -> skipped when second key header appears
+        // Second key has fingerprint -> captured
+        let output = r#"[key 1]
+        Subject: CN=Orphan
+[key 2]
+SHA1 Fingerprint: 11:22:33:44:55:66:77:88:99:00:aa:bb:cc:dd:ee:ff:11:22:33:44
+        Subject: CN=Valid
+        Issuer: CN=CA
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].subject, "CN=Valid");
+    }
+
+    #[test]
+    fn test_parse_mokutil_list_consecutive_key_headers_flush_previous() {
+        // Key 1 has fingerprint and subject, then key 2 appears -> key 1 is flushed
+        let output = r#"[key 1]
+SHA1 Fingerprint: aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa:aa
+        Subject: CN=Key1
+[key 2]
+SHA1 Fingerprint: bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb
+        Subject: CN=Key2
+"#;
+        let keys = parse_mokutil_list(output).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].subject, "CN=Key1");
+        assert_eq!(keys[0].issuer, "");
+        assert_eq!(keys[1].subject, "CN=Key2");
+    }
+
+    // --- SecureBootState: exhaustive as_str + Display coverage ---
+
+    #[test]
+    fn test_secureboot_state_as_str_matches_display() {
+        for state in &[
+            SecureBootState::Enabled,
+            SecureBootState::Disabled,
+            SecureBootState::SetupMode,
+            SecureBootState::NotSupported,
+        ] {
+            assert_eq!(state.as_str(), format!("{}", state));
+        }
+    }
+
+    // --- ModuleSignatureInfo: field-level construction with Some/None permutations ---
+
+    #[test]
+    fn test_module_signature_info_signer_some_algo_none() {
+        let info = ModuleSignatureInfo {
+            module_path: PathBuf::from("/lib/modules/partial.ko"),
+            has_signature: true,
+            signer: Some("Partial Signer".to_string()),
+            sig_algorithm: None,
+        };
+        assert!(info.has_signature);
+        assert!(info.signer.is_some());
+        assert!(info.sig_algorithm.is_none());
+        let json = serde_json::to_string(&info).unwrap();
+        let back: ModuleSignatureInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.signer, Some("Partial Signer".to_string()));
+        assert!(back.sig_algorithm.is_none());
+    }
+
+    #[test]
+    fn test_module_signature_info_signer_none_algo_some() {
+        let info = ModuleSignatureInfo {
+            module_path: PathBuf::from("/lib/modules/algo.ko"),
+            has_signature: true,
+            signer: None,
+            sig_algorithm: Some("sha512".to_string()),
+        };
+        assert!(info.signer.is_none());
+        assert_eq!(info.sig_algorithm, Some("sha512".to_string()));
+        let json = serde_json::to_string(&info).unwrap();
+        let back: ModuleSignatureInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, info);
+    }
+
+    // --- EfiVariable: construction edge cases ---
+
+    #[test]
+    fn test_efi_variable_large_value() {
+        let var = EfiVariable {
+            name: "db-8be4df61-93ca-11d2-aa0d-00e098032b8c".to_string(),
+            value_hex: "ff".repeat(2048),
+            size: 2048,
+        };
+        assert_eq!(var.size, 2048);
+        assert_eq!(var.value_hex.len(), 4096);
+        let json = serde_json::to_string(&var).unwrap();
+        let back: EfiVariable = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, var);
+    }
+
+    // --- EnrolledKey: all fields empty ---
+
+    #[test]
+    fn test_enrolled_key_all_empty_fields() {
+        let key = EnrolledKey {
+            subject: String::new(),
+            issuer: String::new(),
+            fingerprint: String::new(),
+            not_before: String::new(),
+            not_after: String::new(),
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        let back: EnrolledKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key, back);
+        assert!(key.subject.is_empty());
+    }
+
+    // --- SecureBootState serde from known JSON values ---
+
+    #[test]
+    fn test_secureboot_state_deserialize_from_json() {
+        let enabled: SecureBootState = serde_json::from_str("\"Enabled\"").unwrap();
+        assert_eq!(enabled, SecureBootState::Enabled);
+        let disabled: SecureBootState = serde_json::from_str("\"Disabled\"").unwrap();
+        assert_eq!(disabled, SecureBootState::Disabled);
+        let setup: SecureBootState = serde_json::from_str("\"SetupMode\"").unwrap();
+        assert_eq!(setup, SecureBootState::SetupMode);
+        let ns: SecureBootState = serde_json::from_str("\"NotSupported\"").unwrap();
+        assert_eq!(ns, SecureBootState::NotSupported);
+    }
+
+    #[test]
+    fn test_secureboot_state_invalid_json() {
+        let result = serde_json::from_str::<SecureBootState>("\"Invalid\"");
+        assert!(result.is_err());
+    }
+
+    // --- parse_mokutil_list: verify pre-capacity optimization ---
+
+    #[test]
+    fn test_parse_mokutil_list_large_number_of_keys() {
+        let mut output = String::new();
+        for i in 0..50 {
+            output.push_str(&format!("[key {}]\n", i + 1));
+            output.push_str(&format!(
+                "SHA1 Fingerprint: {:02x}:{:02x}:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd\n",
+                i / 256, i % 256
+            ));
+            output.push_str(&format!("        Subject: CN=Key{}\n", i));
+            output.push_str(&format!("        Issuer: CN=CA{}\n", i));
+        }
+        let keys = parse_mokutil_list(&output).unwrap();
+        assert_eq!(keys.len(), 50);
+        assert_eq!(keys[49].subject, "CN=Key49");
     }
 }

@@ -1,6 +1,17 @@
 //! Security system interface
 //!
 //! Provides safe Rust bindings for security-related syscalls.
+//!
+//! # Security Considerations
+//!
+//! - Landlock requires kernel 5.13+ and is a best-effort sandbox — always
+//!   verify the ABI version before relying on enforcement.
+//! - Seccomp filters are irreversible once applied via `SECCOMP_SET_MODE_FILTER`;
+//!   a malformed BPF program can brick the calling process.
+//! - Filter validation is critical: callers must construct correct BPF bytecode.
+//!   This module does not validate individual BPF instructions.
+//! - Both Landlock and seccomp operate on the calling thread/process — no
+//!   special capability is needed, but effects are permanent.
 
 use crate::error::{Result, SysError};
 use std::path::PathBuf;

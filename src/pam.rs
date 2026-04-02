@@ -5,6 +5,18 @@
 //! (via `who`/`loginctl`).
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - PAM configuration files define the authentication stack; writing to
+//!   `/etc/pam.d/` requires root and incorrect config can lock out all logins.
+//! - Enumerating users via `/etc/passwd` can facilitate user enumeration attacks
+//!   if results are exposed to untrusted parties. UIDs and group memberships are
+//!   included in parsed output.
+//! - Password hashes are never read (they live in `/etc/shadow`), but the
+//!   presence/absence of users is still information-sensitive.
+//! - Callers must validate service names to prevent path traversal in
+//!   `/etc/pam.d/<service>`.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -30,7 +42,7 @@ impl PamService {
     /// Returns the service name string used in `/etc/pam.d/`.
     #[inline]
     #[must_use]
-    pub fn service_name(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             PamService::Login => "login",
             PamService::Sudo => "sudo",
@@ -43,7 +55,7 @@ impl PamService {
 
 impl fmt::Display for PamService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.service_name())
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -461,7 +473,7 @@ pub fn validate_pam_rule(rule: &PamRule) -> Result<()> {
 /// Get the filesystem path for a PAM service config file.
 #[must_use]
 pub fn get_pam_service_path(service: &PamService) -> PathBuf {
-    PathBuf::from(format!("/etc/pam.d/{}", service.service_name()))
+    PathBuf::from(format!("/etc/pam.d/{}", service.as_str()))
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +514,10 @@ pub fn get_user_info(username: &str) -> Result<UserInfo> {
     Ok(info)
 }
 
+/// Retrieve information about a user by name.
+///
+/// Reads `/etc/passwd` for basic fields, then runs `id -Gn <username>` to
+/// resolve group memberships.
 #[cfg(not(target_os = "linux"))]
 pub fn get_user_info(_username: &str) -> Result<UserInfo> {
     Err(SysError::NotSupported {
@@ -529,6 +545,7 @@ pub fn list_users() -> Result<Vec<UserInfo>> {
     Ok(users)
 }
 
+/// List all users from `/etc/passwd`.
 #[cfg(not(target_os = "linux"))]
 pub fn list_users() -> Result<Vec<UserInfo>> {
     Err(SysError::NotSupported {
@@ -553,6 +570,7 @@ pub fn list_sessions() -> Result<Vec<SessionInfo>> {
     Ok(parse_who_output(&stdout))
 }
 
+/// List active login sessions by parsing `who` output.
 #[cfg(not(target_os = "linux"))]
 pub fn list_sessions() -> Result<Vec<SessionInfo>> {
     Err(SysError::NotSupported {
@@ -586,6 +604,7 @@ pub fn create_system_user(username: &str, home_dir: Option<&Path>) -> Result<()>
     Ok(())
 }
 
+/// Create a system user with `useradd --system`.
 #[cfg(not(target_os = "linux"))]
 pub fn create_system_user(_username: &str, _home_dir: Option<&Path>) -> Result<()> {
     Err(SysError::NotSupported {
@@ -612,6 +631,7 @@ pub fn delete_user(username: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete a user with `userdel`.
 #[cfg(not(target_os = "linux"))]
 pub fn delete_user(_username: &str) -> Result<()> {
     Err(SysError::NotSupported {
@@ -641,6 +661,7 @@ pub fn add_user_to_group(username: &str, group: &str) -> Result<()> {
     Ok(())
 }
 
+/// Add a user to a group with `usermod -aG`.
 #[cfg(not(target_os = "linux"))]
 pub fn add_user_to_group(_username: &str, _group: &str) -> Result<()> {
     Err(SysError::NotSupported {
@@ -1485,13 +1506,13 @@ mod tests {
 
     #[test]
     fn test_pam_service_sshd_name() {
-        assert_eq!(PamService::Sshd.service_name(), "sshd");
+        assert_eq!(PamService::Sshd.as_str(), "sshd");
     }
 
     #[test]
     fn test_pam_service_custom_empty() {
         let svc = PamService::Custom(String::new());
-        assert_eq!(svc.service_name(), "");
+        assert_eq!(svc.as_str(), "");
     }
 
     #[test]

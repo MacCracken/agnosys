@@ -5,6 +5,15 @@
 //!
 //! On non-Linux platforms, `detect_mac_system()` returns `MacSystem::None`
 //! and all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - LSM detection (`detect_mac_system`) reads `/sys/kernel/security/lsm` and
+//!   is informational only — it does not verify enforcement state.
+//! - Loading or modifying SELinux/AppArmor profiles requires root or
+//!   `CAP_MAC_ADMIN`. An incorrect profile can deny legitimate access.
+//! - Security context labels may reveal internal service architecture;
+//!   avoid exposing them to untrusted consumers.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};

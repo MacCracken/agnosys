@@ -1,4 +1,13 @@
 //! Structured logging for agnosys via `AGNOSYS_LOG` env var.
+//!
+//! # Security Considerations
+//!
+//! - The `AGNOSYS_LOG` environment variable controls log verbosity. Setting it
+//!   to `trace` or `debug` may cause syscall arguments, file paths, and kernel
+//!   responses to appear in log output.
+//! - Tracing output should be directed to a secure destination; log files may
+//!   contain sensitive operational data.
+//! - The env var is read once at initialization; runtime changes have no effect.
 
 pub fn init() {
     init_with_level("info");

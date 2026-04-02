@@ -5,6 +5,18 @@
 //! boot configuration, managing boot entries, and modifying kernel command lines.
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Boot configuration modification requires root and writes to the EFI
+//!   System Partition. Incorrect entries can render the system unbootable.
+//! - Kernel command-line parameters directly affect security posture (e.g.,
+//!   `iommu=`, `lockdown=`, `module.sig_enforce`). Callers must validate
+//!   parameters before writing.
+//! - `loader.conf` and boot entries are treated as trusted input; if the ESP
+//!   is writable by an attacker, boot integrity is compromised.
+//! - GRUB2 configuration regeneration (`grub-mkconfig`) executes scripts in
+//!   `/etc/grub.d/` as root.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1806,5 +1818,355 @@ menuentry 'Entry B' {
         let result = set_kernel_cmdline("", "init=/bin/sh");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage — untested code paths
+    // -----------------------------------------------------------------------
+
+    // --- Bootloader Display exhaustive ---
+
+    #[test]
+    fn test_bootloader_display_matches_expected_strings() {
+        assert_eq!(format!("{}", Bootloader::SystemdBoot), "systemd-boot");
+        assert_eq!(format!("{}", Bootloader::Grub2), "GRUB2");
+        assert_eq!(format!("{}", Bootloader::Unknown), "unknown");
+    }
+
+    // --- Bootloader deserialization from JSON ---
+
+    #[test]
+    fn test_bootloader_deserialize_from_json_strings() {
+        let sd: Bootloader = serde_json::from_str("\"SystemdBoot\"").unwrap();
+        assert_eq!(sd, Bootloader::SystemdBoot);
+        let g2: Bootloader = serde_json::from_str("\"Grub2\"").unwrap();
+        assert_eq!(g2, Bootloader::Grub2);
+        let unk: Bootloader = serde_json::from_str("\"Unknown\"").unwrap();
+        assert_eq!(unk, Bootloader::Unknown);
+    }
+
+    #[test]
+    fn test_bootloader_invalid_json() {
+        let result = serde_json::from_str::<Bootloader>("\"InvalidLoader\"");
+        assert!(result.is_err());
+    }
+
+    // --- extract_version_from_path: more edge cases ---
+
+    #[test]
+    fn test_extract_version_vmlinuz_dash_only() {
+        // "vmlinuz-" with empty version suffix
+        let p = PathBuf::from("/boot/vmlinuz-");
+        assert_eq!(extract_version_from_path(&p), Some("".to_string()));
+    }
+
+    #[test]
+    fn test_extract_version_from_path_deeply_nested() {
+        let p = PathBuf::from("/a/b/c/d/vmlinuz-1.2.3");
+        assert_eq!(extract_version_from_path(&p), Some("1.2.3".to_string()));
+    }
+
+    // --- validate_kernel_cmdline: comprehensive dangerous token tests ---
+
+    #[test]
+    fn test_validate_cmdline_safe_with_iommu_and_lockdown() {
+        assert!(validate_kernel_cmdline(
+            "root=UUID=abc iommu=pt lockdown=integrity module.sig_enforce"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_validate_cmdline_rejects_embedded_single_word() {
+        // "single" as a substring e.g. in "single-user" -- still rejected by contains()
+        assert!(validate_kernel_cmdline("single-user").is_err());
+    }
+
+    // --- validate_entry_id: boundary cases ---
+
+    #[test]
+    fn test_validate_entry_id_max_length_boundary() {
+        // 256 is OK, 257 is not
+        assert!(validate_entry_id(&"x".repeat(256)).is_ok());
+        assert!(validate_entry_id(&"x".repeat(257)).is_err());
+    }
+
+    #[test]
+    fn test_validate_entry_id_with_all_valid_char_types() {
+        // Mix of alphanumeric, hyphen, underscore, dot
+        assert!(validate_entry_id("aB3-c_4.conf").is_ok());
+    }
+
+    // --- set_timeout boundary cases ---
+
+    #[test]
+    fn test_set_timeout_299_passes_bounds_check() {
+        let result = set_timeout(299);
+        if let Err(e) = result {
+            assert!(
+                !e.to_string().contains("exceeds maximum"),
+                "299 should pass bounds check: {}",
+                e
+            );
+        }
+    }
+
+    // --- BootEntry serde edge cases ---
+
+    #[test]
+    fn test_boot_entry_serde_no_initrd_no_version() {
+        let entry = BootEntry {
+            id: "minimal".to_string(),
+            title: "Minimal".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz"),
+            initrd: None,
+            options: String::new(),
+            is_default: false,
+            version: None,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"initrd\":null"));
+        assert!(json.contains("\"version\":null"));
+        let back: BootEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    // --- BootConfig serde with no entries and no default ---
+
+    #[test]
+    fn test_boot_config_serde_empty() {
+        let config = BootConfig {
+            bootloader: Bootloader::Unknown,
+            timeout_secs: 0,
+            default_entry: None,
+            entries: vec![],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: BootConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.bootloader, Bootloader::Unknown);
+        assert_eq!(back.timeout_secs, 0);
+        assert!(back.default_entry.is_none());
+        assert!(back.entries.is_empty());
+    }
+
+    // --- BootEntry Debug ---
+
+    #[test]
+    fn test_boot_entry_debug_format() {
+        let entry = BootEntry {
+            id: "dbg-test".to_string(),
+            title: "Debug Test".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz"),
+            initrd: None,
+            options: "quiet".to_string(),
+            is_default: false,
+            version: None,
+        };
+        let debug = format!("{:?}", entry);
+        assert!(debug.contains("BootEntry"));
+        assert!(debug.contains("dbg-test"));
+    }
+
+    // --- BootConfig Debug ---
+
+    #[test]
+    fn test_boot_config_debug_format() {
+        let config = BootConfig {
+            bootloader: Bootloader::Grub2,
+            timeout_secs: 5,
+            default_entry: Some("0".to_string()),
+            entries: vec![],
+        };
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("BootConfig"));
+        assert!(debug.contains("Grub2"));
+    }
+
+    // --- parse_grub_cfg edge cases ---
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_menuentry_no_closing_brace() {
+        // An unclosed menuentry block should not be captured
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            "menuentry 'Unclosed' {\n    linux /boot/vmlinuz quiet\n",
+        )
+        .unwrap();
+
+        let (entries, _) = parse_grub_cfg(&grub_path).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_multiple_entries_default_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            r#"set default="1"
+menuentry 'A' {
+    linux /boot/vmlinuz-a quiet
+}
+menuentry 'B' {
+    linux /boot/vmlinuz-b quiet
+}
+menuentry 'C' {
+    linux /boot/vmlinuz-c quiet
+}
+"#,
+        )
+        .unwrap();
+
+        let (entries, default_id) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(default_id, Some("1".to_string()));
+        assert!(!entries[0].is_default);
+        assert!(entries[1].is_default);
+        assert!(!entries[2].is_default);
+    }
+
+    // --- parse_loader_conf edge cases ---
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_multiple_timeout_lines() {
+        // Last one wins
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "timeout 3\ntimeout 15\n").unwrap();
+
+        let (timeout, _) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(timeout, 15);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_loader_conf_multiple_default_lines() {
+        // Last one wins
+        let dir = tempfile::tempdir().unwrap();
+        let conf_path = dir.path().join("loader.conf");
+        std::fs::write(&conf_path, "default first.conf\ndefault second.conf\n").unwrap();
+
+        let (_, default_id) = parse_loader_conf(&conf_path).unwrap();
+        assert_eq!(default_id, Some("second".to_string()));
+    }
+
+    // --- validate_kernel_cmdline: all dangerous tokens individually ---
+
+    #[test]
+    fn test_validate_cmdline_each_dangerous_token_error_message() {
+        for token in DANGEROUS_CMDLINE_TOKENS {
+            let result = validate_kernel_cmdline(token);
+            assert!(result.is_err(), "Token '{}' should be rejected", token);
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("dangerous"),
+                "Error for '{}' should contain 'dangerous': {}",
+                token,
+                msg
+            );
+        }
+    }
+
+    // --- set_kernel_cmdline: valid ID + valid options still fails without bootloader ---
+
+    #[test]
+    fn test_set_kernel_cmdline_valid_args_fails_without_bootloader() {
+        // Validation passes, but actual operation may fail
+        let result = set_kernel_cmdline("valid-entry", "root=UUID=abc quiet");
+        // On non-Linux or without bootloader, this will fail for non-validation reasons
+        if let Err(e) = result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("empty") && !msg.contains("dangerous"),
+                "Should not be a validation error: {}",
+                msg
+            );
+        }
+    }
+
+    // --- set_default_entry: valid ID fails without bootloader ---
+
+    #[test]
+    fn test_set_default_entry_valid_id_fails_without_bootloader() {
+        let result = set_default_entry("valid-entry-id");
+        if let Err(e) = result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("empty") && !msg.contains("invalid characters"),
+                "Should not be a validation error: {}",
+                msg
+            );
+        }
+    }
+
+    // --- BootEntry Clone ---
+
+    #[test]
+    fn test_boot_entry_clone_preserves_all_fields() {
+        let entry = BootEntry {
+            id: "clone-test".to_string(),
+            title: "Clone Test".to_string(),
+            linux: PathBuf::from("/boot/vmlinuz-clone"),
+            initrd: Some(PathBuf::from("/boot/initramfs-clone.img")),
+            options: "root=UUID=abc quiet".to_string(),
+            is_default: true,
+            version: Some("6.6.0-clone".to_string()),
+        };
+        let cloned = entry.clone();
+        assert_eq!(entry.id, cloned.id);
+        assert_eq!(entry.title, cloned.title);
+        assert_eq!(entry.linux, cloned.linux);
+        assert_eq!(entry.initrd, cloned.initrd);
+        assert_eq!(entry.options, cloned.options);
+        assert_eq!(entry.is_default, cloned.is_default);
+        assert_eq!(entry.version, cloned.version);
+    }
+
+    // --- BootConfig Clone ---
+
+    #[test]
+    fn test_boot_config_clone() {
+        let config = BootConfig {
+            bootloader: Bootloader::SystemdBoot,
+            timeout_secs: 42,
+            default_entry: Some("test".to_string()),
+            entries: vec![BootEntry {
+                id: "test".to_string(),
+                title: "Test".to_string(),
+                linux: PathBuf::from("/boot/vmlinuz"),
+                initrd: None,
+                options: "quiet".to_string(),
+                is_default: true,
+                version: None,
+            }],
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.bootloader, config.bootloader);
+        assert_eq!(cloned.timeout_secs, config.timeout_secs);
+        assert_eq!(cloned.default_entry, config.default_entry);
+        assert_eq!(cloned.entries.len(), config.entries.len());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_grub_cfg_initrd_empty_line() {
+        // initrd with empty content after stripping prefix
+        let dir = tempfile::tempdir().unwrap();
+        let grub_path = dir.path().join("grub.cfg");
+        std::fs::write(
+            &grub_path,
+            "menuentry 'Test' {\n    linux /boot/vmlinuz quiet\n    initrd\n}\n",
+        )
+        .unwrap();
+
+        let (entries, _) = parse_grub_cfg(&grub_path).unwrap();
+        assert_eq!(entries.len(), 1);
+        // "initrd" line with nothing after stripping "16" and trimming -> empty, so no initrd set
+        assert!(entries[0].initrd.is_none());
     }
 }

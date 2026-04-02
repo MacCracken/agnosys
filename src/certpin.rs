@@ -6,6 +6,18 @@
 //! standard (RFC 7469).
 //!
 //! On non-Linux platforms, `fetch_server_cert` returns `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Pin values are SHA-256 hashes of SPKI data — they are not secret, but
+//!   integrity-critical. A tampered pin store defeats the entire mechanism.
+//! - SPKI extraction parses DER-encoded certificates and trusts the input
+//!   format; malformed certificates may cause parsing errors but not memory
+//!   unsafety.
+//! - The custom base64 implementation is used only for pin encoding and has
+//!   been tested against known vectors; it does not handle untrusted decode.
+//! - `fetch_server_cert` connects to remote hosts — callers must validate
+//!   hostnames to prevent SSRF.
 
 use crate::error::{Result, SysError};
 use chrono::{DateTime, Utc};

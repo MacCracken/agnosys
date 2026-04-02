@@ -4,6 +4,16 @@
 //! block level. Shells out to `veritysetup` (part of the cryptsetup package).
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - The root hash is the trust anchor for the entire verified volume.
+//!   It must be stored out-of-band (e.g., in a signed manifest or TPM PCR).
+//! - Root hash comparison uses constant-time equality to prevent timing
+//!   side-channels.
+//! - dm-verity volumes are read-only by design; any write attempt will fail.
+//! - `veritysetup` runs as a subprocess with root privileges; device paths
+//!   must be validated by the caller to prevent device node confusion.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};

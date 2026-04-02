@@ -4,6 +4,16 @@
 //! Shells out to `udevadm` (part of systemd/eudev).
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Device enumeration via sysfs is unprivileged and available to any user;
+//!   the device list may reveal hardware configuration to untrusted code.
+//! - Udev rule installation writes to `/etc/udev/rules.d/` and requires root.
+//!   Injected rules execute as root on device events — validate rule content
+//!   carefully to prevent arbitrary command execution.
+//! - `udevadm` commands run as subprocesses; callers must sanitize device
+//!   paths and attribute values to prevent argument injection.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};

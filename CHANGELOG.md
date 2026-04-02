@@ -1,5 +1,41 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.50.0] - 2026-04-02
+
+### Breaking Changes
+- **audit.rs**: `read_agnos_audit_events(proc_path: &str)` now takes `&Path` instead of `&str` for consistency with all other path-taking functions
+- **netns.rs**: `destroy_agent_netns()` now consumes `NetNamespaceHandle` by value (was `&NetNamespaceHandle`) to match resource ownership semantics
+- **pam.rs**: `PamService::service_name()` renamed to `PamService::as_str()` for consistency with all other enum accessor methods
+- **udev.rs / journald.rs**: `HashMap<String, String>` fields replaced with `BTreeMap<String, String>` for deterministic iteration order in security-critical contexts
+- `#[non_exhaustive]` added to all 56 public structs — external code constructing structs with `Struct { .. }` syntax must use constructors instead
+
+### Added
+- **Security documentation**: All 20 modules now include `# Security Considerations` sections covering required privileges, input validation, data sensitivity, and threat model notes
+- **8 new example programs**: `audit_status`, `pam_users`, `journal_query`, `boot_info`, `cert_pinning`, `verity_check`, `update_state`, `network_namespaces` (14 total)
+- **cargo-semver-checks** CI job to catch breaking API changes automatically
+- `UdevRule::new()` and `UpdateState::new()` constructors for non-exhaustive struct initialization
+- Documentation added to all `#[cfg(not(target_os = "linux"))]` stub functions (pam, journald, update)
+- 226 new unit tests across 7 modules (tpm, netns, update, secureboot, bootloader, fuse, luks)
+
+### Changed
+- `#[must_use]` refined: removed from `Result`-returning functions (redundant — `Result` is already `#[must_use]`), kept on non-Result value types
+- `#[inline]` added to ~24 hot-path accessors (`as_str()`, `is_*()`, simple constructors) across all modules
+- `#[non_exhaustive]` now on all public structs (was only on enums)
+
+### Performance
+- No regressions from hardening changes (72/90 benchmarks improved, remainder within noise)
+
+### Metrics
+- **Tests**: 1,625 (1,551 unit + 73 integration + 1 doc)
+- **Benchmarks**: 147 across 20 modules
+- **Line coverage**: 86.56% (all modules above 80%)
+- **Fuzz targets**: 8 parser fuzzers
+
 ## [0.5.0] - 2026-03-26
 
 ### Changed

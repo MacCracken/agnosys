@@ -5,6 +5,17 @@
 //! execution of tampered binaries.
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - IMA policy loading writes to `/sys/kernel/security/ima/policy` and
+//!   requires root. Once loaded, policies are append-only and cannot be removed
+//!   without a reboot.
+//! - The measurement log (`/sys/kernel/security/ima/ascii_runtime_measurements`)
+//!   reflects system integrity state and is sensitive — an attacker who can read
+//!   it learns which binaries have executed.
+//! - IMA appraisal failures block file access; a broken policy can render the
+//!   system unbootable. Always test policies in audit-only mode first.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};

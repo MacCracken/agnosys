@@ -8,6 +8,18 @@
 //! inside a namespace.
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Network namespace creation requires `CAP_SYS_ADMIN` (or root). The `ip`
+//!   commands run as subprocesses with inherited privileges.
+//! - Veth pairs bridge the namespace to the host network — misconfigured
+//!   routing or missing firewall rules can leak traffic between namespaces.
+//! - `nft` is invoked as a subprocess to apply firewall rulesets; callers
+//!   must supply pre-validated rulesets (from the `nein` crate) to prevent
+//!   rule injection.
+//! - Agent IP addresses and namespace names are not secrets but may reveal
+//!   internal network topology.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -497,7 +509,7 @@ pub fn apply_nftables_ruleset(handle: &NetNamespaceHandle, ruleset: &str) -> Res
 }
 
 /// Destroy an agent's network namespace and clean up veth pairs.
-pub fn destroy_agent_netns(handle: &NetNamespaceHandle) -> Result<()> {
+pub fn destroy_agent_netns(handle: NetNamespaceHandle) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         // Delete host-side veth (peer is auto-deleted)
@@ -697,7 +709,7 @@ mod tests {
         let namespaces = list_agent_netns().unwrap();
         assert!(namespaces.iter().any(|n| n.contains("integration-test")));
 
-        destroy_agent_netns(&handle).unwrap();
+        destroy_agent_netns(handle).unwrap();
     }
 
     #[test]
@@ -1078,5 +1090,640 @@ mod tests {
     #[test]
     fn test_firewall_action_variants() {
         assert_ne!(FirewallAction::Accept, FirewallAction::Drop);
+    }
+
+    // -- Render nftables: inbound remote_addr --
+
+    #[test]
+    fn test_render_nftables_inbound_remote_addr() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Inbound,
+                Protocol::Any,
+                0,
+                "192.168.1.0/24",
+                FirewallAction::Accept,
+                "Allow LAN",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(
+            ruleset.contains("ip saddr 192.168.1.0/24 accept"),
+            "ruleset: {ruleset}"
+        );
+        // Should NOT appear in output chain
+        assert!(
+            !ruleset.contains("ip daddr 192.168.1.0/24"),
+            "inbound rule leaked to output chain"
+        );
+    }
+
+    #[test]
+    fn test_render_nftables_inbound_tcp_port_and_remote_addr() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Inbound,
+                Protocol::Tcp,
+                22,
+                "10.0.0.5",
+                FirewallAction::Drop,
+                "Block SSH from host",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        // Both the port rule and the addr rule should be emitted for inbound
+        assert!(
+            ruleset.contains("tcp dport 22 drop"),
+            "ruleset: {ruleset}"
+        );
+        assert!(
+            ruleset.contains("ip saddr 10.0.0.5 drop"),
+            "ruleset: {ruleset}"
+        );
+    }
+
+    #[test]
+    fn test_render_nftables_inbound_udp_rule() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Inbound,
+                Protocol::Udp,
+                5353,
+                "",
+                FirewallAction::Accept,
+                "mDNS",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("udp dport 5353 accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_drop_action_in_rules() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Accept,
+            FirewallAction::Accept,
+            vec![
+                FirewallRule::new(
+                    TrafficDirection::Outbound,
+                    Protocol::Tcp,
+                    25,
+                    "",
+                    FirewallAction::Drop,
+                    "Block SMTP",
+                ),
+                FirewallRule::new(
+                    TrafficDirection::Inbound,
+                    Protocol::Tcp,
+                    23,
+                    "",
+                    FirewallAction::Drop,
+                    "Block Telnet",
+                ),
+            ],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("tcp dport 25 drop"));
+        assert!(ruleset.contains("tcp dport 23 drop"));
+        assert!(ruleset.contains("policy accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_outbound_port_and_remote_addr() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Udp,
+                443,
+                "1.1.1.1",
+                FirewallAction::Accept,
+                "QUIC to Cloudflare",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("udp dport 443 accept"));
+        assert!(ruleset.contains("ip daddr 1.1.1.1 accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_any_protocol_port_ignored() {
+        // Protocol::Any with port > 0: no proto line emitted (since proto is None)
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Any,
+                80,
+                "",
+                FirewallAction::Accept,
+                "Any proto port 80",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        // No "tcp dport" or "udp dport" should appear
+        assert!(
+            !ruleset.contains("dport 80"),
+            "Protocol::Any should not emit dport line: {ruleset}"
+        );
+    }
+
+    #[test]
+    fn test_render_nftables_zero_port_not_emitted() {
+        // port == 0 means the proto+port line is skipped even with Tcp/Udp
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Tcp,
+                0,
+                "10.0.0.1",
+                FirewallAction::Accept,
+                "No port",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(
+            !ruleset.contains("tcp dport"),
+            "port 0 should skip dport line: {ruleset}"
+        );
+        assert!(ruleset.contains("ip daddr 10.0.0.1 accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_mixed_default_policies() {
+        let policy =
+            FirewallPolicy::new(FirewallAction::Accept, FirewallAction::Drop, vec![]);
+        let ruleset = render_nftables_ruleset(&policy);
+        // Input chain: accept, output chain: drop
+        assert!(ruleset.contains("chain input { type filter hook input priority 0; policy accept;"));
+        assert!(
+            ruleset.contains("chain output { type filter hook output priority 0; policy drop;")
+        );
+    }
+
+    #[test]
+    fn test_render_nftables_comment_preserved() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Tcp,
+                443,
+                "",
+                FirewallAction::Accept,
+                "Allow HTTPS outbound",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("comment \"Allow HTTPS outbound\""));
+    }
+
+    #[test]
+    fn test_render_nftables_loopback_accept() {
+        let policy = FirewallPolicy::new(FirewallAction::Drop, FirewallAction::Drop, vec![]);
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("iif lo accept"));
+        assert!(ruleset.contains("oif lo accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_many_rules() {
+        let rules: Vec<FirewallRule> = (1..=10)
+            .map(|i| {
+                FirewallRule::new(
+                    if i % 2 == 0 {
+                        TrafficDirection::Inbound
+                    } else {
+                        TrafficDirection::Outbound
+                    },
+                    Protocol::Tcp,
+                    i * 100,
+                    "",
+                    FirewallAction::Accept,
+                    format!("rule-{i}"),
+                )
+            })
+            .collect();
+        let policy = FirewallPolicy::new(FirewallAction::Drop, FirewallAction::Drop, rules);
+        let ruleset = render_nftables_ruleset(&policy);
+        // All rules should appear
+        for i in 1..=10u16 {
+            assert!(
+                ruleset.contains(&format!("tcp dport {}", i * 100)),
+                "missing rule for port {}",
+                i * 100
+            );
+        }
+    }
+
+    #[test]
+    fn test_render_nftables_inbound_any_proto_empty_addr_no_rule_lines() {
+        // Protocol::Any + port 0 + empty addr => no rule-specific lines at all
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Inbound,
+                Protocol::Any,
+                0,
+                "",
+                FirewallAction::Accept,
+                "No-op",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(!ruleset.contains("No-op"), "empty rule should produce no lines: {ruleset}");
+    }
+
+    // -- Firewall type construction and traits --
+
+    #[test]
+    fn test_firewall_rule_new_fields() {
+        let rule = FirewallRule::new(
+            TrafficDirection::Inbound,
+            Protocol::Udp,
+            53,
+            "8.8.8.8",
+            FirewallAction::Drop,
+            "Block DNS",
+        );
+        assert_eq!(rule.direction, TrafficDirection::Inbound);
+        assert_eq!(rule.protocol, Protocol::Udp);
+        assert_eq!(rule.port, 53);
+        assert_eq!(rule.remote_addr, "8.8.8.8");
+        assert_eq!(rule.action, FirewallAction::Drop);
+        assert_eq!(rule.comment, "Block DNS");
+    }
+
+    #[test]
+    fn test_firewall_rule_clone() {
+        let rule = FirewallRule::new(
+            TrafficDirection::Outbound,
+            Protocol::Tcp,
+            443,
+            "1.2.3.4",
+            FirewallAction::Accept,
+            "HTTPS",
+        );
+        let cloned = rule.clone();
+        assert_eq!(cloned.port, rule.port);
+        assert_eq!(cloned.remote_addr, rule.remote_addr);
+        assert_eq!(cloned.comment, rule.comment);
+        assert_eq!(cloned.direction, rule.direction);
+        assert_eq!(cloned.protocol, rule.protocol);
+        assert_eq!(cloned.action, rule.action);
+    }
+
+    #[test]
+    fn test_firewall_rule_debug() {
+        let rule = FirewallRule::new(
+            TrafficDirection::Inbound,
+            Protocol::Any,
+            0,
+            "",
+            FirewallAction::Drop,
+            "debug test",
+        );
+        let dbg = format!("{:?}", rule);
+        assert!(dbg.contains("FirewallRule"));
+        assert!(dbg.contains("debug test"));
+    }
+
+    #[test]
+    fn test_firewall_policy_new_fields() {
+        let policy = FirewallPolicy::new(FirewallAction::Accept, FirewallAction::Drop, vec![]);
+        assert_eq!(policy.default_inbound, FirewallAction::Accept);
+        assert_eq!(policy.default_outbound, FirewallAction::Drop);
+        assert!(policy.rules.is_empty());
+    }
+
+    #[test]
+    fn test_firewall_policy_clone() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Accept,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Tcp,
+                80,
+                "",
+                FirewallAction::Accept,
+                "HTTP",
+            )],
+        );
+        let cloned = policy.clone();
+        assert_eq!(cloned.rules.len(), 1);
+        assert_eq!(cloned.default_inbound, FirewallAction::Drop);
+        assert_eq!(cloned.default_outbound, FirewallAction::Accept);
+    }
+
+    #[test]
+    fn test_firewall_policy_debug() {
+        let policy = FirewallPolicy::new(FirewallAction::Drop, FirewallAction::Drop, vec![]);
+        let dbg = format!("{:?}", policy);
+        assert!(dbg.contains("FirewallPolicy"));
+    }
+
+    // -- Enum serde roundtrips --
+
+    #[test]
+    fn test_traffic_direction_serde_roundtrip() {
+        for dir in [TrafficDirection::Inbound, TrafficDirection::Outbound] {
+            let json = serde_json::to_string(&dir).unwrap();
+            let back: TrafficDirection = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, dir);
+        }
+    }
+
+    #[test]
+    fn test_protocol_serde_roundtrip() {
+        for proto in [Protocol::Tcp, Protocol::Udp, Protocol::Any] {
+            let json = serde_json::to_string(&proto).unwrap();
+            let back: Protocol = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, proto);
+        }
+    }
+
+    #[test]
+    fn test_firewall_action_serde_roundtrip() {
+        for action in [FirewallAction::Accept, FirewallAction::Drop] {
+            let json = serde_json::to_string(&action).unwrap();
+            let back: FirewallAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, action);
+        }
+    }
+
+    // -- Enum copy semantics --
+
+    #[test]
+    fn test_traffic_direction_copy() {
+        let d = TrafficDirection::Inbound;
+        let d2 = d; // Copy
+        assert_eq!(d, d2);
+    }
+
+    #[test]
+    fn test_protocol_copy() {
+        let p = Protocol::Tcp;
+        let p2 = p;
+        assert_eq!(p, p2);
+    }
+
+    #[test]
+    fn test_firewall_action_copy() {
+        let a = FirewallAction::Accept;
+        let a2 = a;
+        assert_eq!(a, a2);
+    }
+
+    // -- NetNamespaceHandle additional tests --
+
+    #[test]
+    fn test_net_namespace_handle_serde_all_fields() {
+        let handle = NetNamespaceHandle {
+            name: "agnos-agent-full".to_string(),
+            veth_host: "veth-full-h".to_string(),
+            veth_agent: "veth-full-a".to_string(),
+            netns_path: "/var/run/netns/agnos-agent-full".to_string(),
+        };
+        let json = serde_json::to_string(&handle).unwrap();
+        let back: NetNamespaceHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "agnos-agent-full");
+        assert_eq!(back.veth_host, "veth-full-h");
+        assert_eq!(back.veth_agent, "veth-full-a");
+        assert_eq!(back.netns_path, "/var/run/netns/agnos-agent-full");
+    }
+
+    // -- Config with custom values --
+
+    #[test]
+    fn test_net_namespace_config_custom_dns() {
+        let mut config = NetNamespaceConfig::for_agent("custom-dns");
+        config.dns_servers = vec!["1.1.1.1".to_string()];
+        assert_eq!(config.dns_servers.len(), 1);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_net_namespace_config_nat_disabled() {
+        let mut config = NetNamespaceConfig::for_agent("no-nat");
+        config.enable_nat = false;
+        assert!(!config.enable_nat);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_net_namespace_config_custom_ips() {
+        let config = NetNamespaceConfig {
+            name: "custom".to_string(),
+            agent_ip: "172.16.0.2".to_string(),
+            host_ip: "172.16.0.1".to_string(),
+            prefix_len: 24,
+            enable_nat: false,
+            dns_servers: vec![],
+        };
+        assert!(config.validate().is_ok());
+        assert_eq!(config.prefix_len, 24);
+    }
+
+    #[test]
+    fn test_net_namespace_config_validate_host_ip_ipv6_rejected() {
+        let mut config = NetNamespaceConfig::for_agent("test");
+        config.host_ip = "fe80::1".to_string();
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("Invalid host IP"));
+    }
+
+    #[test]
+    fn test_net_namespace_config_validate_agent_ip_with_port_rejected() {
+        let mut config = NetNamespaceConfig::for_agent("test");
+        config.agent_ip = "10.0.0.1:8080".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_net_namespace_config_validate_agent_ip_cidr_rejected() {
+        let mut config = NetNamespaceConfig::for_agent("test");
+        config.agent_ip = "10.0.0.1/24".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    // -- IP generation edge cases --
+
+    #[test]
+    fn test_generate_agent_ips_special_chars() {
+        let (host, agent) = generate_agent_ips("agent-with-special_chars.v2");
+        assert!(host.parse::<std::net::Ipv4Addr>().is_ok());
+        assert!(agent.parse::<std::net::Ipv4Addr>().is_ok());
+    }
+
+    #[test]
+    fn test_generate_agent_ips_unicode() {
+        let (host, agent) = generate_agent_ips("日本語エージェント");
+        assert!(host.parse::<std::net::Ipv4Addr>().is_ok());
+        assert!(agent.parse::<std::net::Ipv4Addr>().is_ok());
+    }
+
+    #[test]
+    fn test_generate_agent_ips_whitespace() {
+        let (host, agent) = generate_agent_ips("agent with spaces");
+        assert!(host.starts_with("10.100."));
+        assert!(agent.ends_with(".2"));
+    }
+
+    #[test]
+    fn test_generate_agent_ips_host_agent_differ() {
+        let (host, agent) = generate_agent_ips("any-agent");
+        assert_ne!(host, agent, "host and agent IPs must differ");
+    }
+
+    // -- Firewall rule with owned String args --
+
+    #[test]
+    fn test_firewall_rule_new_with_owned_strings() {
+        let rule = FirewallRule::new(
+            TrafficDirection::Inbound,
+            Protocol::Tcp,
+            80,
+            String::from("10.0.0.0/8"),
+            FirewallAction::Accept,
+            String::from("Allow private"),
+        );
+        assert_eq!(rule.remote_addr, "10.0.0.0/8");
+        assert_eq!(rule.comment, "Allow private");
+    }
+
+    // -- Config validation: prefix_len boundary 255 --
+
+    #[test]
+    fn test_net_namespace_config_validate_prefix_len_255() {
+        let mut config = NetNamespaceConfig::for_agent("test");
+        config.prefix_len = 255;
+        assert!(config.validate().is_err());
+    }
+
+    // -- Serialization: config with empty dns --
+
+    #[test]
+    fn test_net_namespace_config_serde_empty_dns() {
+        let config = NetNamespaceConfig {
+            name: "no-dns".to_string(),
+            agent_ip: "10.100.0.2".to_string(),
+            host_ip: "10.100.0.1".to_string(),
+            prefix_len: 30,
+            enable_nat: false,
+            dns_servers: vec![],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: NetNamespaceConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.dns_servers.is_empty());
+        assert!(!back.enable_nat);
+    }
+
+    // -- Render nftables: outbound rule skipped in input chain --
+
+    #[test]
+    fn test_render_nftables_outbound_not_in_input() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Tcp,
+                9999,
+                "",
+                FirewallAction::Accept,
+                "outbound only",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        // The tcp dport 9999 should only appear in the output section.
+        // Split at "chain output" and check it's only in the second half.
+        let parts: Vec<&str> = ruleset.split("chain output").collect();
+        assert_eq!(parts.len(), 2);
+        assert!(
+            !parts[0].contains("tcp dport 9999"),
+            "outbound rule appeared in input chain"
+        );
+        assert!(
+            parts[1].contains("tcp dport 9999"),
+            "outbound rule missing from output chain"
+        );
+    }
+
+    #[test]
+    fn test_render_nftables_inbound_not_in_output() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Inbound,
+                Protocol::Tcp,
+                7777,
+                "",
+                FirewallAction::Accept,
+                "inbound only",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        let parts: Vec<&str> = ruleset.split("chain output").collect();
+        assert_eq!(parts.len(), 2);
+        assert!(
+            parts[0].contains("tcp dport 7777"),
+            "inbound rule missing from input chain"
+        );
+        assert!(
+            !parts[1].contains("tcp dport 7777"),
+            "inbound rule leaked to output chain"
+        );
+    }
+
+    // -- Render nftables: remote_addr with drop action --
+
+    #[test]
+    fn test_render_nftables_outbound_remote_addr_drop() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Accept,
+            FirewallAction::Accept,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Any,
+                0,
+                "192.168.0.0/16",
+                FirewallAction::Drop,
+                "Block private range",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("ip daddr 192.168.0.0/16 drop"));
+    }
+
+    #[test]
+    fn test_render_nftables_inbound_remote_addr_drop() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Accept,
+            FirewallAction::Accept,
+            vec![FirewallRule::new(
+                TrafficDirection::Inbound,
+                Protocol::Any,
+                0,
+                "0.0.0.0/0",
+                FirewallAction::Drop,
+                "Block everything",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("ip saddr 0.0.0.0/0 drop"));
     }
 }

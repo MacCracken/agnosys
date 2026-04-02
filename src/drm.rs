@@ -16,6 +16,18 @@
 //!     println!("{}: {} v{}.{}.{}", path.display(), ver.name, ver.major, ver.minor, ver.patchlevel);
 //! }
 //! ```
+//!
+//! # Security Considerations
+//!
+//! - DRM device access (`/dev/dri/card*`) requires membership in the `video`
+//!   group or root privileges.
+//! - GPU framebuffer memory may contain sensitive data from other processes
+//!   (screen content, composited windows). Callers should not assume GPU
+//!   memory is zeroed.
+//! - DRM ioctls are inherently `unsafe` at the FFI boundary; this module
+//!   wraps them in safe Rust but cannot prevent kernel-level bugs.
+//! - Device enumeration reveals GPU hardware, which may be useful for
+//!   fingerprinting.
 
 use crate::error::{Result, SysError};
 use std::borrow::Cow;

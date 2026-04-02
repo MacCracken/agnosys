@@ -7,6 +7,17 @@
 //! `tpm2_create`, `tpm2_load`, `tpm2_unseal`, `tpm2_getrandom`).
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Access to `/dev/tpmrm0` typically requires membership in the `tpm` group
+//!   or root privileges.
+//! - PCR values are integrity-sensitive — an attacker who can extend arbitrary
+//!   PCRs can forge measured boot state.
+//! - Sealed secrets are bound to PCR values; changing boot configuration
+//!   (kernel, initrd, cmdline) will make sealed data unrecoverable.
+//! - `tpm2-tools` commands run as subprocesses; callers must ensure key handles
+//!   and context paths are trusted inputs.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1117,5 +1128,519 @@ mod tests {
     fn test_pcr_policy_selection_with_all_valid_boundary_indices() {
         let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0, 23]).unwrap();
         assert_eq!(policy.pcr_selection(), "sha256:0,23");
+    }
+
+    // --- TpmDevice::open_path tests ---
+
+    #[test]
+    fn test_tpm_device_open_path_nonexistent() {
+        let result = TpmDevice::open_path(Path::new("/dev/nonexistent_tpm_device_xyz"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        // On Linux: "TPM device not found"; on other platforms: "not supported"
+        assert!(
+            msg.contains("not found") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_tpm_device_open_default() {
+        // Just verify open() doesn't panic. It will likely fail since no TPM.
+        let result = TpmDevice::open();
+        // We don't assert success since there's no TPM; just check it returns a Result
+        let _ = result;
+    }
+
+    // --- read_pcr validation tests ---
+
+    #[test]
+    fn test_read_pcr_index_out_of_range() {
+        let result = read_pcr(TpmPcrBank::Sha256, &[0, 24]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn test_read_pcr_empty_indices() {
+        let result = read_pcr(TpmPcrBank::Sha256, &[]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("at least one")
+                || err.to_string().contains("not supported")
+                || err.to_string().contains("Not supported"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_read_pcr_high_index() {
+        let result = read_pcr(TpmPcrBank::Sha256, &[u32::MAX]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_pcr_all_banks_validation() {
+        // Each bank should reject index 25
+        for bank in [
+            TpmPcrBank::Sha1,
+            TpmPcrBank::Sha256,
+            TpmPcrBank::Sha384,
+            TpmPcrBank::Sha512,
+        ] {
+            let result = read_pcr(bank, &[25]);
+            assert!(result.is_err(), "bank {} should reject index 25", bank);
+        }
+    }
+
+    // --- extend_pcr validation tests ---
+
+    #[test]
+    fn test_extend_pcr_index_out_of_range() {
+        let result = extend_pcr(TpmPcrBank::Sha256, 24, "abcdef");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("out of range") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_extend_pcr_empty_hash() {
+        let result = extend_pcr(TpmPcrBank::Sha256, 0, "");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("hex string") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_extend_pcr_non_hex_hash() {
+        let result = extend_pcr(TpmPcrBank::Sha256, 0, "ghijkl");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("hex string") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_extend_pcr_mixed_valid_invalid_hex() {
+        let result = extend_pcr(TpmPcrBank::Sha256, 0, "abcdefZZ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extend_pcr_high_index_u32_max() {
+        let result = extend_pcr(TpmPcrBank::Sha1, u32::MAX, "aa");
+        assert!(result.is_err());
+    }
+
+    // --- seal_secret validation tests ---
+
+    #[test]
+    fn test_seal_secret_empty_data() {
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0, 7]).unwrap();
+        let result = seal_secret(&policy, &[], Path::new("/tmp"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("empty") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_seal_secret_data_too_large() {
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0]).unwrap();
+        let data = vec![0u8; 2049];
+        let result = seal_secret(&policy, &data, Path::new("/tmp"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("too large") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_seal_secret_data_exactly_2048_bytes() {
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0]).unwrap();
+        let data = vec![0u8; 2048];
+        // On Linux, 2048 bytes should pass size validation but fail at tpm2_create.
+        // On non-Linux, should get NotSupported.
+        let result = seal_secret(&policy, &data, Path::new("/tmp"));
+        // We just check it doesn't return the "too large" error
+        if let Err(e) = &result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("too large"),
+                "2048 bytes should not be rejected as too large"
+            );
+        }
+    }
+
+    #[test]
+    fn test_seal_secret_nonexistent_output_dir() {
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0]).unwrap();
+        let result = seal_secret(&policy, &[1, 2, 3], Path::new("/nonexistent/dir/xyz"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not found") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    // --- unseal_secret validation tests ---
+
+    #[test]
+    fn test_unseal_secret_missing_context_file() {
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0]).unwrap();
+        let sealed = SealedSecret {
+            context_path: PathBuf::from("/nonexistent/sealed_xyz.ctx"),
+            policy,
+        };
+        let result = unseal_secret(&sealed);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not found") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    // --- get_random_bytes validation tests ---
+
+    #[test]
+    fn test_get_random_bytes_zero() {
+        let result = get_random_bytes(0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("0 random") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_get_random_bytes_too_many() {
+        let result = get_random_bytes(4097);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("4096") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_get_random_bytes_boundary_4096() {
+        // 4096 should pass validation but fail at tpm2_getrandom (no hardware).
+        let result = get_random_bytes(4096);
+        if let Err(e) = &result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("4096 bytes"),
+                "4096 should not be rejected by validation"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_random_bytes_boundary_1() {
+        // 1 should pass validation but fail at tpm2_getrandom (no hardware).
+        let result = get_random_bytes(1);
+        if let Err(e) = &result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("0 random"),
+                "1 byte should not be rejected by validation"
+            );
+        }
+    }
+
+    // --- verify_measured_boot validation tests ---
+
+    #[test]
+    fn test_verify_measured_boot_empty_baseline() {
+        let baseline = MeasuredBootBaseline { expected: vec![] };
+        let result = verify_measured_boot(&baseline);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no expected") || msg.contains("not supported") || msg.contains("Not supported"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    // --- parse_pcr_read_output additional edge cases ---
+
+    #[test]
+    fn test_parse_pcr_read_output_empty_indices() {
+        let output = "  sha256:\n    0 : 0xABCD\n";
+        let values = parse_pcr_read_output(output, TpmPcrBank::Sha256, &[]).unwrap();
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_value_with_multiple_colons() {
+        // Edge case: line has multiple colons
+        let output = "  sha256:\n    0 : 0x:ABCD:\n";
+        let values = parse_pcr_read_output(output, TpmPcrBank::Sha256, &[0]).unwrap();
+        // split(':').nth(1) gets " 0x" in this case since the first : is the index separator
+        assert_eq!(values.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_only_newlines() {
+        let output = "\n\n\n\n";
+        let values = parse_pcr_read_output(output, TpmPcrBank::Sha256, &[0, 1]).unwrap();
+        assert_eq!(values.len(), 2);
+        // Both should be zero-filled defaults
+        assert!(values[0].value.chars().all(|c| c == '0'));
+        assert!(values[1].value.chars().all(|c| c == '0'));
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_large_number_of_indices() {
+        let output = "";
+        let indices: Vec<u32> = (0..=23).collect();
+        let values = parse_pcr_read_output(output, TpmPcrBank::Sha256, &indices).unwrap();
+        assert_eq!(values.len(), 24);
+        for (i, val) in values.iter().enumerate() {
+            assert_eq!(val.index, i as u32);
+            assert_eq!(val.bank, TpmPcrBank::Sha256);
+            assert_eq!(val.value.len(), 64);
+        }
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_sha1_bank() {
+        let output = "  sha1:\n    5 : 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n";
+        let values = parse_pcr_read_output(output, TpmPcrBank::Sha1, &[5]).unwrap();
+        assert_eq!(values[0].value, "a".repeat(40));
+        assert_eq!(values[0].bank, TpmPcrBank::Sha1);
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_sha384_bank() {
+        let hex = "bb".repeat(48);
+        let output = format!("  sha384:\n    2 : 0x{}\n", hex.to_uppercase());
+        let values = parse_pcr_read_output(&output, TpmPcrBank::Sha384, &[2]).unwrap();
+        assert_eq!(values[0].value, hex);
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_sha512_bank() {
+        let hex = "cc".repeat(64);
+        let output = format!("  sha512:\n    10 : 0x{}\n", hex.to_uppercase());
+        let values = parse_pcr_read_output(&output, TpmPcrBank::Sha512, &[10]).unwrap();
+        assert_eq!(values[0].value, hex);
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_tab_indentation() {
+        let output = "\tsha256:\n\t\t0 : 0xDEADBEEF\n";
+        let values = parse_pcr_read_output(output, TpmPcrBank::Sha256, &[0]).unwrap();
+        assert_eq!(values[0].value, "deadbeef");
+    }
+
+    // --- Serde deserialization edge cases ---
+
+    #[test]
+    fn test_pcr_bank_serde_from_invalid_json() {
+        let result: std::result::Result<TpmPcrBank, _> = serde_json::from_str("\"InvalidBank\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pcr_bank_serde_from_number() {
+        let result: std::result::Result<TpmPcrBank, _> = serde_json::from_str("42");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pcr_bank_serde_from_null() {
+        let result: std::result::Result<TpmPcrBank, _> = serde_json::from_str("null");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pcr_value_serde_missing_field() {
+        let json = r#"{"index": 0, "bank": "Sha256"}"#;
+        let result: std::result::Result<TpmPcrValue, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pcr_policy_serde_missing_field() {
+        let json = r#"{"bank": "Sha256"}"#;
+        let result: std::result::Result<TpmPcrPolicy, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_measured_boot_baseline_serde_empty_expected() {
+        let baseline = MeasuredBootBaseline { expected: vec![] };
+        let json = serde_json::to_string(&baseline).unwrap();
+        let back: MeasuredBootBaseline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.expected.len(), 0);
+    }
+
+    #[test]
+    fn test_sealed_secret_serde_roundtrip_complex_path() {
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0, 1, 2, 3, 7, 23]).unwrap();
+        let sealed = SealedSecret {
+            context_path: PathBuf::from("/var/lib/tpm/deeply/nested/sealed.ctx"),
+            policy,
+        };
+        let json = serde_json::to_string(&sealed).unwrap();
+        let back: SealedSecret = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.context_path, sealed.context_path);
+        assert_eq!(back.policy.pcr_indices, vec![0, 1, 2, 3, 7, 23]);
+    }
+
+    #[test]
+    fn test_sealed_secret_clone() {
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0, 7]).unwrap();
+        let sealed = SealedSecret {
+            context_path: PathBuf::from("/tmp/sealed.ctx"),
+            policy,
+        };
+        let cloned = sealed.clone();
+        assert_eq!(cloned.context_path, sealed.context_path);
+        assert_eq!(cloned.policy.pcr_indices, sealed.policy.pcr_indices);
+        assert_eq!(cloned.policy.bank, sealed.policy.bank);
+    }
+
+    // --- TpmPcrValue construction edge cases ---
+
+    #[test]
+    fn test_pcr_value_empty_value_string() {
+        let val = TpmPcrValue {
+            index: 0,
+            bank: TpmPcrBank::Sha256,
+            value: String::new(),
+        };
+        assert!(val.value.is_empty());
+        let json = serde_json::to_string(&val).unwrap();
+        let back: TpmPcrValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.value, "");
+    }
+
+    #[test]
+    fn test_pcr_value_long_value_string() {
+        let val = TpmPcrValue {
+            index: 0,
+            bank: TpmPcrBank::Sha512,
+            value: "f".repeat(128),
+        };
+        let json = serde_json::to_string(&val).unwrap();
+        let back: TpmPcrValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.value.len(), 128);
+    }
+
+    // --- TpmPcrPolicy edge cases ---
+
+    #[test]
+    fn test_pcr_policy_selection_with_many_indices() {
+        let indices: Vec<u32> = (0..=23).collect();
+        let policy = TpmPcrPolicy::new(TpmPcrBank::Sha256, indices).unwrap();
+        let selection = policy.pcr_selection();
+        assert!(selection.starts_with("sha256:"));
+        assert!(selection.contains("0,"));
+        assert!(selection.ends_with(",23") || selection.contains(",23"));
+    }
+
+    #[test]
+    fn test_pcr_policy_ne() {
+        let a = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0]).unwrap();
+        let b = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![1]).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_pcr_policy_ne_different_banks() {
+        let a = TpmPcrPolicy::new(TpmPcrBank::Sha256, vec![0]).unwrap();
+        let b = TpmPcrPolicy::new(TpmPcrBank::Sha1, vec![0]).unwrap();
+        assert_ne!(a, b);
+    }
+
+    // --- TpmDevice field access ---
+
+    #[test]
+    fn test_tpm_device_custom_path() {
+        let dev = TpmDevice {
+            device_path: PathBuf::from("/dev/custom_tpm"),
+        };
+        assert_eq!(dev.device_path, PathBuf::from("/dev/custom_tpm"));
+    }
+
+    // --- parse output with realistic tpm2_pcrread output ---
+
+    #[test]
+    fn test_parse_pcr_read_output_realistic_full_output() {
+        let output = r#"sha256:
+  0 : 0x3D458CFE55CC03EA1F443F1562BEEC8DF51C75E14A9FCF9A7234A13F198E7969
+  1 : 0x3D458CFE55CC03EA1F443F1562BEEC8DF51C75E14A9FCF9A7234A13F198E7969
+  2 : 0x3D458CFE55CC03EA1F443F1562BEEC8DF51C75E14A9FCF9A7234A13F198E7969
+  3 : 0x3D458CFE55CC03EA1F443F1562BEEC8DF51C75E14A9FCF9A7234A13F198E7969
+  4 : 0x3D458CFE55CC03EA1F443F1562BEEC8DF51C75E14A9FCF9A7234A13F198E7969
+  5 : 0x3D458CFE55CC03EA1F443F1562BEEC8DF51C75E14A9FCF9A7234A13F198E7969
+  6 : 0x3D458CFE55CC03EA1F443F1562BEEC8DF51C75E14A9FCF9A7234A13F198E7969
+  7 : 0x0000000000000000000000000000000000000000000000000000000000000000
+"#;
+        let values =
+            parse_pcr_read_output(output, TpmPcrBank::Sha256, &[0, 1, 2, 3, 4, 5, 6, 7]).unwrap();
+        assert_eq!(values.len(), 8);
+        // PCRs 0-6 should have the same value
+        for i in 0..7 {
+            assert_eq!(
+                values[i].value,
+                "3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969"
+            );
+        }
+        // PCR 7 should be all zeros
+        assert_eq!(values[7].value, "0".repeat(64));
+    }
+
+    #[test]
+    fn test_parse_pcr_read_output_index_0_vs_10_prefix_collision() {
+        // Ensure index 0 is not confused with index 10, 20, etc.
+        let output = "  sha256:\n    10 : 0xAAAA\n    20 : 0xBBBB\n    0 : 0xCCCC\n";
+        let values = parse_pcr_read_output(output, TpmPcrBank::Sha256, &[0, 10, 20]).unwrap();
+        assert_eq!(values[0].value, "cccc"); // index 0
+        assert_eq!(values[1].value, "aaaa"); // index 10
+        assert_eq!(values[2].value, "bbbb"); // index 20
     }
 }

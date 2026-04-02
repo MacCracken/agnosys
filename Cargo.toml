@@ -1,6 +1,6 @@
 [package]
 name = "agnosys"
-version = "0.29.3"
+version = "0.50.0"
 edition = "2024"
 rust-version = "1.89"
 license = "GPL-3.0-only"
@@ -92,3 +92,35 @@ required-features = ["drm"]
 [[example]]
 name = "seccomp_sandbox"
 required-features = ["seccomp"]
+
+[[example]]
+name = "audit_status"
+required-features = ["audit"]
+
+[[example]]
+name = "pam_users"
+required-features = ["pam"]
+
+[[example]]
+name = "journal_query"
+required-features = ["journald"]
+
+[[example]]
+name = "boot_info"
+required-features = ["bootloader"]
+
+[[example]]
+name = "cert_pinning"
+required-features = ["certpin"]
+
+[[example]]
+name = "verity_check"
+required-features = ["dmverity"]
+
+[[example]]
+name = "update_state"
+required-features = ["update"]
+
+[[example]]
+name = "network_namespaces"
+required-features = ["netns"]

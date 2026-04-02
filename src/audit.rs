@@ -4,6 +4,17 @@
 //! and the AGNOS kernel audit module (`/proc/agnos/audit`).
 //!
 //! On non-Linux platforms, all operations return `SysError::NotSupported`.
+//!
+//! # Security Considerations
+//!
+//! - Requires `CAP_AUDIT_CONTROL` to configure the audit subsystem and
+//!   `CAP_AUDIT_WRITE` to send user-space audit events.
+//! - Audit events may contain sensitive data (user names, file paths, command
+//!   lines). Consumers should apply log retention and access controls.
+//! - The netlink audit socket is kernel-managed; only one process may hold the
+//!   audit PID at a time. Binding when auditd is running will fail.
+//! - Inputs to `add_rule` / `send_user_event` are passed to the kernel —
+//!   callers must validate rule fields to avoid audit log injection.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -600,14 +611,17 @@ fn send_rule_message(handle: &AuditHandle, rule: &AuditRule, msg_type: u16) -> R
 ///
 /// Each line in the proc file is a JSON-encoded `RawAuditEntry`.
 /// Returns an empty vec if the file does not exist.
-pub fn read_agnos_audit_events(proc_path: &str) -> Result<Vec<RawAuditEntry>> {
-    let path = Path::new(proc_path);
-    if !path.exists() {
+pub fn read_agnos_audit_events(proc_path: &Path) -> Result<Vec<RawAuditEntry>> {
+    if !proc_path.exists() {
         return Ok(Vec::new());
     }
 
-    let contents = std::fs::read_to_string(path)
-        .map_err(|e| SysError::Unknown(format!("Failed to read {}: {}", proc_path, e).into()))?;
+    let contents = std::fs::read_to_string(proc_path)
+        .map_err(|e| {
+            SysError::Unknown(
+                format!("Failed to read {}: {}", proc_path.display(), e).into(),
+            )
+        })?;
 
     let mut entries = Vec::with_capacity(contents.lines().count());
     for line in contents.lines() {
@@ -815,7 +829,7 @@ mod tests {
 
     #[test]
     fn test_read_agnos_audit_events_nonexistent() {
-        let entries = read_agnos_audit_events("/tmp/nonexistent_agnos_audit_test").unwrap();
+        let entries = read_agnos_audit_events(Path::new("/tmp/nonexistent_agnos_audit_test")).unwrap();
         assert!(entries.is_empty());
     }
 
@@ -838,7 +852,7 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         std::fs::write(&path, format!("{}\n", json)).unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].sequence, 1);
         assert_eq!(entries[0].action_type, "sandbox_applied");
@@ -1205,7 +1219,7 @@ mod tests {
         let path = dir.join("empty.json");
         std::fs::write(&path, "").unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert!(entries.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1218,7 +1232,7 @@ mod tests {
         let path = dir.join("blank.json");
         std::fs::write(&path, "\n\n   \n\n").unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert!(entries.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1243,7 +1257,7 @@ mod tests {
         let content = format!("not valid json\n{}\n{{broken\n", valid_json);
         std::fs::write(&path, content).unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].sequence, 1);
 
@@ -1275,7 +1289,7 @@ mod tests {
         }
         std::fs::write(&path, lines.join("\n")).unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert_eq!(entries.len(), 5);
         for (i, entry) in entries.iter().enumerate().take(5) {
             assert_eq!(entry.sequence, i as u64);
@@ -1726,7 +1740,7 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         std::fs::write(&path, format!("{}\n\n\n", json)).unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].sequence, 99);
 
@@ -1965,7 +1979,7 @@ mod tests {
         let path = dir.join("all_bad.json");
         std::fs::write(&path, "not json\nalso not json\n{broken}\n").unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert!(entries.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1990,7 +2004,7 @@ mod tests {
         // Surround with whitespace-only lines
         std::fs::write(&path, format!("   \n  \n{}\n  \n", json)).unwrap();
 
-        let entries = read_agnos_audit_events(path.to_str().unwrap()).unwrap();
+        let entries = read_agnos_audit_events(&path).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].sequence, 5);
 
