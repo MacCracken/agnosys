@@ -17,7 +17,10 @@ fn main() -> agnosys::error::Result<()> {
 
     // Validate a sample root hash
     let sample_hash = "a".repeat(64);
-    match agnosys::dmverity::validate_root_hash(&sample_hash, agnosys::dmverity::VerityHashAlgorithm::Sha256) {
+    match agnosys::dmverity::validate_root_hash(
+        &sample_hash,
+        agnosys::dmverity::VerityHashAlgorithm::Sha256,
+    ) {
         Ok(()) => println!("\nSample SHA-256 root hash: valid format"),
         Err(e) => println!("\nSample SHA-256 root hash: {e}"),
     }

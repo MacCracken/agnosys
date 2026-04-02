@@ -5,8 +5,12 @@ fn main() -> agnosys::error::Result<()> {
     let pin_set = agnosys::certpin::default_agnos_pins();
     println!("Default AGNOS pin set (enforce={}):", pin_set.enforce);
     for pin in &pin_set.pins {
-        println!("  {} — {} primary pin(s), {} backup(s)",
-            pin.host, pin.pin_sha256.len(), pin.backup_pins.len());
+        println!(
+            "  {} — {} primary pin(s), {} backup(s)",
+            pin.host,
+            pin.pin_sha256.len(),
+            pin.backup_pins.len()
+        );
     }
 
     // Verify a known pin against the set

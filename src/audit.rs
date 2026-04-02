@@ -616,12 +616,9 @@ pub fn read_agnos_audit_events(proc_path: &Path) -> Result<Vec<RawAuditEntry>> {
         return Ok(Vec::new());
     }
 
-    let contents = std::fs::read_to_string(proc_path)
-        .map_err(|e| {
-            SysError::Unknown(
-                format!("Failed to read {}: {}", proc_path.display(), e).into(),
-            )
-        })?;
+    let contents = std::fs::read_to_string(proc_path).map_err(|e| {
+        SysError::Unknown(format!("Failed to read {}: {}", proc_path.display(), e).into())
+    })?;
 
     let mut entries = Vec::with_capacity(contents.lines().count());
     for line in contents.lines() {
@@ -829,7 +826,8 @@ mod tests {
 
     #[test]
     fn test_read_agnos_audit_events_nonexistent() {
-        let entries = read_agnos_audit_events(Path::new("/tmp/nonexistent_agnos_audit_test")).unwrap();
+        let entries =
+            read_agnos_audit_events(Path::new("/tmp/nonexistent_agnos_audit_test")).unwrap();
         assert!(entries.is_empty());
     }
 

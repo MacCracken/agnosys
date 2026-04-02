@@ -1692,9 +1692,11 @@ mod tests {
             current_slot: UpdateSlot::B,
             current_version: "2026.12.31".into(),
             pending_update: Some("2027.1.1".into()),
-            last_update: Some(chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc)),
+            last_update: Some(
+                chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+            ),
             rollback_available: true,
             boot_count_since_update: u32::MAX,
         };
@@ -1945,7 +1947,10 @@ mod tests {
         manifest.sha256_digest = compute_manifest_digest(&manifest);
         let err = verify_manifest(&manifest).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("boot.img"), "Error should mention the bad file");
+        assert!(
+            msg.contains("boot.img"),
+            "Error should mention the bad file"
+        );
     }
 
     #[test]
@@ -2016,7 +2021,10 @@ mod tests {
     #[test]
     fn test_compare_versions_partial_malformed() {
         // Two parts only
-        assert_eq!(compare_versions("2026.1", "2026.1.1"), "2026.1".cmp("2026.1.1"));
+        assert_eq!(
+            compare_versions("2026.1", "2026.1.1"),
+            "2026.1".cmp("2026.1.1")
+        );
     }
 
     #[test]
@@ -2050,8 +2058,14 @@ mod tests {
             slot_b_device: PathBuf::from("/dev/sda2"),
             ..UpdateConfig::default()
         };
-        assert_eq!(config.device_for_slot(UpdateSlot::A), Path::new("/dev/sda1"));
-        assert_eq!(config.device_for_slot(UpdateSlot::B), Path::new("/dev/sda2"));
+        assert_eq!(
+            config.device_for_slot(UpdateSlot::A),
+            Path::new("/dev/sda1")
+        );
+        assert_eq!(
+            config.device_for_slot(UpdateSlot::B),
+            Path::new("/dev/sda2")
+        );
     }
 
     #[test]

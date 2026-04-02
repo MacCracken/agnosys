@@ -86,12 +86,15 @@ All 20 modules implemented (agent/llm moved to agnosai/hoosh). All 13 consumers 
 |--------|-------|
 | Modules implemented | **20 / 20** (100%) |
 | Consumer crates unblocked | **13 / 13** (100%) |
-| Unit tests | 511 |
-| Integration tests | 75 |
-| Doc-tests | 19 |
-| Total tests | **605** |
-| Benchmarks | **132** |
-| Version | 0.23.3 |
+| Unit tests | 1,551 |
+| Integration tests | 73 |
+| Doc-tests | 1 |
+| Total tests | **1,625** |
+| Benchmarks | **147** |
+| Fuzz targets | **8** |
+| Examples | **14** |
+| Line coverage | **86.56%** |
+| Version | 0.50.0 |
 
 ## Migration Strategy
 

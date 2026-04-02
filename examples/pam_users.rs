@@ -5,7 +5,13 @@ fn main() -> agnosys::error::Result<()> {
     let users = agnosys::pam::list_users()?;
     println!("System users ({} total):", users.len());
     for u in &users {
-        println!("  {} (uid={}, gid={}, home={})", u.username, u.uid, u.gid, u.home_dir.display());
+        println!(
+            "  {} (uid={}, gid={}, home={})",
+            u.username,
+            u.uid,
+            u.gid,
+            u.home_dir.display()
+        );
     }
 
     println!();
@@ -17,7 +23,8 @@ fn main() -> agnosys::error::Result<()> {
     } else {
         println!("Active sessions ({}):", sessions.len());
         for s in &sessions {
-            println!("  {} on {} since {}",
+            println!(
+                "  {} on {} since {}",
                 s.user,
                 s.tty.as_deref().unwrap_or("(unknown)"),
                 s.login_time,

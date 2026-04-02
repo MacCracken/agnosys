@@ -1870,10 +1870,10 @@ menuentry 'Entry B' {
 
     #[test]
     fn test_validate_cmdline_safe_with_iommu_and_lockdown() {
-        assert!(validate_kernel_cmdline(
-            "root=UUID=abc iommu=pt lockdown=integrity module.sig_enforce"
-        )
-        .is_ok());
+        assert!(
+            validate_kernel_cmdline("root=UUID=abc iommu=pt lockdown=integrity module.sig_enforce")
+                .is_ok()
+        );
     }
 
     #[test]

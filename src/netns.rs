@@ -1136,10 +1136,7 @@ mod tests {
         );
         let ruleset = render_nftables_ruleset(&policy);
         // Both the port rule and the addr rule should be emitted for inbound
-        assert!(
-            ruleset.contains("tcp dport 22 drop"),
-            "ruleset: {ruleset}"
-        );
+        assert!(ruleset.contains("tcp dport 22 drop"), "ruleset: {ruleset}");
         assert!(
             ruleset.contains("ip saddr 10.0.0.5 drop"),
             "ruleset: {ruleset}"
@@ -1261,11 +1258,12 @@ mod tests {
 
     #[test]
     fn test_render_nftables_mixed_default_policies() {
-        let policy =
-            FirewallPolicy::new(FirewallAction::Accept, FirewallAction::Drop, vec![]);
+        let policy = FirewallPolicy::new(FirewallAction::Accept, FirewallAction::Drop, vec![]);
         let ruleset = render_nftables_ruleset(&policy);
         // Input chain: accept, output chain: drop
-        assert!(ruleset.contains("chain input { type filter hook input priority 0; policy accept;"));
+        assert!(
+            ruleset.contains("chain input { type filter hook input priority 0; policy accept;")
+        );
         assert!(
             ruleset.contains("chain output { type filter hook output priority 0; policy drop;")
         );
@@ -1343,7 +1341,10 @@ mod tests {
             )],
         );
         let ruleset = render_nftables_ruleset(&policy);
-        assert!(!ruleset.contains("No-op"), "empty rule should produce no lines: {ruleset}");
+        assert!(
+            !ruleset.contains("No-op"),
+            "empty rule should produce no lines: {ruleset}"
+        );
     }
 
     // -- Firewall type construction and traits --

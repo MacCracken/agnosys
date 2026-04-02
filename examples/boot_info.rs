@@ -8,7 +8,10 @@ fn main() -> agnosys::error::Result<()> {
     // Read overall boot configuration
     let config = agnosys::bootloader::read_boot_config()?;
     println!("Timeout:  {}s", config.timeout_secs);
-    println!("Default:  {}", config.default_entry.as_deref().unwrap_or("(none)"));
+    println!(
+        "Default:  {}",
+        config.default_entry.as_deref().unwrap_or("(none)")
+    );
 
     // List all boot entries
     println!("\nBoot entries ({}):", config.entries.len());

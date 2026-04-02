@@ -1140,7 +1140,9 @@ mod tests {
         let msg = err.to_string();
         // On Linux: "TPM device not found"; on other platforms: "not supported"
         assert!(
-            msg.contains("not found") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("not found")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1207,7 +1209,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("out of range") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("out of range")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1220,7 +1224,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("hex string") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("hex string")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1233,7 +1239,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("hex string") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("hex string")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1276,7 +1284,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("too large") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("too large")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1307,7 +1317,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("not found") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("not found")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1327,7 +1339,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("not found") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("not found")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1342,7 +1356,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("0 random") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("0 random")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );
@@ -1397,7 +1413,9 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("no expected") || msg.contains("not supported") || msg.contains("Not supported"),
+            msg.contains("no expected")
+                || msg.contains("not supported")
+                || msg.contains("Not supported"),
             "unexpected error: {}",
             msg
         );

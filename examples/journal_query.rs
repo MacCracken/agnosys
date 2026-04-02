@@ -22,7 +22,10 @@ fn main() -> agnosys::error::Result<()> {
     let stats = agnosys::journald::get_journal_stats()?;
     println!("\nJournal stats:");
     println!("  Total entries: {}", stats.total_entries);
-    println!("  Disk usage:    {:.1} MB", stats.disk_usage_bytes as f64 / 1_048_576.0);
+    println!(
+        "  Disk usage:    {:.1} MB",
+        stats.disk_usage_bytes as f64 / 1_048_576.0
+    );
 
     Ok(())
 }
