@@ -79,6 +79,207 @@ impl NetNamespaceConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Firewall types — used by kavach to express policy, rendered to nftables.
+// ---------------------------------------------------------------------------
+
+/// Direction of network traffic relative to the sandbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum TrafficDirection {
+    Inbound,
+    Outbound,
+}
+
+/// Network protocol for firewall rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum Protocol {
+    Tcp,
+    Udp,
+    Any,
+}
+
+/// Firewall rule action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum FirewallAction {
+    Accept,
+    Drop,
+}
+
+/// A single firewall rule for an agent's network namespace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct FirewallRule {
+    pub direction: TrafficDirection,
+    pub protocol: Protocol,
+    pub port: u16,
+    pub remote_addr: String,
+    pub action: FirewallAction,
+    pub comment: String,
+}
+
+impl FirewallRule {
+    /// Create a new firewall rule.
+    pub fn new(
+        direction: TrafficDirection,
+        protocol: Protocol,
+        port: u16,
+        remote_addr: impl Into<String>,
+        action: FirewallAction,
+        comment: impl Into<String>,
+    ) -> Self {
+        Self {
+            direction,
+            protocol,
+            port,
+            remote_addr: remote_addr.into(),
+            action,
+            comment: comment.into(),
+        }
+    }
+}
+
+/// Complete firewall policy for an agent namespace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct FirewallPolicy {
+    pub default_inbound: FirewallAction,
+    pub default_outbound: FirewallAction,
+    pub rules: Vec<FirewallRule>,
+}
+
+impl FirewallPolicy {
+    /// Create a new firewall policy.
+    pub fn new(
+        default_inbound: FirewallAction,
+        default_outbound: FirewallAction,
+        rules: Vec<FirewallRule>,
+    ) -> Self {
+        Self {
+            default_inbound,
+            default_outbound,
+            rules,
+        }
+    }
+}
+
+/// Render a [`FirewallPolicy`] as an nftables ruleset string.
+#[must_use]
+fn render_nftables_ruleset(policy: &FirewallPolicy) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::with_capacity(512);
+    let _ = writeln!(out, "table inet kavach {{");
+
+    // Input chain
+    let in_policy = match policy.default_inbound {
+        FirewallAction::Accept => "accept",
+        FirewallAction::Drop => "drop",
+    };
+    let _ = writeln!(
+        out,
+        "  chain input {{ type filter hook input priority 0; policy {in_policy};"
+    );
+    let _ = writeln!(out, "    ct state established,related accept");
+    let _ = writeln!(out, "    iif lo accept");
+    for rule in &policy.rules {
+        if rule.direction != TrafficDirection::Inbound {
+            continue;
+        }
+        let action = match rule.action {
+            FirewallAction::Accept => "accept",
+            FirewallAction::Drop => "drop",
+        };
+        let proto = match rule.protocol {
+            Protocol::Tcp => Some("tcp"),
+            Protocol::Udp => Some("udp"),
+            Protocol::Any => None,
+        };
+        if let Some(proto) = proto
+            && rule.port > 0
+        {
+            let _ = writeln!(
+                out,
+                "    {proto} dport {port} {action} comment \"{comment}\"",
+                port = rule.port,
+                comment = rule.comment,
+            );
+        }
+        if !rule.remote_addr.is_empty() {
+            let _ = writeln!(
+                out,
+                "    ip saddr {addr} {action} comment \"{comment}\"",
+                addr = rule.remote_addr,
+                comment = rule.comment,
+            );
+        }
+    }
+    let _ = writeln!(out, "  }}");
+
+    // Output chain
+    let out_policy = match policy.default_outbound {
+        FirewallAction::Accept => "accept",
+        FirewallAction::Drop => "drop",
+    };
+    let _ = writeln!(
+        out,
+        "  chain output {{ type filter hook output priority 0; policy {out_policy};"
+    );
+    let _ = writeln!(out, "    ct state established,related accept");
+    let _ = writeln!(out, "    oif lo accept");
+    for rule in &policy.rules {
+        if rule.direction != TrafficDirection::Outbound {
+            continue;
+        }
+        let action = match rule.action {
+            FirewallAction::Accept => "accept",
+            FirewallAction::Drop => "drop",
+        };
+        let proto = match rule.protocol {
+            Protocol::Tcp => Some("tcp"),
+            Protocol::Udp => Some("udp"),
+            Protocol::Any => None,
+        };
+        if let Some(proto) = proto
+            && rule.port > 0
+        {
+            let _ = writeln!(
+                out,
+                "    {proto} dport {port} {action} comment \"{comment}\"",
+                port = rule.port,
+                comment = rule.comment,
+            );
+        }
+        if !rule.remote_addr.is_empty() {
+            let _ = writeln!(
+                out,
+                "    ip daddr {addr} {action} comment \"{comment}\"",
+                addr = rule.remote_addr,
+                comment = rule.comment,
+            );
+        }
+    }
+    let _ = writeln!(out, "  }}");
+    let _ = writeln!(out, "}}");
+    out
+}
+
+/// Apply a [`FirewallPolicy`] to an agent's network namespace.
+///
+/// Renders the policy to an nftables ruleset and applies it via
+/// [`apply_nftables_ruleset`].
+pub fn apply_firewall_rules(handle: &NetNamespaceHandle, policy: &FirewallPolicy) -> Result<()> {
+    let ruleset = render_nftables_ruleset(policy);
+    tracing::debug!(
+        rules = policy.rules.len(),
+        "Applying firewall policy to namespace '{}'",
+        handle.name
+    );
+    apply_nftables_ruleset(handle, &ruleset)
+}
+
 /// Handle for an active network namespace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetNamespaceHandle {
@@ -735,5 +936,145 @@ mod tests {
                 pl
             );
         }
+    }
+
+    // -- Firewall types --
+
+    #[test]
+    fn test_firewall_rule_serde_roundtrip() {
+        let rule = FirewallRule::new(
+            TrafficDirection::Outbound,
+            Protocol::Tcp,
+            443,
+            "",
+            FirewallAction::Accept,
+            "Allow HTTPS",
+        );
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: FirewallRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.port, 443);
+        assert_eq!(back.direction, TrafficDirection::Outbound);
+        assert_eq!(back.protocol, Protocol::Tcp);
+        assert_eq!(back.action, FirewallAction::Accept);
+    }
+
+    #[test]
+    fn test_firewall_policy_serde_roundtrip() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![
+                FirewallRule::new(
+                    TrafficDirection::Outbound,
+                    Protocol::Tcp,
+                    443,
+                    "",
+                    FirewallAction::Accept,
+                    "HTTPS",
+                ),
+                FirewallRule::new(
+                    TrafficDirection::Inbound,
+                    Protocol::Tcp,
+                    8080,
+                    "",
+                    FirewallAction::Accept,
+                    "API",
+                ),
+            ],
+        );
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: FirewallPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rules.len(), 2);
+        assert_eq!(back.default_inbound, FirewallAction::Drop);
+    }
+
+    #[test]
+    fn test_render_nftables_ruleset_drop_all() {
+        let policy = FirewallPolicy::new(FirewallAction::Drop, FirewallAction::Drop, vec![]);
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("table inet kavach"));
+        assert!(ruleset.contains("policy drop"));
+        assert!(ruleset.contains("chain input"));
+        assert!(ruleset.contains("chain output"));
+        assert!(ruleset.contains("ct state established,related accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_ruleset_with_rules() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![
+                FirewallRule::new(
+                    TrafficDirection::Outbound,
+                    Protocol::Tcp,
+                    443,
+                    "",
+                    FirewallAction::Accept,
+                    "HTTPS out",
+                ),
+                FirewallRule::new(
+                    TrafficDirection::Outbound,
+                    Protocol::Any,
+                    0,
+                    "10.0.0.1",
+                    FirewallAction::Accept,
+                    "Allow host",
+                ),
+                FirewallRule::new(
+                    TrafficDirection::Inbound,
+                    Protocol::Tcp,
+                    8080,
+                    "",
+                    FirewallAction::Accept,
+                    "API in",
+                ),
+            ],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("tcp dport 443 accept"));
+        assert!(ruleset.contains("ip daddr 10.0.0.1 accept"));
+        assert!(ruleset.contains("tcp dport 8080 accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_ruleset_accept_all() {
+        let policy = FirewallPolicy::new(FirewallAction::Accept, FirewallAction::Accept, vec![]);
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("policy accept"));
+    }
+
+    #[test]
+    fn test_render_nftables_udp_rule() {
+        let policy = FirewallPolicy::new(
+            FirewallAction::Drop,
+            FirewallAction::Drop,
+            vec![FirewallRule::new(
+                TrafficDirection::Outbound,
+                Protocol::Udp,
+                53,
+                "",
+                FirewallAction::Accept,
+                "DNS",
+            )],
+        );
+        let ruleset = render_nftables_ruleset(&policy);
+        assert!(ruleset.contains("udp dport 53 accept"));
+    }
+
+    #[test]
+    fn test_traffic_direction_variants() {
+        assert_ne!(TrafficDirection::Inbound, TrafficDirection::Outbound);
+    }
+
+    #[test]
+    fn test_protocol_variants() {
+        assert_ne!(Protocol::Tcp, Protocol::Udp);
+        assert_ne!(Protocol::Tcp, Protocol::Any);
+    }
+
+    #[test]
+    fn test_firewall_action_variants() {
+        assert_ne!(FirewallAction::Accept, FirewallAction::Drop);
     }
 }
