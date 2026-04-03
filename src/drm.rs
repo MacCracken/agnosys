@@ -532,7 +532,8 @@ impl Device {
     // ── Internal ioctl helper ───────────────────────────────────────
 
     fn ioctl<T>(&self, request: libc::c_ulong, arg: &mut T) -> Result<()> {
-        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), request, arg as *mut T) };
+        // Cast request to the platform's ioctl type (i32 on musl, u64 on glibc)
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), request as _, arg as *mut T) };
         if ret < 0 {
             let errno = unsafe { *libc::__errno_location() };
             Err(SysError::from_errno(errno))
