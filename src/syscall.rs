@@ -89,14 +89,18 @@ impl SysInfo {
     #[inline]
     #[must_use]
     pub fn total_memory(&self) -> u64 {
-        self.inner.totalram * self.inner.mem_unit as u64
+        self.inner
+            .totalram
+            .saturating_mul(self.inner.mem_unit as u64)
     }
 
     /// Free physical RAM in bytes.
     #[inline]
     #[must_use]
     pub fn free_memory(&self) -> u64 {
-        self.inner.freeram * self.inner.mem_unit as u64
+        self.inner
+            .freeram
+            .saturating_mul(self.inner.mem_unit as u64)
     }
 
     /// Number of current processes.

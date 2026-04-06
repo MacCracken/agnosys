@@ -318,7 +318,7 @@ fn validate_entry_id(id: &str) -> Result<()> {
     }
     if !id
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     {
         return Err(SysError::InvalidArgument(
             format!("Boot entry ID contains invalid characters: {}", id).into(),
@@ -1130,11 +1130,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_entry_id_accepts_unicode_alphanumeric() {
-        // NOTE: is_alphanumeric() accepts unicode chars like 'e'. This is a potential
-        // security concern since entry IDs are used in file paths. Consider using
-        // is_ascii_alphanumeric() in the validation function instead.
-        assert!(validate_entry_id("entr\u{00e9}").is_ok());
+    fn test_validate_entry_id_rejects_unicode_alphanumeric() {
+        // Unicode letters are rejected — entry IDs are used in file paths and
+        // must be ASCII-only for filesystem safety.
+        assert!(validate_entry_id("entr\u{00e9}").is_err());
     }
 
     #[test]

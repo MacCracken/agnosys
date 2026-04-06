@@ -92,7 +92,7 @@ impl VerityConfig {
         if !self
             .name
             .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
             return Err(SysError::InvalidArgument(
                 format!("Verity name contains invalid characters: {}", self.name).into(),

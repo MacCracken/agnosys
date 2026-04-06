@@ -530,7 +530,11 @@ pub fn apply_agent_mac_profile(agent_type: &str, profiles: &[AgentMacProfile]) -
             );
             apparmor_change_profile(profile_name)?;
         }
-        MacSystem::None => unreachable!(),
+        MacSystem::None => {
+            return Err(SysError::Unknown(
+                "Cannot apply MAC profile: no MAC system active".into(),
+            ));
+        }
     }
 
     Ok(())

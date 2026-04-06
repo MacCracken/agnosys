@@ -257,6 +257,19 @@ pub fn load_seccomp(filter: &[u8]) -> Result<()> {
         }
 
         let num_instructions = filter.len() / 8;
+
+        // BPF_MAXINSNS is 4096 on Linux; c_ushort max is 65535.
+        // Validate before truncating cast.
+        if num_instructions > 4096 {
+            return Err(SysError::InvalidArgument(
+                format!(
+                    "Seccomp filter too large ({} instructions, max 4096)",
+                    num_instructions
+                )
+                .into(),
+            ));
+        }
+
         tracing::debug!(
             "Loading seccomp filter ({} instructions, {} bytes)",
             num_instructions,
@@ -279,6 +292,7 @@ pub fn load_seccomp(filter: &[u8]) -> Result<()> {
             filter: *const u8,
         }
 
+        // Safety: num_instructions <= 4096, fits in c_ushort (u16 max 65535).
         let prog = SockFprog {
             len: num_instructions as libc::c_ushort,
             filter: filter.as_ptr(),
@@ -496,8 +510,19 @@ pub fn create_custom_seccomp_filter(
         let num_denied = denied.len();
         let num_allowed = all_allowed.len();
 
-        // Layout: 1 (load) + 2*denied (jeq+ret per denied) + 2*allowed (jeq+ret per allowed) + 1 (default kill) + 1 (allow ret)
-        // But we use a simpler linear scan approach like the basic filter.
+        // BPF jump offsets are u8, so we can have at most 255 allowed syscalls
+        // (the last one needs jt=1 to skip default kill + reach allow).
+        if num_allowed > 255 {
+            return Err(SysError::InvalidArgument(
+                format!(
+                    "Too many allowed syscalls ({}) — BPF jump offset limited to 255",
+                    num_allowed
+                )
+                .into(),
+            ));
+        }
+
+        // Layout: 1 (load) + 2*denied (jeq+ret per denied) + allowed jeqs + 1 (default kill) + 1 (allow ret)
         // Denied entries: each is JEQ → specific RET (kill/trap)
         // Allowed entries: each is JEQ → jump to final ALLOW
         // Default: KILL_PROCESS
@@ -516,6 +541,7 @@ pub fn create_custom_seccomp_filter(
         }
 
         // Allowed rules: JEQ → jump to ALLOW at the end
+        // Safety: num_allowed <= 255 checked above, so cast to u8 is safe.
         for (i, &nr) in all_allowed.iter().enumerate() {
             let remaining = (num_allowed - i - 1) as u8;
             // Jump over remaining JEQs + default kill to reach ALLOW
@@ -698,6 +724,7 @@ pub struct FilesystemRule {
 
 impl FilesystemRule {
     /// Create a new filesystem rule
+    #[inline]
     pub fn new(path: impl Into<PathBuf>, access: FsAccess) -> Self {
         Self {
             path: path.into(),
@@ -706,11 +733,13 @@ impl FilesystemRule {
     }
 
     /// Create a read-only rule
+    #[inline]
     pub fn read_only(path: impl Into<PathBuf>) -> Self {
         Self::new(path, FsAccess::ReadOnly)
     }
 
     /// Create a read-write rule
+    #[inline]
     pub fn read_write(path: impl Into<PathBuf>) -> Self {
         Self::new(path, FsAccess::ReadWrite)
     }
@@ -1416,5 +1445,50 @@ mod tests {
         let rule = FilesystemRule::new("relative/path", FsAccess::ReadOnly);
         assert_eq!(rule.path, PathBuf::from("relative/path"));
         assert_eq!(rule.access, FsAccess::ReadOnly);
+    }
+
+    #[test]
+    fn test_custom_seccomp_filter_rejects_too_many_allowed() {
+        // 256 allowed syscalls exceeds the u8 BPF jump offset limit
+        let allowed: Vec<u32> = (0..256).collect();
+        let result = create_custom_seccomp_filter(&allowed, &[], &[]);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("Too many allowed syscalls"));
+    }
+
+    #[test]
+    fn test_custom_seccomp_filter_255_allowed_ok() {
+        // 255 is the maximum allowed (BPF jump offset fits in u8)
+        let allowed: Vec<u32> = (0..255).collect();
+        let result = create_custom_seccomp_filter(&allowed, &[], &[]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_seccomp_rejects_oversized_filter() {
+        // 4097 instructions = 32776 bytes, exceeds BPF_MAXINSNS (4096)
+        let filter = vec![0u8; 4097 * 8];
+        let result = load_seccomp(&filter);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("too large"));
+    }
+
+    #[test]
+    fn test_load_seccomp_4096_instructions_accepted() {
+        // Exactly 4096 instructions should pass the size check
+        let filter = vec![0u8; 4096 * 8];
+        let result = load_seccomp(&filter);
+        // On non-Linux: no-op Ok. On Linux: may fail at prctl, but not at size check.
+        #[cfg(not(target_os = "linux"))]
+        assert!(result.is_ok());
+        #[cfg(target_os = "linux")]
+        {
+            if let Err(e) = result {
+                let msg = format!("{}", e);
+                assert!(!msg.contains("too large"));
+            }
+        }
     }
 }

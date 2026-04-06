@@ -89,7 +89,7 @@ impl LuksConfig {
         if !self
             .name
             .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
             return Err(SysError::InvalidArgument(
                 format!(
@@ -1815,16 +1815,14 @@ mod tests {
     }
 
     #[test]
-    fn test_luks_config_validate_name_unicode_alphanumeric_accepted() {
-        // NOTE: is_alphanumeric() accepts Unicode letters (e.g. accented chars).
-        // This means "hello\u{00e9}" passes validation. If dm-crypt names must
-        // be ASCII-only, the validation should use is_ascii_alphanumeric() instead.
-        // Documenting current behavior:
+    fn test_luks_config_validate_name_unicode_alphanumeric_rejected() {
+        // Unicode letters are rejected — dm-crypt names must be ASCII-only
+        // for filesystem and kernel interface safety.
         let config = LuksConfig {
             name: "hello\u{00e9}".to_string(), // e with acute accent
             ..LuksConfig::for_agent("x", 64)
         };
-        assert!(config.validate().is_ok()); // accepts unicode alphanumeric
+        assert!(config.validate().is_err()); // rejects unicode alphanumeric
     }
 
     #[test]

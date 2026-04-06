@@ -525,10 +525,8 @@ pub fn verify_file_integrity(path: &Path) -> Result<bool> {
 
         // The xattr value may be binary or hex; compare both ways.
         let stored_hex = hex::encode(&stored_raw);
-        let matches = stored_hex.contains(&computed_hex)
-            || String::from_utf8_lossy(&stored_raw)
-                .trim()
-                .contains(&computed_hex);
+        let matches = stored_hex == computed_hex
+            || String::from_utf8_lossy(&stored_raw).trim() == computed_hex;
 
         Ok(matches)
     }

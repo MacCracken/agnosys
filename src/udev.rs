@@ -610,7 +610,7 @@ pub fn validate_rule(rule: &UdevRule) -> Result<()> {
     if !rule
         .name
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err(SysError::InvalidArgument(
             format!("Rule name contains invalid characters: {}", rule.name).into(),

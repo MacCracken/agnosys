@@ -607,7 +607,7 @@ pub fn cleanup_agent_mounts(agent_id: &str) -> Result<()> {
             return Err(SysError::InvalidArgument("Agent ID cannot be empty".into()));
         }
 
-        let prefix = format!("/run/agnos/agents/{}/", agent_id);
+        let agent_dir = std::path::Path::new("/run/agnos/agents").join(agent_id);
         let content = std::fs::read_to_string("/proc/mounts")
             .map_err(|e| SysError::Unknown(format!("Failed to read /proc/mounts: {}", e).into()))?;
         let mounts = parse_proc_mounts(&content);
@@ -616,7 +616,7 @@ pub fn cleanup_agent_mounts(agent_id: &str) -> Result<()> {
         // Unmount in reverse order (nested mounts first)
         let agent_mounts: Vec<&FuseMount> = mounts
             .iter()
-            .filter(|m| m.mountpoint.to_string_lossy().starts_with(&prefix))
+            .filter(|m| m.mountpoint.starts_with(&agent_dir))
             .collect();
 
         for mount in agent_mounts.iter().rev() {

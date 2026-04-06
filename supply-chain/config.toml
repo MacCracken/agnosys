@@ -41,7 +41,7 @@ version = "3.20.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.cc]]
-version = "1.2.57"
+version = "1.2.59"
 criteria = "safe-to-deploy"
 
 [[exemptions.chrono]]
@@ -93,7 +93,7 @@ version = "0.3.14"
 criteria = "safe-to-run"
 
 [[exemptions.fastrand]]
-version = "2.3.0"
+version = "2.4.0"
 criteria = "safe-to-run"
 
 [[exemptions.find-msvc-tools]]
@@ -102,7 +102,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.getrandom]]
 version = "0.4.2"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.half]]
 version = "2.7.1"
@@ -110,18 +110,14 @@ criteria = "safe-to-run"
 
 [[exemptions.hashbrown]]
 version = "0.15.5"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.hashbrown]]
 version = "0.16.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.heck]]
-version = "0.5.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.hybrid-array]]
-version = "0.4.8"
+version = "0.4.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.iana-time-zone]]
@@ -134,27 +130,19 @@ criteria = "safe-to-deploy"
 
 [[exemptions.id-arena]]
 version = "2.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.indexmap]]
-version = "2.13.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.itertools]]
 version = "0.13.0"
 criteria = "safe-to-run"
 
 [[exemptions.js-sys]]
-version = "0.3.91"
+version = "0.3.94"
 criteria = "safe-to-deploy"
 
 [[exemptions.leb128fmt]]
 version = "0.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.libc]]
-version = "0.2.183"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.linux-raw-sys]]
 version = "0.12.1"
@@ -194,7 +182,7 @@ criteria = "safe-to-run"
 
 [[exemptions.r-efi]]
 version = "6.0.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.regex-automata]]
 version = "0.4.14"
@@ -207,10 +195,6 @@ criteria = "safe-to-deploy"
 [[exemptions.rustix]]
 version = "1.1.4"
 criteria = "safe-to-run"
-
-[[exemptions.semver]]
-version = "1.0.27"
-criteria = "safe-to-deploy"
 
 [[exemptions.sha2]]
 version = "0.11.0"
@@ -256,10 +240,6 @@ criteria = "safe-to-deploy"
 version = "1.19.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.uuid]]
-version = "1.22.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.valuable]]
 version = "0.1.1"
 criteria = "safe-to-deploy"
@@ -270,42 +250,42 @@ criteria = "safe-to-run"
 
 [[exemptions.wasip2]]
 version = "1.0.2+wasi-0.2.9"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wasip3]]
 version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wasm-bindgen]]
-version = "0.2.114"
+version = "0.2.117"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-macro]]
-version = "0.2.114"
+version = "0.2.117"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-macro-support]]
-version = "0.2.114"
+version = "0.2.117"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen-shared]]
-version = "0.2.114"
+version = "0.2.117"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-encoder]]
 version = "0.244.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wasm-metadata]]
 version = "0.244.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wasmparser]]
 version = "0.244.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.web-sys]]
-version = "0.3.91"
+version = "0.3.94"
 criteria = "safe-to-run"
 
 [[exemptions.winapi-i686-pc-windows-gnu]]
@@ -326,32 +306,32 @@ criteria = "safe-to-deploy"
 
 [[exemptions.wit-bindgen]]
 version = "0.51.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wit-bindgen-core]]
 version = "0.51.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wit-bindgen-rust]]
 version = "0.51.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wit-bindgen-rust-macro]]
 version = "0.51.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wit-component]]
 version = "0.244.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.wit-parser]]
 version = "0.244.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.zerocopy]]
-version = "0.8.47"
+version = "0.8.48"
 criteria = "safe-to-run"
 
 [[exemptions.zerocopy-derive]]
-version = "0.8.47"
+version = "0.8.48"
 criteria = "safe-to-run"
