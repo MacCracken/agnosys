@@ -7,11 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **drm.rs** — ioctl request parameter cast for musl libc compatibility (`c_ulong` → platform ioctl type via `as _`). Fixes static build failure on `x86_64-unknown-linux-musl` when DRM features are enabled.
+## [0.60.0] - 2026-04-06
+
+### Changed
+- **Ported from Rust to Cyrius** — 29,257 lines of Rust → 8,559 lines of Cyrius. Zero dependencies. 117KB binary. 8ms compile time.
+- All 20 modules rewritten in Cyrius: error, syscall, logging, security, mac, audit, pam, journald, luks, dmverity, ima, tpm, certpin, secureboot, udev, drm, netns, bootloader, update, fuse
+- CI/CD workflows rewritten for Cyrius toolchain (`cyrb build/check`)
+- Release workflow produces native ELF binary + source archive (no cargo vendor)
+- Dual-encoding errors: packed `kind << 16 | errno` on hot paths (6 ns), heap-allocated with message on cold paths (20 ns)
+- Caller-provided stack buffers for syscall wrappers (query_sysinfo, hostname) — zero heap allocation
+- Original Rust source preserved in `rust-old/` for reference
 
 ### Added
-- **cargo vet** — initialized supply-chain auditing with Mozilla, ISRG, Google, Zcash audit imports. Trusted publishers: dtolnay, kennykerr, cuviper.
+- `src/error.cyr` — packed + heap error encoding, errno mapping, error printing
+- `src/syscall.cyr` — getpid/uid/tid/hostname/sysinfo with stack-buffer API
+- `src/security.cyr` — Landlock, seccomp BPF filter generation, namespace creation
+- `src/logging.cyr` — AGNOSYS_LOG env var log level control
+- `tests/bench_compare.cyr` — benchmark suite for Rust-vs-Cyrius comparison
+
+### Security
+- certpin: path validation rejects single quotes/newlines before shell execution
+- audit: path traversal check rejects `..` components in file watch rules
+- luks: per-PID keyfile path instead of predictable `/tmp/.agnos-luks-keyfile`
+- netns: per-PID nftables temp file instead of fixed path
+- journald: skip fields with newline characters in keys (injection prevention)
+- syscall: saturating multiply guard on sysinfo memory calculations
+- netns: nftables buffer increased to 16KB with bounds checking
+- ima: policy buffer sized to match per-rule buffer (512 bytes/rule)
+
+### Performance
+- Syscall wrappers at parity with Rust (getpid 306 ns, getuid 290 ns)
+- Packed error creation: 6 ns (vs Rust 11 ns — 1.8x faster)
+- query_sysinfo: 465 ns (vs Rust 467 ns — parity)
+- Ok(42) tagged union: 2 ns
+- Compile time: 8ms (vs Rust 11.7s — 1,462x faster)
+- Binary size: 117KB (vs Rust 6.9MB rlib — 59x smaller)
+
+### Metrics
+- **Source**: 8,559 lines across 21 modules
+- **Binary**: 117KB ELF (x86_64)
+- **Compile**: 8ms
+- **Dependencies**: 0
 
 ---
 

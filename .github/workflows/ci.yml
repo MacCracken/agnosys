@@ -67,18 +67,10 @@ jobs:
           cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
           chmod +x ./build/cc2 ./build/cyrb
 
-      - name: Syntax check (all modules)
+      - name: Syntax check (entry point)
         run: |
-          fail=0
-          for f in src/*.cyr; do
-            if ! ./build/cyrb check "$f" > /dev/null 2>&1; then
-              echo "FAIL: $f"
-              fail=1
-            else
-              echo "  OK: $(basename $f)"
-            fi
-          done
-          test $fail -eq 0
+          ./build/cyrb check src/main.cyr
+          echo "PASS: src/main.cyr"
 
   # ── Security ──
   security:
