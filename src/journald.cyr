@@ -277,14 +277,27 @@ fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) 
         str_builder_add_cstr(sb, "\n");
     }
 
-    # Append extra fields
+    # Append extra fields (skip keys containing newline to prevent injection)
     var nfields = vec_len(fields_keys);
     var fi = 0;
     while (fi < nfields) {
-        str_builder_add_cstr(sb, vec_get(fields_keys, fi));
-        str_builder_add_cstr(sb, "=");
-        str_builder_add_cstr(sb, vec_get(fields_vals, fi));
-        str_builder_add_cstr(sb, "\n");
+        var fkey = vec_get(fields_keys, fi);
+        var fkey_len = strlen(fkey);
+        var fkey_valid = 1;
+        var fki = 0;
+        while (fki < fkey_len) {
+            if (load8(fkey + fki) == 10) {
+                fkey_valid = 0;
+                fki = fkey_len;  # break
+            }
+            fki = fki + 1;
+        }
+        if (fkey_valid == 1) {
+            str_builder_add_cstr(sb, fkey);
+            str_builder_add_cstr(sb, "=");
+            str_builder_add_cstr(sb, vec_get(fields_vals, fi));
+            str_builder_add_cstr(sb, "\n");
+        }
         fi = fi + 1;
     }
 

@@ -462,8 +462,10 @@ fn netns_destroy_agent_netns(handle) {
 # ================================================================
 
 # Helper to append a string to a buffer, return new position.
+# Checks bounds against buf_size; if exceeded, returns pos unchanged (truncation).
 fn nft_append(buf, pos, str) {
     var len = strlen(str);
+    if (pos + len >= 16384) { return pos; }
     memcpy(buf + pos, str, len);
     return pos + len;
 }
@@ -482,7 +484,8 @@ fn nft_proto_str(proto) {
 # Render a FirewallPolicy into an nftables ruleset string.
 # Returns a heap-allocated null-terminated string.
 fn netns_render_nftables_ruleset(policy) {
-    var buf = alloc(4096);
+    var buf_size = 16384;
+    var buf = alloc(buf_size);
     var pos = 0;
 
     pos = nft_append(buf, pos, "table inet kavach {\n");
@@ -598,8 +601,19 @@ fn netns_render_nftables_ruleset(policy) {
 fn netns_apply_nftables_ruleset(handle, ruleset) {
     var ns_name = netns_handle_name(handle);
 
-    # Write ruleset to temp file
-    var tmp_path = "/run/agnos/nft-tmp.conf";
+    # Write ruleset to per-PID temp file
+    var nft_pid = sys_getpid();
+    var nft_pid_buf[24];
+    var nft_pid_len = fmt_int_buf(nft_pid, &nft_pid_buf);
+    var nft_prefix = "/run/agnos/nft-tmp-";
+    var nft_prefix_len = strlen(nft_prefix);
+    var nft_suffix = ".conf";
+    var nft_suffix_len = strlen(nft_suffix);
+    var tmp_path = alloc(nft_prefix_len + nft_pid_len + nft_suffix_len + 1);
+    memcpy(tmp_path, nft_prefix, nft_prefix_len);
+    memcpy(tmp_path + nft_prefix_len, &nft_pid_buf, nft_pid_len);
+    memcpy(tmp_path + nft_prefix_len + nft_pid_len, nft_suffix, nft_suffix_len);
+    store8(tmp_path + nft_prefix_len + nft_pid_len + nft_suffix_len, 0);
 
     # Ensure directory exists (ignore errors)
     var mkdir_argv = alloc(24);

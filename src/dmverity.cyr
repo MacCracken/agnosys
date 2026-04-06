@@ -46,14 +46,23 @@ fn verity_hash_hex_len(algo) {
 # Total: 64 bytes. salt=0 means no salt.
 # ================================================================
 
-fn verity_config_new(name, data_device, hash_device, data_block_size, hash_block_size, hash_algorithm, root_hash, salt) {
+fn verity_config_alloc() {
     var c = alloc(64);
+    memset(c, 0, 64);
+    return c;
+}
+
+fn verity_config_set_devices(c, name, data_device, hash_device) {
     store64(c, name);
     store64(c + 8, data_device);
     store64(c + 16, hash_device);
-    store64(c + 24, data_block_size);
-    store64(c + 32, hash_block_size);
-    store64(c + 40, hash_algorithm);
+    return c;
+}
+
+fn verity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
+    store64(c + 24, data_bs);
+    store64(c + 32, hash_bs);
+    store64(c + 40, algo);
     store64(c + 48, root_hash);
     store64(c + 56, salt);
     return c;

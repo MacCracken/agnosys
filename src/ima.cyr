@@ -471,7 +471,7 @@ fn ima_write_policy(rules) {
     }
 
     # Build the policy string
-    var policy_buf = alloc(count * 256);
+    var policy_buf = alloc(count * 512);
     var pos = 0;
 
     var ri = 0;

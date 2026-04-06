@@ -212,6 +212,23 @@ fn certpin_compute_spki_pin(cert_path) {
         return err_invalid_argument("cert_path is empty");
     }
 
+    # Validate cert_path does not contain shell-injection characters
+    var vlen = strlen(cert_path);
+    var vi = 0;
+    while (vi < vlen) {
+        var vc = load8(cert_path + vi);
+        if (vc == 39) {  # single quote
+            return err_invalid_argument("cert_path contains single quote");
+        }
+        if (vc == 10) {  # newline
+            return err_invalid_argument("cert_path contains newline");
+        }
+        if (vc == 0) {  # null byte (shouldn't reach here, but defensive)
+            return err_invalid_argument("cert_path contains null byte");
+        }
+        vi = vi + 1;
+    }
+
     # Build the pipeline command as a single shell invocation
     # We use sh -c to pipe the commands together
     var cmd = "sh";

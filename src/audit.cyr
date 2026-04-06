@@ -173,6 +173,14 @@ fn audit_rule_validate(rule) {
         if (load8(path) != 47) {
             return err_invalid_argument("FileWatch path must be absolute");
         }
+        # Reject path traversal via ".." components
+        var pi = 0;
+        while (pi < path_len - 1) {
+            if (load8(path + pi) == 46 && load8(path + pi + 1) == 46) {
+                return err_invalid_argument("audit path contains ..");
+            }
+            pi = pi + 1;
+        }
     }
     elif (rtype == AUDIT_RULE_SYSCALL_WATCH) {
         # syscall_nr is stored directly, 0 is a valid syscall (read)

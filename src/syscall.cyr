@@ -117,6 +117,7 @@ fn sysinfo_total_memory(info) {
     # Saturating multiply: if either is 0 or result would overflow, cap it
     if (unit == 0) { return ram; }
     if (unit == 1) { return ram; }
+    if (ram > 0x7FFFFFFFFFFFFFFF / unit) { return 0x7FFFFFFFFFFFFFFF; }
     return ram * unit;
 }
 
@@ -126,6 +127,7 @@ fn sysinfo_free_memory(info) {
     var unit = load32(info + SI_MEM_UNIT);
     if (unit == 0) { return ram; }
     if (unit == 1) { return ram; }
+    if (ram > 0x7FFFFFFFFFFFFFFF / unit) { return 0x7FFFFFFFFFFFFFFF; }
     return ram * unit;
 }
 

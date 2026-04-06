@@ -41,13 +41,22 @@ enum LuksConst {
 # Total: 72 bytes
 # ================================================================
 
-fn luks_config_new(name, backing_path, size_mb, mount_point, filesystem, cipher_algo, cipher_mode, key_size_bits, pbkdf) {
+fn luks_config_alloc() {
     var c = alloc(72);
+    memset(c, 0, 72);
+    return c;
+}
+
+fn luks_config_set_core(c, name, backing_path, size_mb, mount_point, filesystem) {
     store64(c, name);
     store64(c + 8, backing_path);
     store64(c + 16, size_mb);
     store64(c + 24, mount_point);
     store64(c + 32, filesystem);
+    return c;
+}
+
+fn luks_config_set_crypto(c, cipher_algo, cipher_mode, key_size_bits, pbkdf) {
     store64(c + 40, cipher_algo);
     store64(c + 48, cipher_mode);
     store64(c + 56, key_size_bits);
@@ -67,11 +76,10 @@ fn luks_config_pbkdf(c) { return load64(c + 64); }
 
 # Create a default config with sensible defaults (AES-XTS, 512-bit, Argon2id)
 fn luks_config_default(name, backing_path, mount_point) {
-    return luks_config_new(
-        name, backing_path, LUKS_DEFAULT_SIZE_MB, mount_point,
-        LUKS_FS_EXT4, "aes", "xts-plain64",
-        LUKS_DEFAULT_KEY_BITS, LUKS_PBKDF_ARGON2ID
-    );
+    var c = luks_config_alloc();
+    luks_config_set_core(c, name, backing_path, LUKS_DEFAULT_SIZE_MB, mount_point, LUKS_FS_EXT4);
+    luks_config_set_crypto(c, "aes", "xts-plain64", LUKS_DEFAULT_KEY_BITS, LUKS_PBKDF_ARGON2ID);
+    return c;
 }
 
 # ================================================================
@@ -280,14 +288,26 @@ fn luks_format(config, key_ptr, key_len) {
     var klen = fmt_int_buf(key_bits, &kbuf);
     var pbkdf = luks_pbkdf_as_str(luks_config_pbkdf(config));
 
-    # Write key to a temp file for --key-file
-    var keyfile = "/tmp/.agnos-luks-keyfile";
+    # Write key to a per-PID temp file for --key-file
+    var kf_pid = sys_getpid();
+    var kf_pid_buf[24];
+    var kf_pid_len = fmt_int_buf(kf_pid, &kf_pid_buf);
+    var kf_prefix = "/tmp/.agnos-luks-";
+    var kf_prefix_len = strlen(kf_prefix);
+    var keyfile = alloc(kf_prefix_len + kf_pid_len + 1);
+    memcpy(keyfile, kf_prefix, kf_prefix_len);
+    memcpy(keyfile + kf_prefix_len, &kf_pid_buf, kf_pid_len);
+    store8(keyfile + kf_prefix_len + kf_pid_len, 0);
+
     var kfd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);  # 0600
     if (kfd < 0) {
         return err_syscall_failed(0 - kfd, "failed to create keyfile");
     }
-    sys_write(kfd, key_ptr, key_len);
+    var kf_wret = sys_write(kfd, key_ptr, key_len);
     sys_close(kfd);
+    if (kf_wret < 0) {
+        return err_syscall_failed(0 - kf_wret, "write failed");
+    }
 
     var cs_args = vec_new();
     vec_push(cs_args, "/usr/sbin/cryptsetup");
@@ -353,8 +373,17 @@ fn luks_open(config, key_ptr, key_len) {
     var loop_dev = alloc(lolen + 1);
     memcpy(loop_dev, &lobuf, lolen + 1);
 
-    # Write key to temp file
-    var keyfile = "/tmp/.agnos-luks-keyfile";
+    # Write key to per-PID temp file
+    var kf_pid2 = sys_getpid();
+    var kf_pid_buf2[24];
+    var kf_pid_len2 = fmt_int_buf(kf_pid2, &kf_pid_buf2);
+    var kf_prefix2 = "/tmp/.agnos-luks-";
+    var kf_prefix_len2 = strlen(kf_prefix2);
+    var keyfile = alloc(kf_prefix_len2 + kf_pid_len2 + 1);
+    memcpy(keyfile, kf_prefix2, kf_prefix_len2);
+    memcpy(keyfile + kf_prefix_len2, &kf_pid_buf2, kf_pid_len2);
+    store8(keyfile + kf_prefix_len2 + kf_pid_len2, 0);
+
     var kfd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);
     if (kfd < 0) {
         return err_syscall_failed(0 - kfd, "failed to create keyfile");
