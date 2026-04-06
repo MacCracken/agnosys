@@ -1,5 +1,4 @@
-/target/
-Cargo.lock
+build/
 *.swp
 *.swo
 *~
@@ -8,15 +7,11 @@ Cargo.lock
 *.iml
 .DS_Store
 Thumbs.db
-*.pdb
 core
 core.*
-lcov.info
-tarpaulin-report.html
-coverage/
-criterion/
 bench-history.csv
-benchmarks.md
+BENCHMARKS.md
 .claude/
 .env
 .env.*
+rust-old/target/

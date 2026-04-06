@@ -2,14 +2,16 @@
 
 > **Agnosys** (agnos + sys — toward knowledge of the system) — AGNOS kernel interface
 
-Safe Rust bindings for Linux kernel syscalls and security primitives. Feature-gated so consumers pull only the kernel interfaces they need. The foundation layer that every AGNOS crate depends on.
+Cyrius bindings for Linux kernel syscalls and security primitives. Consumers include only the modules they need. The foundation layer that every AGNOS program depends on.
+
+Ported from 29,257 lines of Rust to 8,460 lines of Cyrius. 117KB binary. Compiles in 8ms.
 
 ## Architecture
 
 ```
-Consumer crates:
+Consumer programs:
   yukti      ──→ agnosys[udev]              (device hotplug)        ✅
-  kavach     ──→ agnosys[landlock,seccomp]   (sandboxing)           ✅
+  kavach     ──→ agnosys[security]           (sandboxing)           ✅
   nein       ──→ agnosys[netns]             (network namespaces)    ✅
   stiva      ──→ agnosys[luks,dmverity]     (encrypted storage)     ✅
   sigil      ──→ agnosys[tpm,ima,certpin]   (trust verification)    ✅
@@ -19,72 +21,61 @@ Consumer crates:
   shakti     ──→ agnosys[pam]              (authentication)         ✅
   aegis      ──→ agnosys[mac]             (mandatory access control) ✅
   ark        ──→ agnosys[fuse,update]      (package management)     ✅
-  daimon     ──→ agnosys[seccomp,certpin]  (daemon runtime)         ✅
-  hoosh      ──→ agnosys[certpin]         (LLM gateway)            ✅
+  daimon     ──→ agnosys[security,certpin]  (daemon runtime)        ✅
 ```
 
-## Feature Flags
+## Modules (20)
 
-| Feature | Consumer | Description | Status |
-|---------|----------|-------------|--------|
-| `syscall` | all | Low-level syscall wrappers, SysInfo | ✅ |
-| `error` | all | Unified error type with errno mapping, Cow fields | ✅ |
-| `logging` | all | AGNOSYS_LOG env var tracing init | ✅ |
-| `udev` | yukti | Device enumeration, hotplug monitoring | ✅ |
-| `landlock` | kavach | Filesystem/network sandboxing (ABI v1-v5) | ✅ |
-| `seccomp` | kavach, daimon | BPF syscall filtering | ✅ |
-| `netns` | nein | Network namespace management | ✅ |
-| `luks` | stiva | LUKS header parsing, dm-crypt volumes | ✅ |
-| `dmverity` | stiva | dm-verity integrity verification | ✅ |
-| `ima` | sigil | Integrity Measurement Architecture | ✅ |
-| `certpin` | daimon, hoosh | Certificate pinning (zero-dep SHA-256) | ✅ |
-| `pam` | shakti | PAM service inspection | ✅ |
-| `mac` | aegis | LSM detection, security contexts | ✅ |
-| `audit` | libro | Kernel audit netlink interface | ✅ |
-| `drm` | soorat | Direct Rendering Manager / KMS | ✅ |
-| `tpm` | sigil | Trusted Platform Module | ✅ |
-| `secureboot` | sigil | Secure Boot verification | ✅ |
-| `journald` | argonaut | Systemd journal | ✅ |
-| `bootloader` | argonaut | Bootloader interface | ✅ |
-| `fuse` | ark | Filesystem in Userspace | ✅ |
-| `update` | ark | System update primitives | ✅ |
-| `serde` | optional | Serde derive support | ✅ |
+| Module | Description |
+|--------|-------------|
+| error | Unified error type with errno mapping, packed + heap dual encoding |
+| syscall | getpid, getuid, hostname, sysinfo wrappers |
+| logging | AGNOSYS_LOG env var log level control |
+| security | Landlock filesystem sandboxing, seccomp BPF, namespace creation |
+| mac | SELinux/AppArmor detection and context management |
+| audit | Kernel audit subsystem via netlink |
+| pam | PAM service inspection, passwd/who parsing |
+| journald | Systemd journal structured log send/query |
+| luks | LUKS2 encrypted volume management via cryptsetup |
+| dmverity | dm-verity integrity verification |
+| ima | IMA measurements, policy rules, file integrity |
+| tpm | TPM2 device detection, PCR reading, seal/unseal |
+| certpin | Certificate pin validation, SPKI computation |
+| secureboot | Secure Boot EFI variable reading |
+| udev | Device enumeration via udevadm |
+| drm | DRM/KMS device enumeration, ioctl caps |
+| netns | Network namespace create/destroy, veth, nftables |
+| bootloader | systemd-boot/GRUB detection, cmdline validation |
+| update | Atomic file operations, version comparison |
+| fuse | FUSE mount parsing, mount/unmount |
 
-## Quick Start
-
-```rust
-// Only pull what you need
-// Cargo.toml: agnosys = { path = "../agnosys", features = ["udev", "landlock"] }
-
-use agnosys::error::SysError;
-
-// Device enumeration
-#[cfg(feature = "udev")]
-let devices = agnosys::udev::enumerate("net").unwrap();
-
-// Filesystem sandboxing
-#[cfg(feature = "landlock")]
-let ruleset = agnosys::landlock::Ruleset::new(
-    agnosys::landlock::FsAccess::READ_FILE | agnosys::landlock::FsAccess::EXECUTE,
-).unwrap();
-```
-
-## Building
+## Build
 
 ```sh
-cargo build                    # default features only (syscall, error)
-cargo build --all-features     # everything
-cargo test --all-features      # 458 tests
-cargo bench --all-features     # 100 benchmarks
-make check                     # fmt + clippy + test + audit
+cyrb build src/main.cyr build/agnosys    # compile
+cyrb run src/main.cyr                     # compile + run
+cyrb check src/main.cyr                   # syntax check only
 ```
 
-## Roadmap
+## Usage
 
-See [docs/development/roadmap.md](docs/development/roadmap.md).
+Programs include only the modules they need:
 
-**Complete:** 20/20 modules, 13/13 consumers unblocked, 605 tests, 132 benchmarks.
+```cyrius
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+include "src/syscall.cyr"
+include "src/security.cyr"
+
+fn main() {
+    alloc_init();
+    # ... use agnosys functions ...
+    return 0;
+}
+```
 
 ## License
 
-GPL-3.0-only — see [LICENSE](LICENSE).
+GPL-3.0-only
