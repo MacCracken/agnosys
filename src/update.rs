@@ -23,6 +23,15 @@
 //!   the system unbootable (rollback count protects against this).
 //! - Update images and manifests should be fetched over authenticated channels;
 //!   this module does not handle transport security.
+//! - Writing to partition block devices and modifying boot configuration
+//!   requires root privileges; callers must drop privileges after update
+//!   operations complete.
+//! - Update images, manifests, and delta patches may contain proprietary
+//!   firmware or OS data; temporary files should be stored on encrypted
+//!   storage and securely deleted after application.
+//! - An attacker who compromises the update channel can supply a valid-looking
+//!   manifest pointing to malicious images; callers must verify manifest
+//!   signatures against a pinned trust anchor before invoking write operations.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -2428,5 +2437,18 @@ mod tests {
         assert!(val.is_object());
         assert_eq!(val["current_version"], "2026.5.5");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<UpdateSlot>();
+        assert_send_sync::<UpdateChannel>();
+        assert_send_sync::<UpdateFile>();
+        assert_send_sync::<UpdateManifest>();
+        assert_send_sync::<UpdatePhase>();
+        assert_send_sync::<UpdateProgress>();
+        assert_send_sync::<UpdateState>();
+        assert_send_sync::<UpdateConfig>();
     }
 }

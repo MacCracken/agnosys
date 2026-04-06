@@ -1661,4 +1661,15 @@ mod tests {
         assert_eq!(values[1].value, "aaaa"); // index 10
         assert_eq!(values[2].value, "bbbb"); // index 20
     }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<TpmPcrBank>();
+        assert_send_sync::<TpmPcrValue>();
+        assert_send_sync::<TpmPcrPolicy>();
+        assert_send_sync::<SealedSecret>();
+        assert_send_sync::<MeasuredBootBaseline>();
+        assert_send_sync::<TpmDevice>();
+    }
 }

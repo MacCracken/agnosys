@@ -20,6 +20,10 @@
 //!   rule injection.
 //! - Agent IP addresses and namespace names are not secrets but may reveal
 //!   internal network topology.
+//! - A compromised agent inside a namespace may attempt container escape via
+//!   veth misconfiguration, kernel exploits, or ARP spoofing on the bridge;
+//!   defense-in-depth requires firewall rules (via nein) and minimal
+//!   capabilities in the namespace.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1726,5 +1730,17 @@ mod tests {
         );
         let ruleset = render_nftables_ruleset(&policy);
         assert!(ruleset.contains("ip saddr 0.0.0.0/0 drop"));
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<NetNamespaceConfig>();
+        assert_send_sync::<TrafficDirection>();
+        assert_send_sync::<Protocol>();
+        assert_send_sync::<FirewallAction>();
+        assert_send_sync::<FirewallRule>();
+        assert_send_sync::<FirewallPolicy>();
+        assert_send_sync::<NetNamespaceHandle>();
     }
 }

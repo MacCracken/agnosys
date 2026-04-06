@@ -18,6 +18,8 @@
 //!   been tested against known vectors; it does not handle untrusted decode.
 //! - `fetch_server_cert` connects to remote hosts — callers must validate
 //!   hostnames to prevent SSRF.
+//! - No special privileges are required for pin computation or validation;
+//!   `fetch_server_cert` needs only outbound network access (no `CAP_*`).
 
 use crate::error::{Result, SysError};
 use chrono::{DateTime, Utc};
@@ -1244,5 +1246,15 @@ sha256 Fingerprint=AA:BB:CC:DD";
             verify_pin("multi.example.com", "pin_four", &pin_set),
             CertPinResult::PinMismatch { .. }
         ));
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PinnedCert>();
+        assert_send_sync::<CertPinSet>();
+        assert_send_sync::<CertPinResult>();
+        assert_send_sync::<CertPinConfig>();
+        assert_send_sync::<CertInfo>();
     }
 }

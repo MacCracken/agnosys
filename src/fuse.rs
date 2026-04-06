@@ -16,6 +16,9 @@
 //!   data for reads. Only mount trusted FUSE implementations.
 //! - Mountpoints must be validated to prevent path traversal or shadowing of
 //!   critical system directories.
+//! - File contents served through FUSE may include credentials, private keys,
+//!   or other secrets — treat all data read from a FUSE mount as potentially
+//!   sensitive and avoid logging it verbatim.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1835,5 +1838,15 @@ none /sys sysfs rw 0 0";
         assert_eq!(mounts.len(), 1);
         assert_eq!(mounts[0].mountpoint, PathBuf::from("/my/mount/point"));
         assert_eq!(mounts[0].source, "my-source");
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<FuseMount>();
+        assert_send_sync::<FuseMountOptions>();
+        assert_send_sync::<FuseFilesystem>();
+        assert_send_sync::<FuseStatus>();
+        assert_send_sync::<AgentFuseConfig>();
     }
 }

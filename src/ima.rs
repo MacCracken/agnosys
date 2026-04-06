@@ -1377,4 +1377,15 @@ mod tests {
         assert!(lines[1].starts_with("measure"));
         assert!(lines[2].starts_with("appraise"));
     }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ImaAction>();
+        assert_send_sync::<ImaTarget>();
+        assert_send_sync::<ImaPolicyRule>();
+        assert_send_sync::<ImaPolicy>();
+        assert_send_sync::<ImaMeasurement>();
+        assert_send_sync::<ImaStatus>();
+    }
 }

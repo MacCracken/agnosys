@@ -14,6 +14,9 @@
 //! - dm-verity volumes are read-only by design; any write attempt will fail.
 //! - `veritysetup` runs as a subprocess with root privileges; device paths
 //!   must be validated by the caller to prevent device node confusion.
+//! - The root hash, salt, and hash device contents are integrity metadata —
+//!   not confidential — but tampering with the root hash breaks the trust
+//!   chain, so it must be stored in a tamper-evident location.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1698,5 +1701,13 @@ mod tests {
         let json = serde_json::to_string(&status).unwrap();
         let de: VerityStatus = serde_json::from_str(&json).unwrap();
         assert!(de.root_hash.is_empty());
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<VerityHashAlgorithm>();
+        assert_send_sync::<VerityConfig>();
+        assert_send_sync::<VerityStatus>();
     }
 }

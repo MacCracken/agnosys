@@ -28,6 +28,13 @@
 //!   wraps them in safe Rust but cannot prevent kernel-level bugs.
 //! - Device enumeration reveals GPU hardware, which may be useful for
 //!   fingerprinting.
+//! - Device paths passed to `Device::open` must be validated to prevent
+//!   opening arbitrary file descriptors; only `/dev/dri/card*` paths should
+//!   be accepted.
+//! - A malicious user with DRM access could craft ioctl sequences to trigger
+//!   kernel driver bugs or read stale GPU memory from other sessions;
+//!   restrict device access via group membership and avoid running DRM
+//!   consumers as root.
 
 use crate::error::{Result, SysError};
 use std::borrow::Cow;

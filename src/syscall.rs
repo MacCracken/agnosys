@@ -11,6 +11,12 @@
 //!   some deployments. Treat the returned value as potentially sensitive.
 //! - Callers must validate their own inputs; these functions pass arguments
 //!   directly to the kernel with only basic return-value checking.
+//! - Most wrappers here require no special privileges (`getpid`, `getuid`),
+//!   but callers invoking arbitrary syscalls via `checked_syscall` must ensure
+//!   the calling process holds the required capabilities.
+//! - An attacker with control over syscall arguments could trigger unexpected
+//!   kernel behavior; all inputs must be validated before reaching these
+//!   wrappers.
 
 use crate::error::{Result, SysError};
 

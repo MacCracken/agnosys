@@ -15,6 +15,9 @@
 //!   reveal information about agent storage.
 //! - Failed unlock attempts may be logged by the kernel; rate-limiting is the
 //!   caller's responsibility.
+//! - An attacker with physical or root access may attempt offline brute-force
+//!   of the LUKS header; use of Argon2id PBKDF and strong key material
+//!   mitigates this. Cold-boot attacks on in-memory keys are out of scope.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -2276,5 +2279,16 @@ mod tests {
         let debug = format!("{:?}", cipher);
         assert!(debug.contains("twofish"));
         assert!(debug.contains("ecb"));
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<LuksConfig>();
+        assert_send_sync::<LuksFilesystem>();
+        assert_send_sync::<LuksCipher>();
+        assert_send_sync::<LuksPbkdf>();
+        assert_send_sync::<LuksStatus>();
+        assert_send_sync::<LuksKey>();
     }
 }

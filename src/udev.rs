@@ -1522,4 +1522,14 @@ E: SUBSYSTEM=block
         let count = devlinks.split(' ').count();
         assert_eq!(count, 3);
     }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<DeviceInfo>();
+        assert_send_sync::<DeviceSubsystem>();
+        assert_send_sync::<UdevRule>();
+        assert_send_sync::<DeviceEvent>();
+        assert_send_sync::<DeviceMonitorConfig>();
+    }
 }

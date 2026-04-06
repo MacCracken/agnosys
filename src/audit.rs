@@ -15,6 +15,9 @@
 //!   audit PID at a time. Binding when auditd is running will fail.
 //! - Inputs to `add_rule` / `send_user_event` are passed to the kernel —
 //!   callers must validate rule fields to avoid audit log injection.
+//! - An attacker with `CAP_AUDIT_CONTROL` can disable auditing or flush rules
+//!   to suppress evidence; defend by monitoring audit subsystem status changes
+//!   and alerting on unexpected configuration resets.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -2122,5 +2125,16 @@ mod tests {
                 e
             );
         }
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AuditHandle>();
+        assert_send_sync::<AuditConfig>();
+        assert_send_sync::<AuditStatus>();
+        assert_send_sync::<AuditRuleType>();
+        assert_send_sync::<AuditRule>();
+        assert_send_sync::<RawAuditEntry>();
     }
 }

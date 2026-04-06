@@ -1673,4 +1673,17 @@ mod tests {
         let err = PamRuleType::from_str("").unwrap_err();
         assert!(err.to_string().contains("Unknown PAM rule type"));
     }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PamService>();
+        assert_send_sync::<AuthResult>();
+        assert_send_sync::<UserInfo>();
+        assert_send_sync::<SessionInfo>();
+        assert_send_sync::<PamConfig>();
+        assert_send_sync::<PamRule>();
+        assert_send_sync::<PamRuleType>();
+        assert_send_sync::<PamControl>();
+    }
 }

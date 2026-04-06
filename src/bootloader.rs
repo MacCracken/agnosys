@@ -17,6 +17,9 @@
 //!   is writable by an attacker, boot integrity is compromised.
 //! - GRUB2 configuration regeneration (`grub-mkconfig`) executes scripts in
 //!   `/etc/grub.d/` as root.
+//! - Boot entries and `loader.conf` may expose kernel versions, partition UUIDs,
+//!   and security-sensitive command-line parameters; restrict read access to
+//!   prevent information disclosure.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -2167,5 +2170,13 @@ menuentry 'C' {
         assert_eq!(entries.len(), 1);
         // "initrd" line with nothing after stripping "16" and trimming -> empty, so no initrd set
         assert!(entries[0].initrd.is_none());
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Bootloader>();
+        assert_send_sync::<BootEntry>();
+        assert_send_sync::<BootConfig>();
     }
 }

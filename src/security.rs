@@ -10,8 +10,13 @@
 //!   a malformed BPF program can brick the calling process.
 //! - Filter validation is critical: callers must construct correct BPF bytecode.
 //!   This module does not validate individual BPF instructions.
-//! - Both Landlock and seccomp operate on the calling thread/process — no
-//!   special capability is needed, but effects are permanent.
+//! - Both Landlock and seccomp operate on the calling thread/process — any
+//!   unprivileged process may apply them, but effects are permanent and
+//!   irrevocable. No `CAP_*` is required for self-restriction.
+//! - Seccomp BPF programs may reference syscall arguments that contain
+//!   sensitive data (file descriptors, addresses); filter rules themselves
+//!   do not expose this data, but tracing/logging of filter actions should
+//!   be treated as potentially sensitive.
 
 use crate::error::{Result, SysError};
 use std::path::PathBuf;
@@ -1490,5 +1495,13 @@ mod tests {
                 assert!(!msg.contains("too large"));
             }
         }
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<FilesystemRule>();
+        assert_send_sync::<FsAccess>();
+        assert_send_sync::<NamespaceFlags>();
     }
 }

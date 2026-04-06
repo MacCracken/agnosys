@@ -15,6 +15,13 @@
 //!   compromised kernel undermines all verification.
 //! - Module signing keys are security-critical and must be stored with
 //!   restricted permissions.
+//! - Key file paths and EFI variable paths must be validated to prevent path
+//!   traversal; callers should canonicalize paths before passing them in.
+//! - Enrolled keys (PK, KEK, db) and signing key material are highly sensitive;
+//!   leaking private keys allows an attacker to sign arbitrary code as trusted.
+//! - An attacker who can enroll their own MOK or replace db entries can sign
+//!   malicious bootloaders/modules; physical-presence confirmation and
+//!   Setup Mode detection mitigate this but do not eliminate supply-chain risks.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1243,5 +1250,14 @@ SHA1 Fingerprint: bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb:bb
         let keys = parse_mokutil_list(&output).unwrap();
         assert_eq!(keys.len(), 50);
         assert_eq!(keys[49].subject, "CN=Key49");
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SecureBootState>();
+        assert_send_sync::<EnrolledKey>();
+        assert_send_sync::<ModuleSignatureInfo>();
+        assert_send_sync::<EfiVariable>();
     }
 }

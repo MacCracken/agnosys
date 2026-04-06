@@ -8,6 +8,11 @@
 //! - Errno integer values are safe to expose — they carry no privileged data.
 //! - `Cow<'static, str>` messages are caller-supplied; callers must not embed
 //!   secrets (keys, tokens, passwords) in error context strings.
+//! - No special privileges are required to construct or inspect errors; this
+//!   module is purely userspace data types.
+//! - An attacker who can observe error output may fingerprint the system by
+//!   correlating errno values and embedded paths; sanitize before exposing
+//!   errors across trust boundaries.
 
 use std::borrow::Cow;
 

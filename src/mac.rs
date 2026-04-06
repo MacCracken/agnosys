@@ -14,6 +14,12 @@
 //!   `CAP_MAC_ADMIN`. An incorrect profile can deny legitimate access.
 //! - Security context labels may reveal internal service architecture;
 //!   avoid exposing them to untrusted consumers.
+//! - Profile names and security context strings must be validated against
+//!   expected patterns; untrusted input could cause profile load failures or
+//!   policy bypass via path traversal in profile paths.
+//! - An attacker who can load or replace MAC profiles may weaken confinement
+//!   to escalate privileges; always verify profile integrity before loading
+//!   and restrict `CAP_MAC_ADMIN` to trusted processes.
 
 use crate::error::{Result, SysError};
 use serde::{Deserialize, Serialize};
@@ -1381,5 +1387,14 @@ mod tests {
         };
         let err = profile.validate(MacSystem::SELinux).unwrap_err();
         assert!(err.to_string().contains("Agent type cannot be empty"));
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<MacSystem>();
+        assert_send_sync::<SELinuxMode>();
+        assert_send_sync::<AppArmorProfileState>();
+        assert_send_sync::<AgentMacProfile>();
     }
 }

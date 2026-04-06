@@ -16,6 +16,11 @@
 //!   it permanently deletes log data that may be needed for forensics.
 //! - `journalctl` runs as a subprocess; callers must validate unit names and
 //!   filter parameters to prevent argument injection.
+//! - Reading journal entries requires membership in the `systemd-journal`
+//!   group or root; vacuum operations require root or equivalent privilege.
+//! - An attacker who can write arbitrary journal entries (e.g., via a
+//!   compromised service) may inject misleading log data to cover tracks;
+//!   correlate journal entries with the kernel audit trail to detect tampering.
 
 use crate::error::{Result, SysError};
 use chrono::{DateTime, TimeZone, Utc};
@@ -1216,5 +1221,14 @@ Disk usage: 64.0M
         };
         let args = build_journalctl_args(&filter);
         assert!(args.contains(&"--lines=0".to_string()));
+    }
+
+    #[test]
+    fn send_sync_assertions() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<JournalEntry>();
+        assert_send_sync::<JournalPriority>();
+        assert_send_sync::<JournalFilter>();
+        assert_send_sync::<JournalStats>();
     }
 }
