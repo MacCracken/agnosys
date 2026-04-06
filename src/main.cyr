@@ -1,16 +1,101 @@
-# agnosys — Cyrius port
-# Ported from 29257 lines of Rust
+# agnosys — AGNOS kernel interface (Cyrius port)
+# Ported from 29257 lines of Rust to ~8500 lines of Cyrius
+# Safe bindings for Linux syscalls and security primitives
+#
+# All 20 modules are ported in src/*.cyr. Due to cc2 identifier
+# buffer limits, include only the modules your program needs.
+# This main.cyr demonstrates the core modules.
+
+# ================================================================
+# Standard library
+# ================================================================
 
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
+include "lib/tagged.cyr"
 include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/hashmap.cyr"
+include "lib/process.cyr"
+include "lib/fs.cyr"
+
+# ================================================================
+# Agnosys core modules
+# ================================================================
+
+include "src/error.cyr"
+include "src/syscall.cyr"
+include "src/security.cyr"
+
+# ================================================================
+# Main — self-test
+# ================================================================
 
 fn main() {
     alloc_init();
-    println("agnosys ready");
+
+    # ── error module ────────────────────────────────────────
+    var e = err_invalid_argument("test error");
+    if (is_err_result(e) == 1) { println("error: ok"); }
+
+    var e2 = err_from_errno(EPERM);
+    if (is_err_result(e2) == 1) {
+        if (syserr_kind(payload(e2)) == ERR_PERMISSION_DENIED) { println("errno mapping: ok"); }
+    }
+
+    # ── syscall module ──────────────────────────────────────
+    syscall(1, 1, "pid: ", 5);
+    print_num(agnosys_getpid());
+    syscall(1, 1, ", uid: ", 7);
+    print_num(agnosys_getuid());
+    syscall(1, 1, "\n", 1);
+
+    if (agnosys_is_root() == 1) { println("running as root"); }
+    else { println("running as user"); }
+
+    var uts[392];
+    var ures = agnosys_uname(&uts);
+    if (is_ok(ures) == 1) {
+        var h = uname_hostname(&uts);
+        syscall(1, 1, "hostname: ", 10);
+        syscall(1, 1, h, strlen(h));
+        syscall(1, 1, "\n", 1);
+    }
+
+    var sibuf[120];
+    var sres = query_sysinfo(&sibuf);
+    if (is_ok(sres) == 1) {
+        syscall(1, 1, "uptime: ", 8);
+        print_num(sysinfo_uptime(&sibuf));
+        syscall(1, 1, "s, ram: ", 8);
+        print_num(sysinfo_total_memory(&sibuf));
+        syscall(1, 1, " bytes, procs: ", 15);
+        print_num(sysinfo_procs(&sibuf));
+        syscall(1, 1, "\n", 1);
+    }
+
+    if (is_ok(ures) == 1) {
+        var rel = uname_release(&uts);
+        syscall(1, 1, "kernel: ", 8);
+        syscall(1, 1, rel, strlen(rel));
+        syscall(1, 1, "\n", 1);
+    }
+
+    # ── security module ─────────────────────────────────────
+    if (syscall_name_to_nr("getpid") == 39) { println("syscall_name_to_nr: ok"); }
+
+    var fres = create_basic_seccomp_filter();
+    if (is_ok(fres) == 1) {
+        var fi = payload(fres);
+        syscall(1, 1, "seccomp filter: ", 16);
+        print_num(seccomp_filter_len(fi));
+        syscall(1, 1, " bytes\n", 7);
+    }
+
+    println("agnosys ready — 20 modules ported");
     return 0;
 }
 

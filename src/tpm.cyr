@@ -1,0 +1,577 @@
+# tpm.cyr — TPM 2.0 integration
+# Ported from rust-old/src/tpm.rs
+#
+# Measured boot verification, sealed secrets, PCR reading, and random
+# bytes via the TPM 2.0 device. Shells out to tpm2-tools commands
+# (tpm2_pcrread, tpm2_pcrextend, tpm2_create, tpm2_load, tpm2_unseal,
+# tpm2_getrandom).
+#
+# Requires: lib/syscalls.cyr, lib/process.cyr, lib/string.cyr, lib/vec.cyr,
+#           lib/alloc.cyr, lib/fmt.cyr, src/error.cyr
+
+# ================================================================
+# Constants
+# ================================================================
+
+enum TpmPcrBank {
+    TPM_SHA1 = 0;
+    TPM_SHA256 = 1;
+    TPM_SHA384 = 2;
+    TPM_SHA512 = 3;
+}
+
+enum TpmConst {
+    TPM_PCR_MAX = 23;
+    TPM_SEAL_MAX_BYTES = 2048;
+    TPM_RANDOM_MAX_BYTES = 4096;
+    TPM_SHA1_HEX_LEN = 40;
+    TPM_SHA256_HEX_LEN = 64;
+    TPM_SHA384_HEX_LEN = 96;
+    TPM_SHA512_HEX_LEN = 128;
+}
+
+# ================================================================
+# PCR bank helpers
+# ================================================================
+
+fn tpm_bank_str(bank) {
+    if (bank == TPM_SHA1) { return "sha1"; }
+    if (bank == TPM_SHA256) { return "sha256"; }
+    if (bank == TPM_SHA384) { return "sha384"; }
+    if (bank == TPM_SHA512) { return "sha512"; }
+    return "sha256";
+}
+
+fn tpm_bank_hex_len(bank) {
+    if (bank == TPM_SHA1) { return TPM_SHA1_HEX_LEN; }
+    if (bank == TPM_SHA256) { return TPM_SHA256_HEX_LEN; }
+    if (bank == TPM_SHA384) { return TPM_SHA384_HEX_LEN; }
+    if (bank == TPM_SHA512) { return TPM_SHA512_HEX_LEN; }
+    return TPM_SHA256_HEX_LEN;
+}
+
+# ================================================================
+# TpmPcrValue struct
+# Layout: index(+0) bank(+8) value(+16)
+# value is a pointer to a hex string
+# Total: 24 bytes
+# ================================================================
+
+fn tpm_pcr_value_new(index, bank, value) {
+    var v = alloc(24);
+    store64(v, index);
+    store64(v + 8, bank);
+    store64(v + 16, value);
+    return v;
+}
+
+fn tpm_pcr_value_index(v) { return load64(v); }
+fn tpm_pcr_value_bank(v) { return load64(v + 8); }
+fn tpm_pcr_value_value(v) { return load64(v + 16); }
+
+# ================================================================
+# SealedSecret struct
+# Layout: context_path(+0) pcr_selection(+8)
+# Total: 16 bytes
+# ================================================================
+
+fn tpm_sealed_new(context_path, pcr_selection) {
+    var s = alloc(16);
+    store64(s, context_path);
+    store64(s + 8, pcr_selection);
+    return s;
+}
+
+fn tpm_sealed_context(s) { return load64(s); }
+fn tpm_sealed_pcr_sel(s) { return load64(s + 8); }
+
+# ================================================================
+# Helper: run tpm2-tools command
+# ================================================================
+
+fn tpm_run_capture(args, buf, buflen) {
+    var n = exec_capture(args, buf, buflen);
+    if (n < 0) {
+        return err_unknown("tpm2 tool execution failed");
+    }
+    return Ok(n);
+}
+
+fn tpm_run_checked(args) {
+    var rc = exec_vec(args);
+    if (rc != 0) {
+        return err_unknown("tpm2 tool command failed");
+    }
+    return Ok(0);
+}
+
+# ================================================================
+# Build PCR selection string: "sha256:0,1,7"
+# bank: TpmPcrBank constant
+# indices: vec of PCR indices
+# Returns heap-allocated null-terminated string.
+# ================================================================
+
+fn tpm_pcr_selection(bank, indices) {
+    var bank_str = tpm_bank_str(bank);
+    var blen = strlen(bank_str);
+    var count = vec_len(indices);
+
+    # Estimate buffer size: bank + ":" + comma-separated indices
+    var buf = alloc(blen + 1 + count * 3 + 1);
+    var pos = 0;
+
+    memcpy(buf + pos, bank_str, blen);
+    pos = pos + blen;
+    store8(buf + pos, 58);  # ':'
+    pos = pos + 1;
+
+    var i = 0;
+    while (i < count) {
+        if (i > 0) {
+            store8(buf + pos, 44);  # ','
+            pos = pos + 1;
+        }
+        var idx = vec_get(indices, i);
+        var ibuf[24];
+        var ilen = fmt_int_buf(idx, &ibuf);
+        memcpy(buf + pos, &ibuf, ilen);
+        pos = pos + ilen;
+        i = i + 1;
+    }
+
+    store8(buf + pos, 0);
+    return buf;
+}
+
+# ================================================================
+# TPM device detection
+# ================================================================
+
+# Check if a TPM 2.0 device is available.
+# Returns 1 if available, 0 if not.
+fn tpm_detect() {
+    var acc1 = syscall(SYS_ACCESS, "/dev/tpmrm0", 0);
+    if (acc1 == 0) { return 1; }
+    var acc2 = syscall(SYS_ACCESS, "/dev/tpm0", 0);
+    if (acc2 == 0) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# Read PCR values
+# bank: TpmPcrBank constant
+# indices: vec of PCR index i64s
+# Returns Ok(vec_of_tpm_pcr_value_ptrs) or Err.
+# ================================================================
+
+fn tpm_read_pcr(bank, indices) {
+    var count = vec_len(indices);
+    if (count == 0) {
+        return err_invalid_argument("Must specify at least one PCR index");
+    }
+
+    # Validate indices
+    var vi = 0;
+    while (vi < count) {
+        var idx = vec_get(indices, vi);
+        if (idx > TPM_PCR_MAX) {
+            return err_invalid_argument("PCR index out of range (0-23)");
+        }
+        vi = vi + 1;
+    }
+
+    var selection = tpm_pcr_selection(bank, indices);
+
+    var args = vec_new();
+    vec_push(args, "/usr/bin/tpm2_pcrread");
+    vec_push(args, selection);
+
+    var outbuf[4096];
+    memset(&outbuf, 0, 4096);
+    var cap_res = tpm_run_capture(args, &outbuf, 4095);
+    if (is_err_result(cap_res) == 1) { return cap_res; }
+
+    store8(&outbuf + payload(cap_res), 0);
+
+    # Parse output — YAML-like:
+    #   sha256:
+    #     0 : 0xABCDEF...
+    #     7 : 0x123456...
+    var values = vec_new();
+    var outlen = strlen(&outbuf);
+    var default_hex_len = tpm_bank_hex_len(bank);
+
+    var pi = 0;
+    while (pi < count) {
+        var target_idx = vec_get(indices, pi);
+
+        # Build patterns: "<idx> :" and "<idx>:"
+        var idx_buf[24];
+        var idx_len = fmt_int_buf(target_idx, &idx_buf);
+
+        var found = 0;
+        var hex_value = 0;
+        var spos = 0;
+
+        while (spos < outlen && found == 0) {
+            # Skip to non-whitespace after trimming
+            var lstart = spos;
+            while (lstart < outlen && (load8(&outbuf + lstart) == 32 || load8(&outbuf + lstart) == 9)) {
+                lstart = lstart + 1;
+            }
+
+            # Check if line starts with our index
+            if (lstart + idx_len <= outlen && memeq(&outbuf + lstart, &idx_buf, idx_len) == 1) {
+                var after = lstart + idx_len;
+                # Check for " :" or ":"
+                if (after < outlen && (load8(&outbuf + after) == 58 ||
+                    (load8(&outbuf + after) == 32 && after + 1 < outlen && load8(&outbuf + after + 1) == 58))) {
+                    # Found the line — extract hex value after ':'
+                    while (after < outlen && load8(&outbuf + after) != 58) {
+                        after = after + 1;
+                    }
+                    after = after + 1;  # skip ':'
+                    # Skip whitespace
+                    while (after < outlen && (load8(&outbuf + after) == 32 || load8(&outbuf + after) == 9)) {
+                        after = after + 1;
+                    }
+                    # Skip "0x" prefix if present
+                    if (after + 1 < outlen && load8(&outbuf + after) == 48 && load8(&outbuf + after + 1) == 120) {
+                        after = after + 2;
+                    }
+                    # Read hex until end of line
+                    var hstart = after;
+                    while (after < outlen && load8(&outbuf + after) != 10 && load8(&outbuf + after) != 0 && load8(&outbuf + after) != 32) {
+                        after = after + 1;
+                    }
+                    var hlen = after - hstart;
+                    hex_value = alloc(hlen + 1);
+                    memcpy(hex_value, &outbuf + hstart, hlen);
+                    store8(hex_value + hlen, 0);
+                    found = 1;
+                }
+            }
+
+            # Advance to next line
+            while (spos < outlen && load8(&outbuf + spos) != 10) {
+                spos = spos + 1;
+            }
+            if (spos < outlen) { spos = spos + 1; }
+        }
+
+        # Default: zeros if not found
+        if (found == 0) {
+            hex_value = alloc(default_hex_len + 1);
+            memset(hex_value, 48, default_hex_len);  # '0' = 48
+            store8(hex_value + default_hex_len, 0);
+        }
+
+        vec_push(values, tpm_pcr_value_new(target_idx, bank, hex_value));
+        pi = pi + 1;
+    }
+
+    return Ok(values);
+}
+
+# ================================================================
+# Extend a PCR with a measurement hash
+# bank: TpmPcrBank constant
+# index: PCR index (0-23)
+# hash: hex string
+# Returns Ok(0) or Err.
+# ================================================================
+
+fn tpm_extend_pcr(bank, index, hash) {
+    if (index > TPM_PCR_MAX) {
+        return err_invalid_argument("PCR index out of range (0-23)");
+    }
+    if (strlen(hash) == 0) {
+        return err_invalid_argument("Hash must be a non-empty hex string");
+    }
+
+    # Validate hex
+    var hlen = strlen(hash);
+    var hi = 0;
+    while (hi < hlen) {
+        var ch = load8(hash + hi);
+        if (ch < 48 || (ch > 57 && ch < 65) || (ch > 70 && ch < 97) || ch > 102) {
+            return err_invalid_argument("Hash contains non-hex characters");
+        }
+        hi = hi + 1;
+    }
+
+    # Build arg: "<index>:<bank>=<hash>"
+    var bank_str = tpm_bank_str(bank);
+    var bslen = strlen(bank_str);
+    var ibuf[24];
+    var ilen = fmt_int_buf(index, &ibuf);
+
+    var argbuf = alloc(ilen + 1 + bslen + 1 + hlen + 1);
+    var pos = 0;
+    memcpy(argbuf + pos, &ibuf, ilen); pos = pos + ilen;
+    store8(argbuf + pos, 58); pos = pos + 1;  # ':'
+    memcpy(argbuf + pos, bank_str, bslen); pos = pos + bslen;
+    store8(argbuf + pos, 61); pos = pos + 1;  # '='
+    memcpy(argbuf + pos, hash, hlen); pos = pos + hlen;
+    store8(argbuf + pos, 0);
+
+    var args = vec_new();
+    vec_push(args, "/usr/bin/tpm2_pcrextend");
+    vec_push(args, argbuf);
+
+    return tpm_run_checked(args);
+}
+
+# ================================================================
+# Seal data to specific PCR state
+# bank: TpmPcrBank
+# pcr_indices: vec of PCR indices
+# data_ptr: pointer to data to seal
+# data_len: length of data
+# output_dir: directory for output files
+# Returns Ok(sealed_secret_ptr) or Err.
+# ================================================================
+
+fn tpm_seal(bank, pcr_indices, data_ptr, data_len, output_dir) {
+    if (data_len == 0) {
+        return err_invalid_argument("Cannot seal empty data");
+    }
+    if (data_len > TPM_SEAL_MAX_BYTES) {
+        return err_invalid_argument("Sealed data too large (max 2048 bytes)");
+    }
+
+    var acc = syscall(SYS_ACCESS, output_dir, 0);
+    if (acc < 0) {
+        return err_invalid_argument("Output directory not found");
+    }
+
+    var pcr_sel = tpm_pcr_selection(bank, pcr_indices);
+    var dir_len = strlen(output_dir);
+
+    # Write data to temp file: <output_dir>/seal_input.bin
+    var input_file = alloc(dir_len + 16);
+    memcpy(input_file, output_dir, dir_len);
+    memcpy(input_file + dir_len, "/seal_input.bin", 15);
+    store8(input_file + dir_len + 15, 0);
+
+    var ifd = sys_open(input_file, O_WRONLY | O_CREAT | O_TRUNC, 384);
+    if (ifd < 0) {
+        return err_syscall_failed(0 - ifd, "failed to write seal input");
+    }
+    sys_write(ifd, data_ptr, data_len);
+    sys_close(ifd);
+
+    # Build output file paths
+    var ctx_file = alloc(dir_len + 12);
+    memcpy(ctx_file, output_dir, dir_len);
+    memcpy(ctx_file + dir_len, "/sealed.ctx", 11);
+    store8(ctx_file + dir_len + 11, 0);
+
+    var pub_file = alloc(dir_len + 12);
+    memcpy(pub_file, output_dir, dir_len);
+    memcpy(pub_file + dir_len, "/sealed.pub", 11);
+    store8(pub_file + dir_len + 11, 0);
+
+    var priv_file = alloc(dir_len + 13);
+    memcpy(priv_file, output_dir, dir_len);
+    memcpy(priv_file + dir_len, "/sealed.priv", 12);
+    store8(priv_file + dir_len + 12, 0);
+
+    # tpm2_create -C owner -i <input> -u <pub> -r <priv> -L <pcr_sel>
+    var cr_args = vec_new();
+    vec_push(cr_args, "/usr/bin/tpm2_create");
+    vec_push(cr_args, "-C");
+    vec_push(cr_args, "owner");
+    vec_push(cr_args, "-i");
+    vec_push(cr_args, input_file);
+    vec_push(cr_args, "-u");
+    vec_push(cr_args, pub_file);
+    vec_push(cr_args, "-r");
+    vec_push(cr_args, priv_file);
+    vec_push(cr_args, "-L");
+    vec_push(cr_args, pcr_sel);
+
+    var cr_res = tpm_run_checked(cr_args);
+    if (is_err_result(cr_res) == 1) {
+        sys_unlink(input_file);
+        return cr_res;
+    }
+
+    # tpm2_load -C owner -u <pub> -r <priv> -c <ctx>
+    var ld_args = vec_new();
+    vec_push(ld_args, "/usr/bin/tpm2_load");
+    vec_push(ld_args, "-C");
+    vec_push(ld_args, "owner");
+    vec_push(ld_args, "-u");
+    vec_push(ld_args, pub_file);
+    vec_push(ld_args, "-r");
+    vec_push(ld_args, priv_file);
+    vec_push(ld_args, "-c");
+    vec_push(ld_args, ctx_file);
+
+    var ld_res = tpm_run_checked(ld_args);
+    sys_unlink(input_file);
+
+    if (is_err_result(ld_res) == 1) { return ld_res; }
+
+    return Ok(tpm_sealed_new(ctx_file, pcr_sel));
+}
+
+# ================================================================
+# Unseal a secret — only succeeds if PCR values match policy
+# sealed: sealed_secret_ptr from tpm_seal
+# buf: output buffer for unsealed data
+# buflen: buffer size
+# Returns Ok(bytes_read) or Err.
+# ================================================================
+
+fn tpm_unseal(sealed, buf, buflen) {
+    var ctx = tpm_sealed_context(sealed);
+    var pcr_sel = tpm_sealed_pcr_sel(sealed);
+
+    var acc = syscall(SYS_ACCESS, ctx, 0);
+    if (acc < 0) {
+        return err_invalid_argument("Sealed context file not found");
+    }
+
+    # Build policy arg: "pcr:<selection>"
+    var psel_len = strlen(pcr_sel);
+    var parg = alloc(4 + psel_len + 1);
+    memcpy(parg, "pcr:", 4);
+    memcpy(parg + 4, pcr_sel, psel_len);
+    store8(parg + 4 + psel_len, 0);
+
+    var args = vec_new();
+    vec_push(args, "/usr/bin/tpm2_unseal");
+    vec_push(args, "-c");
+    vec_push(args, ctx);
+    vec_push(args, "-p");
+    vec_push(args, parg);
+
+    var cap_res = tpm_run_capture(args, buf, buflen);
+    return cap_res;
+}
+
+# ================================================================
+# Get hardware random bytes from the TPM
+# buf: output buffer
+# count: number of bytes
+# Returns Ok(bytes_written) or Err.
+# ================================================================
+
+fn tpm_get_random(buf, count) {
+    if (count == 0) {
+        return err_invalid_argument("Cannot request 0 random bytes");
+    }
+    if (count > TPM_RANDOM_MAX_BYTES) {
+        return err_invalid_argument("Cannot request more than 4096 bytes at once");
+    }
+
+    var cbuf[24];
+    var clen = fmt_int_buf(count, &cbuf);
+
+    var args = vec_new();
+    vec_push(args, "/usr/bin/tpm2_getrandom");
+    vec_push(args, "--hex");
+    vec_push(args, &cbuf);
+
+    var hexbuf[8200];
+    memset(&hexbuf, 0, 8200);
+    var cap_res = tpm_run_capture(args, &hexbuf, 8199);
+    if (is_err_result(cap_res) == 1) { return cap_res; }
+
+    var hexlen = payload(cap_res);
+    # Trim trailing whitespace
+    while (hexlen > 0 && (load8(&hexbuf + hexlen - 1) == 10 || load8(&hexbuf + hexlen - 1) == 32)) {
+        hexlen = hexlen - 1;
+    }
+
+    # Decode hex pairs into output buffer
+    var written = 0;
+    var hi = 0;
+    while (hi + 1 < hexlen && written < count) {
+        var h = load8(&hexbuf + hi);
+        var l = load8(&hexbuf + hi + 1);
+
+        # Convert hex chars to nibbles
+        var hv = 0;
+        if (h >= 48 && h <= 57) { hv = h - 48; }
+        elif (h >= 97 && h <= 102) { hv = h - 87; }
+        elif (h >= 65 && h <= 70) { hv = h - 55; }
+
+        var lv = 0;
+        if (l >= 48 && l <= 57) { lv = l - 48; }
+        elif (l >= 97 && l <= 102) { lv = l - 87; }
+        elif (l >= 65 && l <= 70) { lv = l - 55; }
+
+        store8(buf + written, (hv << 4) | lv);
+        written = written + 1;
+        hi = hi + 2;
+    }
+
+    return Ok(written);
+}
+
+# ================================================================
+# Verify measured boot against known-good baseline
+# expected: vec of tpm_pcr_value_ptrs
+# Returns Ok(1) if all match, Ok(0) if mismatch.
+# ================================================================
+
+fn tpm_verify_measured_boot(expected) {
+    var count = vec_len(expected);
+    if (count == 0) {
+        return err_invalid_argument("Baseline has no expected PCR values");
+    }
+
+    # Get bank from first entry
+    var first = vec_get(expected, 0);
+    var bank = tpm_pcr_value_bank(first);
+
+    # Collect indices
+    var indices = vec_new();
+    var ci = 0;
+    while (ci < count) {
+        var entry = vec_get(expected, ci);
+        vec_push(indices, tpm_pcr_value_index(entry));
+        ci = ci + 1;
+    }
+
+    # Read current PCR values
+    var read_res = tpm_read_pcr(bank, indices);
+    if (is_err_result(read_res) == 1) { return read_res; }
+    var current = payload(read_res);
+
+    # Compare each expected value against current
+    var ei = 0;
+    while (ei < count) {
+        var exp = vec_get(expected, ei);
+        var exp_idx = tpm_pcr_value_index(exp);
+        var exp_val = tpm_pcr_value_value(exp);
+
+        # Find matching current value
+        var cur_count = vec_len(current);
+        var found = 0;
+        var fi = 0;
+        while (fi < cur_count && found == 0) {
+            var cur = vec_get(current, fi);
+            if (tpm_pcr_value_index(cur) == exp_idx && tpm_pcr_value_bank(cur) == bank) {
+                var cur_val = tpm_pcr_value_value(cur);
+                if (streq(exp_val, cur_val) != 1) {
+                    return Ok(0);  # Mismatch
+                }
+                found = 1;
+            }
+            fi = fi + 1;
+        }
+
+        if (found == 0) {
+            return Ok(0);  # PCR not found
+        }
+
+        ei = ei + 1;
+    }
+
+    return Ok(1);
+}

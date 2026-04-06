@@ -1,0 +1,273 @@
+# bench_compare.cyr — benchmark agnosys Cyrius operations
+# Compares key operation timings for Rust-vs-Cyrius reporting
+#
+# Build: cyrb build tests/bench_compare.cyr build/bench_compare
+# Run:   ./build/bench_compare
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/hashmap.cyr"
+include "lib/process.cyr"
+include "lib/fs.cyr"
+include "lib/bench.cyr"
+
+include "src/error.cyr"
+include "src/syscall.cyr"
+include "src/security.cyr"
+
+# ================================================================
+# Benchmark helpers
+# ================================================================
+
+fn bench_loop(name, iterations) {
+    var b = bench_new(name);
+    store64(b + 32, iterations);
+    return b;
+}
+
+fn report(name, total_ns, iterations) {
+    var per_op = total_ns / iterations;
+    syscall(1, 1, name, strlen(name));
+    syscall(1, 1, ": ", 2);
+    print_num(per_op);
+    syscall(1, 1, " ns/op (", 8);
+    print_num(iterations);
+    syscall(1, 1, " iters, ", 8);
+    print_num(total_ns / 1000000);
+    syscall(1, 1, " ms total)\n", 11);
+    return 0;
+}
+
+# ================================================================
+# Benchmarks
+# ================================================================
+
+fn bench_getpid() {
+    var iters = 1000000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var p = agnosys_getpid();
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("getpid", elapsed, iters);
+    return 0;
+}
+
+fn bench_getuid() {
+    var iters = 1000000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var u = agnosys_getuid();
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("getuid", elapsed, iters);
+    return 0;
+}
+
+fn bench_gettid() {
+    var iters = 1000000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var t = agnosys_gettid();
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("gettid", elapsed, iters);
+    return 0;
+}
+
+fn bench_is_root() {
+    var iters = 1000000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var r = agnosys_is_root();
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("is_root", elapsed, iters);
+    return 0;
+}
+
+fn bench_err_create() {
+    var iters = 100000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var e = err_invalid_argument("test");
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("err_create", elapsed, iters);
+    return 0;
+}
+
+fn bench_err_from_errno() {
+    var iters = 100000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var e = err_from_errno(EPERM);
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("err_from_errno", elapsed, iters);
+    return 0;
+}
+
+fn bench_ok_create() {
+    var iters = 100000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var r = Ok(42);
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("ok_create", elapsed, iters);
+    return 0;
+}
+
+fn bench_wrap_syscall() {
+    var iters = 100000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var r = wrap_syscall(agnosys_getpid());
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("wrap_syscall(getpid)", elapsed, iters);
+    return 0;
+}
+
+fn bench_sysinfo() {
+    var iters = 50000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var r = query_sysinfo();
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("query_sysinfo", elapsed, iters);
+    return 0;
+}
+
+fn bench_hostname() {
+    var iters = 10000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var r = agnosys_hostname();
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("hostname", elapsed, iters);
+    return 0;
+}
+
+fn bench_syscall_name_lookup() {
+    var iters = 1000000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var n = syscall_name_to_nr("getpid");
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("syscall_name_to_nr", elapsed, iters);
+    return 0;
+}
+
+fn bench_seccomp_filter() {
+    var iters = 5000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var r = create_basic_seccomp_filter();
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("create_seccomp_filter", elapsed, iters);
+    return 0;
+}
+
+fn bench_streq() {
+    var iters = 1000000;
+    var start = now_ns();
+    var k = 0;
+    while (k < iters) {
+        var r = streq("hello_world_test", "hello_world_test");
+        k = k + 1;
+    }
+    var elapsed = now_ns() - start;
+    report("streq(16 chars)", elapsed, iters);
+    return 0;
+}
+
+# ================================================================
+# Main
+# ================================================================
+
+fn main() {
+    alloc_init();
+
+    println("═══════════════════════════════════════════════════");
+    println("  agnosys benchmark — Cyrius port");
+    println("═══════════════════════════════════════════════════");
+    println("");
+
+    bench_getpid();
+    bench_getuid();
+    bench_gettid();
+    bench_is_root();
+    bench_streq();
+    bench_syscall_name_lookup();
+
+    alloc_reset();
+    alloc_init();
+    bench_err_create();
+
+    alloc_reset();
+    alloc_init();
+    bench_err_from_errno();
+
+    alloc_reset();
+    alloc_init();
+    bench_ok_create();
+
+    alloc_reset();
+    alloc_init();
+    bench_wrap_syscall();
+
+    alloc_reset();
+    alloc_init();
+    bench_sysinfo();
+
+    alloc_reset();
+    alloc_init();
+    bench_hostname();
+
+    alloc_reset();
+    alloc_init();
+    bench_seccomp_filter();
+
+    println("");
+    println("done");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

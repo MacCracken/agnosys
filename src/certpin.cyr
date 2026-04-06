@@ -1,0 +1,305 @@
+# certpin.cyr — TLS certificate pinning (SPKI SHA-256)
+# Ported from rust-old/src/certpin.rs
+#
+# Pin computation uses `openssl` subprocess. Pin format is base64-encoded
+# SHA-256 of SPKI (Subject Public Key Info), compatible with HPKP (RFC 7469).
+#
+# Requires: src/error.cyr, lib/process.cyr, lib/syscalls.cyr
+
+# ================================================================
+# Pin verification result constants
+# ================================================================
+
+enum CertPinResult {
+    CERTPIN_VALID = 0;
+    CERTPIN_MISMATCH = 1;
+    CERTPIN_EXPIRED = 2;
+    CERTPIN_NO_PIN_CONFIGURED = 3;
+    CERTPIN_ERROR = 4;
+}
+
+# ================================================================
+# Pin set struct
+# ================================================================
+
+# PinnedCert: { host_ptr, pins_vec, pin_count, backup_vec, backup_count, expires }
+# Layout: host at +0, pins at +8, pin_count at +16,
+#         backups at +24, backup_count at +32, expires at +40
+# Total: 48 bytes. expires == 0 means no expiry.
+
+fn certpin_entry_new(host, expires) {
+    var e = alloc(48);
+    store64(e, host);
+    store64(e + 8, 0);   # pins array ptr
+    store64(e + 16, 0);  # pin count
+    store64(e + 24, 0);  # backup pins array ptr
+    store64(e + 32, 0);  # backup pin count
+    store64(e + 40, expires);
+    return e;
+}
+
+fn certpin_entry_host(e) { return load64(e); }
+fn certpin_entry_pins(e) { return load64(e + 8); }
+fn certpin_entry_pin_count(e) { return load64(e + 16); }
+fn certpin_entry_backups(e) { return load64(e + 24); }
+fn certpin_entry_backup_count(e) { return load64(e + 32); }
+fn certpin_entry_expires(e) { return load64(e + 40); }
+
+fn certpin_entry_set_pins(e, pins_ptr, count) {
+    store64(e + 8, pins_ptr);
+    store64(e + 16, count);
+    return 0;
+}
+
+fn certpin_entry_set_backups(e, backups_ptr, count) {
+    store64(e + 24, backups_ptr);
+    store64(e + 32, count);
+    return 0;
+}
+
+# CertPinSet: { entries_vec, entry_count, enforce }
+# Layout: entries at +0, count at +8, enforce at +16
+# Total: 24 bytes.
+
+fn certpin_set_new(enforce) {
+    var s = alloc(24);
+    store64(s, 0);       # entries array ptr
+    store64(s + 8, 0);   # entry count
+    store64(s + 16, enforce);
+    return s;
+}
+
+fn certpin_set_entries(s) { return load64(s); }
+fn certpin_set_count(s) { return load64(s + 8); }
+fn certpin_set_enforce(s) { return load64(s + 16); }
+
+fn certpin_set_set_entries(s, entries_ptr, count) {
+    store64(s, entries_ptr);
+    store64(s + 8, count);
+    return 0;
+}
+
+# ================================================================
+# Pin format validation
+# ================================================================
+
+# Validate a base64-encoded SHA-256 pin string.
+# A valid pin is 44 characters of base64 (32 bytes -> 44 chars with padding).
+# Returns 1 if valid, 0 if invalid.
+fn certpin_validate_pin_format(pin) {
+    var len = strlen(pin);
+    # SHA-256 base64: ceil(32/3)*4 = 44 chars
+    if (len != 44) { return 0; }
+
+    var i = 0;
+    while (i < len) {
+        var c = load8(pin + i);
+        # A-Z: 65-90, a-z: 97-122, 0-9: 48-57, +: 43, /: 47, =: 61
+        var valid = 0;
+        if (c >= 65) { if (c <= 90) { valid = 1; } }
+        if (c >= 97) { if (c <= 122) { valid = 1; } }
+        if (c >= 48) { if (c <= 57) { valid = 1; } }
+        if (c == 43) { valid = 1; }  # +
+        if (c == 47) { valid = 1; }  # /
+        if (c == 61) { valid = 1; }  # =
+        if (valid == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# ================================================================
+# Pin verification (pure function)
+# ================================================================
+
+# Constant-time string comparison to prevent timing side-channels.
+# Returns 1 if equal, 0 otherwise.
+fn certpin_ct_streq(a, b) {
+    var alen = strlen(a);
+    var blen = strlen(b);
+    if (alen != blen) { return 0; }
+    var acc = 0;
+    var i = 0;
+    while (i < alen) {
+        var ca = load8(a + i);
+        var cb = load8(b + i);
+        acc = acc | (ca ^ cb);
+        i = i + 1;
+    }
+    if (acc == 0) { return 1; }
+    return 0;
+}
+
+# Find the pin entry for a given host in the pin set.
+# Returns entry pointer or 0 if not found.
+fn certpin_find_entry(pin_set, host) {
+    var entries = certpin_set_entries(pin_set);
+    var count = certpin_set_count(pin_set);
+    var i = 0;
+    while (i < count) {
+        var entry = load64(entries + i * 8);
+        var entry_host = certpin_entry_host(entry);
+        if (streq(entry_host, host) == 1) {
+            return entry;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Verify a certificate pin against a pin set.
+# actual_pin: the base64-encoded SPKI SHA-256 hash from the presented cert.
+# current_time: unix timestamp (0 to skip expiry check).
+# Returns a CertPinResult constant.
+fn certpin_verify_pin(host, actual_pin, pin_set, current_time) {
+    var entry = certpin_find_entry(pin_set, host);
+    if (entry == 0) {
+        return CERTPIN_NO_PIN_CONFIGURED;
+    }
+
+    # Check expiry
+    var expires = certpin_entry_expires(entry);
+    if (expires != 0) {
+        if (current_time > expires) {
+            return CERTPIN_EXPIRED;
+        }
+    }
+
+    # Check primary pins (constant-time comparison)
+    var pins = certpin_entry_pins(entry);
+    var pin_count = certpin_entry_pin_count(entry);
+    var i = 0;
+    while (i < pin_count) {
+        var pin = load64(pins + i * 8);
+        if (certpin_ct_streq(pin, actual_pin) == 1) {
+            return CERTPIN_VALID;
+        }
+        i = i + 1;
+    }
+
+    # Check backup pins
+    var backups = certpin_entry_backups(entry);
+    var backup_count = certpin_entry_backup_count(entry);
+    i = 0;
+    while (i < backup_count) {
+        var pin = load64(backups + i * 8);
+        if (certpin_ct_streq(pin, actual_pin) == 1) {
+            return CERTPIN_VALID;
+        }
+        i = i + 1;
+    }
+
+    return CERTPIN_MISMATCH;
+}
+
+# ================================================================
+# Pin computation via openssl subprocess
+# ================================================================
+
+# Compute the SPKI SHA-256 pin for a PEM certificate file on disk.
+# cert_path: path to a PEM-encoded certificate file.
+# Returns Result: Ok(pin_string_ptr) or Err.
+#
+# Pipeline: openssl x509 -in <path> -pubkey -noout |
+#           openssl pkey -pubin -outform DER |
+#           openssl dgst -sha256 -binary |
+#           openssl enc -base64
+fn certpin_compute_spki_pin(cert_path) {
+    if (cert_path == 0) {
+        return err_invalid_argument("cert_path is null");
+    }
+    if (strlen(cert_path) == 0) {
+        return err_invalid_argument("cert_path is empty");
+    }
+
+    # Build the pipeline command as a single shell invocation
+    # We use sh -c to pipe the commands together
+    var cmd = "sh";
+    # Construct the pipeline string
+    # openssl x509 -in <path> -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl enc -base64 -A
+    # We'll build this as a static command with the path inserted
+
+    # For safety, use a fixed buffer for the shell command
+    var buf = alloc(1024);
+    var pos = 0;
+
+    var prefix = "openssl x509 -in '";
+    var prefixlen = strlen(prefix);
+    memcpy(buf + pos, prefix, prefixlen);
+    pos = pos + prefixlen;
+
+    var pathlen = strlen(cert_path);
+    memcpy(buf + pos, cert_path, pathlen);
+    pos = pos + pathlen;
+
+    var suffix = "' -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl enc -base64 -A";
+    var suffixlen = strlen(suffix);
+    memcpy(buf + pos, suffix, suffixlen);
+    pos = pos + suffixlen;
+
+    store8(buf + pos, 0);  # null terminate
+
+    # Build argv for sh -c
+    var argv = alloc(24);
+    store64(argv, cmd);
+    var dashc = "-c";
+    store64(argv + 8, dashc);
+    store64(argv + 16, buf);
+
+    var res = run_capture(cmd, argv);
+    if (is_err_result(res) == 1) { return res; }
+
+    var output = payload(res);
+    if (output == 0) {
+        return err_unknown("openssl pipeline returned empty output");
+    }
+    if (strlen(output) == 0) {
+        return err_unknown("openssl pipeline returned empty output");
+    }
+
+    # Strip trailing newline if present
+    var outlen = strlen(output);
+    if (load8(output + outlen - 1) == 10) {
+        store8(output + outlen - 1, 0);
+    }
+
+    return Ok(output);
+}
+
+# ================================================================
+# Fetch server certificate info via openssl s_client
+# ================================================================
+
+# CertInfo struct: { subject, issuer, serial, not_before, not_after, sha256_fp, spki_sha256 }
+# Layout: 7 string pointers, 56 bytes total.
+
+fn certinfo_new() {
+    var c = alloc(56);
+    memset(c, 0, 56);
+    return c;
+}
+
+fn certinfo_subject(c)   { return load64(c); }
+fn certinfo_issuer(c)    { return load64(c + 8); }
+fn certinfo_serial(c)    { return load64(c + 16); }
+fn certinfo_not_before(c) { return load64(c + 24); }
+fn certinfo_not_after(c) { return load64(c + 32); }
+fn certinfo_sha256_fp(c) { return load64(c + 40); }
+fn certinfo_spki_sha256(c) { return load64(c + 48); }
+
+fn certinfo_set_subject(c, v) { store64(c, v); return 0; }
+fn certinfo_set_issuer(c, v) { store64(c + 8, v); return 0; }
+fn certinfo_set_serial(c, v) { store64(c + 16, v); return 0; }
+fn certinfo_set_not_before(c, v) { store64(c + 24, v); return 0; }
+fn certinfo_set_not_after(c, v) { store64(c + 32, v); return 0; }
+fn certinfo_set_sha256_fp(c, v) { store64(c + 40, v); return 0; }
+fn certinfo_set_spki_sha256(c, v) { store64(c + 48, v); return 0; }
+
+# Check pin expiry against current time.
+# Returns 1 if expired, 0 if not expired or no expiry set.
+fn certpin_check_pin_expiry(entry, current_time) {
+    var expires = certpin_entry_expires(entry);
+    if (expires == 0) { return 0; }
+    if (current_time > expires) { return 1; }
+    return 0;
+}

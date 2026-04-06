@@ -1,0 +1,389 @@
+# udev.cyr — udev device enumeration and rule validation
+# Ported from rust-old/src/udev.rs
+#
+# Shells out to udevadm for device info. Parses output into structs.
+# Rule validation rejects dangerous action keys (RUN, PROGRAM, etc).
+#
+# Requires: src/error.cyr, lib/syscalls.cyr, lib/process.cyr
+
+# ================================================================
+# Device subsystem constants
+# ================================================================
+
+enum DeviceSubsystem {
+    SUBSYS_BLOCK = 1;
+    SUBSYS_NET = 2;
+    SUBSYS_INPUT = 3;
+    SUBSYS_USB = 4;
+    SUBSYS_PCI = 5;
+    SUBSYS_TTY = 6;
+    SUBSYS_GPU = 7;
+    SUBSYS_SOUND = 8;
+    SUBSYS_OTHER = 9;
+}
+
+# ================================================================
+# DeviceInfo struct
+# ================================================================
+
+# DeviceInfo: { syspath, devpath, subsystem, devtype, driver, devnode, prop_keys, prop_vals, prop_count }
+# Layout: 9 * 8 = 72 bytes
+# prop_keys and prop_vals are arrays of string pointers
+
+fn udev_devinfo_new() {
+    var d = alloc(72);
+    memset(d, 0, 72);
+    return d;
+}
+
+fn udev_devinfo_syspath(d)    { return load64(d); }
+fn udev_devinfo_devpath(d)    { return load64(d + 8); }
+fn udev_devinfo_subsystem(d)  { return load64(d + 16); }
+fn udev_devinfo_devtype(d)    { return load64(d + 24); }
+fn udev_devinfo_driver(d)     { return load64(d + 32); }
+fn udev_devinfo_devnode(d)    { return load64(d + 40); }
+fn udev_devinfo_prop_keys(d)  { return load64(d + 48); }
+fn udev_devinfo_prop_vals(d)  { return load64(d + 56); }
+fn udev_devinfo_prop_count(d) { return load64(d + 64); }
+
+fn udev_devinfo_set_syspath(d, v)    { store64(d, v); return 0; }
+fn udev_devinfo_set_devpath(d, v)    { store64(d + 8, v); return 0; }
+fn udev_devinfo_set_subsystem(d, v)  { store64(d + 16, v); return 0; }
+fn udev_devinfo_set_devtype(d, v)    { store64(d + 24, v); return 0; }
+fn udev_devinfo_set_driver(d, v)     { store64(d + 32, v); return 0; }
+fn udev_devinfo_set_devnode(d, v)    { store64(d + 40, v); return 0; }
+fn udev_devinfo_set_props(d, keys, vals, count) {
+    store64(d + 48, keys);
+    store64(d + 56, vals);
+    store64(d + 64, count);
+    return 0;
+}
+
+# ================================================================
+# Parse udevadm info output for a single device
+# ================================================================
+
+# Parse a block of udevadm info output (P:/N:/S:/E: prefixed lines).
+# text: null-terminated string of udevadm output.
+# Returns Result: Ok(devinfo_ptr) or Err.
+fn udev_parse_udevadm_info(text) {
+    if (text == 0) {
+        return err_invalid_argument("udevadm output is null");
+    }
+
+    var devpath = 0;
+    var devnode = 0;
+    # Allocate property arrays (max 128 properties)
+    var max_props = 128;
+    var prop_keys = alloc(max_props * 8);
+    var prop_vals = alloc(max_props * 8);
+    var prop_count = 0;
+
+    # Parse line by line
+    var pos = 0;
+    var textlen = strlen(text);
+
+    while (pos < textlen) {
+        # Find end of line
+        var linestart = pos;
+        while (pos < textlen) {
+            if (load8(text + pos) == 10) {
+                pos = pos + 1;
+                break;
+            }
+            pos = pos + 1;
+        }
+        var linelen = pos - linestart;
+        if (load8(text + pos - 1) == 10) { linelen = linelen - 1; }
+        if (linelen < 3) { continue; }
+
+        # Skip leading whitespace
+        var ls = linestart;
+        while (ls < linestart + linelen) {
+            var ch = load8(text + ls);
+            if (ch != 32) { if (ch != 9) { break; } }
+            ls = ls + 1;
+        }
+        var eff_len = linestart + linelen - ls;
+        if (eff_len < 3) { continue; }
+
+        var c0 = load8(text + ls);
+        var c1 = load8(text + ls + 1);
+        var c2 = load8(text + ls + 2);
+
+        # P: devpath
+        if (c0 == 80) { if (c1 == 58) { if (c2 == 32) {
+            var vlen = eff_len - 3;
+            var v = alloc(vlen + 1);
+            memcpy(v, text + ls + 3, vlen);
+            store8(v + vlen, 0);
+            devpath = v;
+            continue;
+        } } }
+
+        # N: devnode
+        if (c0 == 78) { if (c1 == 58) { if (c2 == 32) {
+            var vlen = eff_len - 3;
+            # Prepend /dev/
+            var v = alloc(vlen + 6);
+            memcpy(v, "/dev/", 5);
+            memcpy(v + 5, text + ls + 3, vlen);
+            store8(v + 5 + vlen, 0);
+            devnode = v;
+            continue;
+        } } }
+
+        # E: key=value property
+        if (c0 == 69) { if (c1 == 58) { if (c2 == 32) {
+            if (prop_count < max_props) {
+                var vstart = ls + 3;
+                var vlen = eff_len - 3;
+                # Find '=' separator
+                var eq_pos = 0;
+                var j = 0;
+                while (j < vlen) {
+                    if (load8(text + vstart + j) == 61) {  # '='
+                        eq_pos = j;
+                        break;
+                    }
+                    j = j + 1;
+                }
+                if (eq_pos > 0) {
+                    var klen = eq_pos;
+                    var key = alloc(klen + 1);
+                    memcpy(key, text + vstart, klen);
+                    store8(key + klen, 0);
+
+                    var val_offset = eq_pos + 1;
+                    var val_len = vlen - val_offset;
+                    var val = alloc(val_len + 1);
+                    memcpy(val, text + vstart + val_offset, val_len);
+                    store8(val + val_len, 0);
+
+                    store64(prop_keys + prop_count * 8, key);
+                    store64(prop_vals + prop_count * 8, val);
+                    prop_count = prop_count + 1;
+                }
+            }
+            continue;
+        } } }
+    }
+
+    if (devpath == 0) {
+        return err_invalid_argument("udevadm output missing P: (devpath) line");
+    }
+
+    # Build syspath = "/sys" + devpath
+    var dplen = strlen(devpath);
+    var syspath = alloc(dplen + 5);
+    memcpy(syspath, "/sys", 4);
+    memcpy(syspath + 4, devpath, dplen);
+    store8(syspath + 4 + dplen, 0);
+
+    # Extract subsystem and other properties from the property list
+    var subsystem = "";
+    var devtype = 0;
+    var driver = 0;
+    var i = 0;
+    while (i < prop_count) {
+        var key = load64(prop_keys + i * 8);
+        var val = load64(prop_vals + i * 8);
+        if (streq(key, "SUBSYSTEM") == 1) { subsystem = val; }
+        if (streq(key, "DEVTYPE") == 1) { devtype = val; }
+        if (streq(key, "DRIVER") == 1) { driver = val; }
+        if (devnode == 0) {
+            if (streq(key, "DEVNAME") == 1) { devnode = val; }
+        }
+        i = i + 1;
+    }
+
+    var info = udev_devinfo_new();
+    udev_devinfo_set_syspath(info, syspath);
+    udev_devinfo_set_devpath(info, devpath);
+    udev_devinfo_set_subsystem(info, subsystem);
+    udev_devinfo_set_devtype(info, devtype);
+    udev_devinfo_set_driver(info, driver);
+    udev_devinfo_set_devnode(info, devnode);
+    udev_devinfo_set_props(info, prop_keys, prop_vals, prop_count);
+
+    return Ok(info);
+}
+
+# ================================================================
+# List devices via udevadm info --export-db
+# ================================================================
+
+# List all devices, optionally filtered by subsystem string.
+# subsystem_filter: a null-terminated string, or 0 for no filter.
+# result_arr: pre-allocated array of device pointers.
+# max_devices: max capacity of result_arr.
+# Returns Result: Ok(count) or Err.
+fn udev_list_devices(subsystem_filter, result_arr, max_devices) {
+    var cmd = "udevadm";
+    var argv = alloc(24);
+    store64(argv, cmd);
+    var arg1 = "info";
+    store64(argv + 8, arg1);
+    var arg2 = "--export-db";
+    store64(argv + 16, arg2);
+
+    var res = run_capture(cmd, argv);
+    if (is_err_result(res) == 1) { return res; }
+
+    var output = payload(res);
+    if (output == 0) {
+        return Ok(0);
+    }
+
+    # Split output into blocks separated by blank lines, parse each
+    var count = 0;
+    var textlen = strlen(output);
+    var block_start = 0;
+    var pos = 0;
+
+    while (pos <= textlen) {
+        var at_end = 0;
+        if (pos == textlen) { at_end = 1; }
+        elif (load8(output + pos) == 10) {
+            # Check if next char is also newline (blank line)
+            if (pos + 1 < textlen) {
+                if (load8(output + pos + 1) == 10) { at_end = 1; }
+            }
+        }
+
+        if (at_end == 1) {
+            if (pos > block_start) {
+                # Extract block
+                var blen = pos - block_start;
+                var block = alloc(blen + 1);
+                memcpy(block, output + block_start, blen);
+                store8(block + blen, 0);
+
+                var dev_res = udev_parse_udevadm_info(block);
+                if (is_ok(dev_res) == 1) {
+                    var dev = payload(dev_res);
+                    var include = 1;
+                    if (subsystem_filter != 0) {
+                        if (strlen(subsystem_filter) > 0) {
+                            var dev_sub = udev_devinfo_subsystem(dev);
+                            if (streq(dev_sub, subsystem_filter) != 1) {
+                                include = 0;
+                            }
+                        }
+                    }
+                    if (include == 1) {
+                        if (count < max_devices) {
+                            store64(result_arr + count * 8, dev);
+                            count = count + 1;
+                        }
+                    }
+                }
+            }
+            # Skip blank lines
+            while (pos < textlen) {
+                if (load8(output + pos) == 10) { pos = pos + 1; }
+                else { break; }
+            }
+            block_start = pos;
+            continue;
+        }
+        pos = pos + 1;
+    }
+
+    return Ok(count);
+}
+
+# ================================================================
+# Get device info for a single device by sysfs path
+# ================================================================
+
+fn udev_get_device_info(syspath) {
+    if (syspath == 0) {
+        return err_invalid_argument("syspath is null");
+    }
+    if (strlen(syspath) == 0) {
+        return err_invalid_argument("syspath cannot be empty");
+    }
+
+    var cmd = "udevadm";
+    # Build --path=<syspath> argument
+    var prefix = "--path=";
+    var plen = strlen(prefix);
+    var slen = strlen(syspath);
+    var patharg = alloc(plen + slen + 1);
+    memcpy(patharg, prefix, plen);
+    memcpy(patharg + plen, syspath, slen);
+    store8(patharg + plen + slen, 0);
+
+    var argv = alloc(24);
+    store64(argv, cmd);
+    var arg1 = "info";
+    store64(argv + 8, arg1);
+    store64(argv + 16, patharg);
+
+    var res = run_capture(cmd, argv);
+    if (is_err_result(res) == 1) { return res; }
+
+    var output = payload(res);
+    return udev_parse_udevadm_info(output);
+}
+
+# ================================================================
+# Udev rule validation
+# ================================================================
+
+# Dangerous action keys that must be rejected
+# RUN, PROGRAM, IMPORT{program}, IMPORT{builtin}
+
+# Check if a string starts with a given prefix
+fn udev_starts_with(str, prefix) {
+    var slen = strlen(str);
+    var plen = strlen(prefix);
+    if (slen < plen) { return 0; }
+    var i = 0;
+    while (i < plen) {
+        if (load8(str + i) != load8(prefix + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Validate a udev rule.
+# action_keys: array of string pointers to action key names.
+# action_count: number of action keys.
+# Returns Result: Ok(0) if valid, Err if dangerous keys found.
+fn udev_validate_rule(action_keys, action_count) {
+    var i = 0;
+    while (i < action_count) {
+        var key = load64(action_keys + i * 8);
+        # Reject dangerous action keys
+        if (streq(key, "RUN") == 1) {
+            return err_invalid_argument("udev rule contains dangerous key: RUN");
+        }
+        if (streq(key, "PROGRAM") == 1) {
+            return err_invalid_argument("udev rule contains dangerous key: PROGRAM");
+        }
+        if (udev_starts_with(key, "IMPORT{program}") == 1) {
+            return err_invalid_argument("udev rule contains dangerous key: IMPORT{program}");
+        }
+        if (udev_starts_with(key, "IMPORT{builtin}") == 1) {
+            return err_invalid_argument("udev rule contains dangerous key: IMPORT{builtin}");
+        }
+        i = i + 1;
+    }
+    return Ok(0);
+}
+
+# Parse a subsystem string into a constant
+fn udev_parse_subsystem(s) {
+    if (streq(s, "block") == 1) { return SUBSYS_BLOCK; }
+    if (streq(s, "net") == 1) { return SUBSYS_NET; }
+    if (streq(s, "input") == 1) { return SUBSYS_INPUT; }
+    if (streq(s, "usb") == 1) { return SUBSYS_USB; }
+    if (streq(s, "pci") == 1) { return SUBSYS_PCI; }
+    if (streq(s, "tty") == 1) { return SUBSYS_TTY; }
+    if (streq(s, "drm") == 1) { return SUBSYS_GPU; }
+    if (streq(s, "sound") == 1) { return SUBSYS_SOUND; }
+    if (streq(s, "snd") == 1) { return SUBSYS_SOUND; }
+    return SUBSYS_OTHER;
+}

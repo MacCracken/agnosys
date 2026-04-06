@@ -1,0 +1,708 @@
+# pam.cyr — PAM inspection and user/session management
+# Ported from rust-old/src/pam.rs
+#
+# Provides PAM service enumeration, config parsing, passwd parsing,
+# who output parsing, and username validation.
+#
+# Requires: lib/string.cyr, lib/str.cyr, lib/vec.cyr, lib/fs.cyr,
+#           lib/process.cyr, lib/syscalls.cyr, src/error.cyr
+#
+# All structs are bags of i64 fields accessed via store64/load64.
+# Strings are Str (fat pointer: data + length) from lib/str.cyr.
+
+# ================================================================
+# PAM service constants
+# ================================================================
+
+enum PamServiceId {
+    PAM_SVC_LOGIN = 0;
+    PAM_SVC_SUDO = 1;
+    PAM_SVC_SSHD = 2;
+    PAM_SVC_AGNOS_AGENT = 3;
+    PAM_SVC_CUSTOM = 4;
+}
+
+# Get the config filename for a PAM service ID.
+# Returns a C string pointer.
+fn pam_service_name(svc_id) {
+    if (svc_id == PAM_SVC_LOGIN) { return "login"; }
+    if (svc_id == PAM_SVC_SUDO) { return "sudo"; }
+    if (svc_id == PAM_SVC_SSHD) { return "sshd"; }
+    if (svc_id == PAM_SVC_AGNOS_AGENT) { return "agnos-agent"; }
+    return "unknown";
+}
+
+# ================================================================
+# PAM rule type constants
+# ================================================================
+
+enum PamRuleTypeId {
+    PAM_TYPE_AUTH = 0;
+    PAM_TYPE_ACCOUNT = 1;
+    PAM_TYPE_SESSION = 2;
+    PAM_TYPE_PASSWORD = 3;
+}
+
+fn pam_rule_type_name(t) {
+    if (t == PAM_TYPE_AUTH) { return "auth"; }
+    if (t == PAM_TYPE_ACCOUNT) { return "account"; }
+    if (t == PAM_TYPE_SESSION) { return "session"; }
+    if (t == PAM_TYPE_PASSWORD) { return "password"; }
+    return "unknown";
+}
+
+# Parse rule type from Str. Returns type id or -1 on error.
+fn pam_parse_rule_type(s) {
+    if (str_eq(s, str_from("auth")) == 1) { return PAM_TYPE_AUTH; }
+    if (str_eq(s, str_from("account")) == 1) { return PAM_TYPE_ACCOUNT; }
+    if (str_eq(s, str_from("session")) == 1) { return PAM_TYPE_SESSION; }
+    if (str_eq(s, str_from("password")) == 1) { return PAM_TYPE_PASSWORD; }
+    return 0 - 1;
+}
+
+# ================================================================
+# PAM control flag constants
+# ================================================================
+
+enum PamControlId {
+    PAM_CTL_REQUIRED = 0;
+    PAM_CTL_REQUISITE = 1;
+    PAM_CTL_SUFFICIENT = 2;
+    PAM_CTL_OPTIONAL = 3;
+    PAM_CTL_INCLUDE = 4;
+}
+
+fn pam_control_name(c) {
+    if (c == PAM_CTL_REQUIRED) { return "required"; }
+    if (c == PAM_CTL_REQUISITE) { return "requisite"; }
+    if (c == PAM_CTL_SUFFICIENT) { return "sufficient"; }
+    if (c == PAM_CTL_OPTIONAL) { return "optional"; }
+    if (c == PAM_CTL_INCLUDE) { return "include"; }
+    return "unknown";
+}
+
+# Parse control flag from Str. Returns control id or -1 on error.
+fn pam_parse_control(s) {
+    if (str_eq(s, str_from("required")) == 1) { return PAM_CTL_REQUIRED; }
+    if (str_eq(s, str_from("requisite")) == 1) { return PAM_CTL_REQUISITE; }
+    if (str_eq(s, str_from("sufficient")) == 1) { return PAM_CTL_SUFFICIENT; }
+    if (str_eq(s, str_from("optional")) == 1) { return PAM_CTL_OPTIONAL; }
+    if (str_eq(s, str_from("include")) == 1) { return PAM_CTL_INCLUDE; }
+    return 0 - 1;
+}
+
+# ================================================================
+# PamRule struct: { rule_type, control, module (Str), args (vec of Str) }
+# Layout: +0 rule_type, +8 control, +16 module, +24 args. Total: 32 bytes.
+# ================================================================
+
+fn pam_rule_new(rule_type, control, module, args) {
+    var r = alloc(32);
+    store64(r, rule_type);
+    store64(r + 8, control);
+    store64(r + 16, module);
+    store64(r + 24, args);
+    return r;
+}
+
+fn pam_rule_type(r) { return load64(r); }
+fn pam_rule_control(r) { return load64(r + 8); }
+fn pam_rule_module(r) { return load64(r + 16); }
+fn pam_rule_args(r) { return load64(r + 24); }
+
+# ================================================================
+# UserInfo struct: { username (Str), uid, gid, home_dir (Str),
+#                    shell (Str), groups (vec of Str), is_system_user }
+# Layout: +0 username, +8 uid, +16 gid, +24 home_dir,
+#         +32 shell, +40 groups, +48 is_system_user. Total: 56 bytes.
+# ================================================================
+
+fn pam_user_alloc() {
+    var u = alloc(56);
+    memset(u, 0, 56);
+    return u;
+}
+
+fn pam_user_set(u, username, uid, gid, home_dir, shell) {
+    store64(u, username);
+    store64(u + 8, uid);
+    store64(u + 16, gid);
+    store64(u + 24, home_dir);
+    store64(u + 32, shell);
+    return u;
+}
+
+fn pam_user_set_groups(u, groups, is_system) {
+    store64(u + 40, groups);
+    store64(u + 48, is_system);
+    return u;
+}
+
+fn pam_user_username(u) { return load64(u); }
+fn pam_user_uid(u) { return load64(u + 8); }
+fn pam_user_gid(u) { return load64(u + 16); }
+fn pam_user_home(u) { return load64(u + 24); }
+fn pam_user_shell(u) { return load64(u + 32); }
+fn pam_user_groups(u) { return load64(u + 40); }
+fn pam_user_is_system(u) { return load64(u + 48); }
+
+# ================================================================
+# SessionInfo struct: { session_id (Str), user (Str), login_time (Str),
+#                       tty (Str or 0), remote_host (Str or 0), pid }
+# Layout: +0 session_id, +8 user, +16 login_time, +24 tty,
+#         +32 remote_host, +40 pid. Total: 48 bytes.
+# ================================================================
+
+fn pam_session_new(session_id, user, login_time, tty, remote_host, pid) {
+    var s = alloc(48);
+    store64(s, session_id);
+    store64(s + 8, user);
+    store64(s + 16, login_time);
+    store64(s + 24, tty);
+    store64(s + 32, remote_host);
+    store64(s + 40, pid);
+    return s;
+}
+
+fn pam_session_id(s) { return load64(s); }
+fn pam_session_user(s) { return load64(s + 8); }
+fn pam_session_login_time(s) { return load64(s + 16); }
+fn pam_session_tty(s) { return load64(s + 24); }
+fn pam_session_remote_host(s) { return load64(s + 32); }
+fn pam_session_pid(s) { return load64(s + 40); }
+
+# ================================================================
+# Username validation
+# ================================================================
+
+# Validate a UNIX username.
+# Rules: max 32 chars, must start with lowercase letter or underscore,
+# may contain lowercase letters, digits, hyphens, underscores.
+# Returns Result: Ok(0) on valid, Err on invalid.
+fn pam_validate_username(name) {
+    var nlen = strlen(name);
+    if (nlen == 0) {
+        return err_invalid_argument("username cannot be empty");
+    }
+    if (nlen > 32) {
+        return err_invalid_argument("username too long (max 32 chars)");
+    }
+
+    # First character must be lowercase letter or underscore
+    var first = load8(name);
+    var first_ok = 0;
+    if (first >= 97) { if (first <= 122) { first_ok = 1; } }  # a-z
+    if (first == 95) { first_ok = 1; }  # _
+    if (first_ok == 0) {
+        return err_invalid_argument("username must start with lowercase letter or underscore");
+    }
+
+    # Remaining characters: a-z, 0-9, -, _
+    var i = 0;
+    while (i < nlen) {
+        var ch = load8(name + i);
+        var ch_ok = 0;
+        if (ch >= 97) { if (ch <= 122) { ch_ok = 1; } }  # a-z
+        if (ch >= 48) { if (ch <= 57) { ch_ok = 1; } }    # 0-9
+        if (ch == 45) { ch_ok = 1; }   # -
+        if (ch == 95) { ch_ok = 1; }   # _
+        if (ch_ok == 0) {
+            return err_invalid_argument("username contains invalid character");
+        }
+        i = i + 1;
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Parse a single /etc/passwd line into a UserInfo struct
+# ================================================================
+
+# Format: username:x:uid:gid:gecos:home:shell
+# Returns Result: Ok(user_info_ptr) or Err.
+fn pam_parse_passwd_line(line) {
+    # Split by ':'
+    var fields = str_split(line, 58);  # 58 = ':'
+    if (vec_len(fields) < 7) {
+        return err_invalid_argument("malformed passwd line (expected 7 fields)");
+    }
+
+    var username = vec_get(fields, 0);
+    # fields[1] = password placeholder (x)
+    var uid_str = vec_get(fields, 2);
+    var gid_str = vec_get(fields, 3);
+    # fields[4] = gecos
+    var home_dir = vec_get(fields, 5);
+    var shell = vec_get(fields, 6);
+
+    var uid = str_to_int(uid_str);
+    var gid = str_to_int(gid_str);
+
+    # Validate uid/gid are numeric (str_to_int returns 0 for invalid,
+    # but "0" is valid for root — check that string actually looks numeric)
+    if (str_len(uid_str) == 0) {
+        return err_invalid_argument("invalid UID in passwd line");
+    }
+    if (str_len(gid_str) == 0) {
+        return err_invalid_argument("invalid GID in passwd line");
+    }
+
+    # Heuristic: UIDs below 1000 are system users
+    var is_system = 0;
+    if (uid < 1000) { is_system = 1; }
+
+    var groups = vec_new();
+    var user = pam_user_alloc();
+    pam_user_set(user, username, uid, gid, home_dir, shell);
+    pam_user_set_groups(user, groups, is_system);
+    return Ok(user);
+}
+
+# ================================================================
+# Parse who output into a vec of SessionInfo
+# ================================================================
+
+# Typical who output lines:
+#   alice    pts/0        2026-03-06 10:30 (192.168.1.5)
+#   bob      tty1         2026-03-06 09:15
+# Returns vec of session info pointers.
+fn pam_parse_who_output(output) {
+    var sessions = vec_new();
+    var lines = str_split(output, 10);  # 10 = '\n'
+    var idx = 0;
+
+    while (idx < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, idx));
+        if (str_len(line) == 0) {
+            idx = idx + 1;
+            continue;
+        }
+
+        # Split by whitespace (space = 32)
+        # who output is whitespace-delimited; we need at least 3 fields
+        var parts = pam_split_whitespace(line);
+        if (vec_len(parts) < 3) {
+            idx = idx + 1;
+            continue;
+        }
+
+        var user = vec_get(parts, 0);
+        var tty = vec_get(parts, 1);
+
+        # Date + time may be in columns 2+3
+        var login_time = vec_get(parts, 2);
+        if (vec_len(parts) >= 4) {
+            var sb = str_builder_new();
+            str_builder_add(sb, vec_get(parts, 2));
+            str_builder_add_cstr(sb, " ");
+            str_builder_add(sb, vec_get(parts, 3));
+            login_time = str_builder_build(sb);
+        }
+
+        # Remote host is in parens at the end, e.g. "(192.168.1.5)"
+        var remote_host = 0;
+        var last_part = vec_get(parts, vec_len(parts) - 1);
+        if (str_len(last_part) > 2) {
+            var ld = str_data(last_part);
+            var ll = str_len(last_part);
+            if (load8(ld) == 40) {  # '('
+                if (load8(ld + ll - 1) == 41) {  # ')'
+                    remote_host = str_sub(last_part, 1, ll - 2);
+                }
+            }
+        }
+
+        # session_id = "who-<idx>"
+        var sid_sb = str_builder_new();
+        str_builder_add_cstr(sid_sb, "who-");
+        str_builder_add_int(sid_sb, idx);
+        var session_id = str_builder_build(sid_sb);
+
+        var session = pam_session_new(session_id, user, login_time, tty, remote_host, 0);
+        vec_push(sessions, session);
+
+        idx = idx + 1;
+    }
+
+    return sessions;
+}
+
+# Split a Str by whitespace (space/tab), skipping consecutive whitespace.
+# Returns vec of Str.
+fn pam_split_whitespace(s) {
+    var parts = vec_new();
+    var slen = str_len(s);
+    var sd = str_data(s);
+    var start = 0;
+    var in_word = 0;
+    var i = 0;
+
+    while (i < slen) {
+        var ch = load8(sd + i);
+        var is_ws = 0;
+        if (ch == 32) { is_ws = 1; }   # space
+        if (ch == 9) { is_ws = 1; }    # tab
+
+        if (is_ws == 1) {
+            if (in_word == 1) {
+                vec_push(parts, str_new(sd + start, i - start));
+                in_word = 0;
+            }
+        }
+        else {
+            if (in_word == 0) {
+                start = i;
+                in_word = 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    # Trailing word
+    if (in_word == 1) {
+        vec_push(parts, str_new(sd + start, slen - start));
+    }
+
+    return parts;
+}
+
+# ================================================================
+# Parse PAM config file content
+# ================================================================
+
+# Parse PAM config text into a vec of PamRule pointers.
+# Each non-blank, non-comment line: type control module [args...]
+# Returns Result: Ok(vec_of_rules) or Err.
+fn pam_parse_config(content) {
+    var rules = vec_new();
+    var lines = str_split(content, 10);  # 10 = '\n'
+    var idx = 0;
+
+    while (idx < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, idx));
+        if (str_len(line) == 0) {
+            idx = idx + 1;
+            continue;
+        }
+
+        # Skip comments (lines starting with #)
+        if (load8(str_data(line)) == 35) {  # '#'
+            idx = idx + 1;
+            continue;
+        }
+
+        var parts = pam_split_whitespace(line);
+        if (vec_len(parts) < 3) {
+            return err_invalid_argument("malformed PAM rule (need type, control, module)");
+        }
+
+        var rule_type = pam_parse_rule_type(vec_get(parts, 0));
+        if (rule_type < 0) {
+            return err_invalid_argument("unknown PAM rule type");
+        }
+
+        var control = pam_parse_control(vec_get(parts, 1));
+        if (control < 0) {
+            return err_invalid_argument("unknown PAM control flag");
+        }
+
+        var module = vec_get(parts, 2);
+
+        # Collect remaining parts as args
+        var args = vec_new();
+        var ai = 3;
+        while (ai < vec_len(parts)) {
+            vec_push(args, vec_get(parts, ai));
+            ai = ai + 1;
+        }
+
+        var rule = pam_rule_new(rule_type, control, module, args);
+        vec_push(rules, rule);
+
+        idx = idx + 1;
+    }
+
+    return Ok(rules);
+}
+
+# ================================================================
+# List PAM services (read /etc/pam.d/ directory)
+# ================================================================
+
+# Returns Result: Ok(vec_of_Str) — filenames in /etc/pam.d/.
+fn pam_list_services() {
+    var pam_dir = str_from("/etc/pam.d");
+    var entries = dir_list(pam_dir);
+    return Ok(entries);
+}
+
+# ================================================================
+# Read and parse a PAM service config file
+# ================================================================
+
+# Read /etc/pam.d/<service_name> and parse it.
+# service_name: C string (e.g. "sshd", "sudo").
+# Returns Result: Ok(vec_of_rules) or Err.
+fn pam_read_service_config(service_name) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/etc/pam.d/");
+    str_builder_add_cstr(sb, service_name);
+    var path = str_builder_build(sb);
+
+    # Read the file content
+    var fd = sys_open(str_data(path), O_RDONLY, 0);
+    if (fd < 0) {
+        return err_syscall_failed(0 - fd, "failed to open PAM config file");
+    }
+
+    var buf = alloc(8192);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(fd, buf + total, 8192 - total);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= 8192) { rgo = 0; }
+        }
+    }
+    sys_close(fd);
+
+    # Null-terminate and wrap as Str
+    store8(buf + total, 0);
+    var content = str_new(buf, total);
+
+    return pam_parse_config(content);
+}
+
+# ================================================================
+# List users from /etc/passwd
+# ================================================================
+
+# Read /etc/passwd and return vec of UserInfo pointers.
+# Returns Result: Ok(vec) or Err.
+fn pam_list_users() {
+    var fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (fd < 0) {
+        return err_syscall_failed(0 - fd, "failed to open /etc/passwd");
+    }
+
+    var buf = alloc(65536);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(fd, buf + total, 65536 - total);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= 65536) { rgo = 0; }
+        }
+    }
+    sys_close(fd);
+
+    store8(buf + total, 0);
+    var content = str_new(buf, total);
+    var lines = str_split(content, 10);  # '\n'
+    var users = vec_new();
+
+    var idx = 0;
+    while (idx < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, idx));
+        if (str_len(line) == 0) {
+            idx = idx + 1;
+            continue;
+        }
+        # Skip comments
+        if (load8(str_data(line)) == 35) {
+            idx = idx + 1;
+            continue;
+        }
+        var res = pam_parse_passwd_line(line);
+        if (is_ok(res) == 1) {
+            vec_push(users, payload(res));
+        }
+        # Skip malformed lines silently
+        idx = idx + 1;
+    }
+
+    return Ok(users);
+}
+
+# ================================================================
+# List active sessions via who command
+# ================================================================
+
+# Run `who` and parse output into vec of SessionInfo.
+# Returns Result: Ok(vec) or Err.
+fn pam_list_sessions() {
+    var buf = alloc(16384);
+    var res = run_capture("/usr/bin/who", 0, 0, buf, 16384);
+    if (is_err_result(res) == 1) {
+        return err_unknown("failed to run who command");
+    }
+    var nbytes = payload(res);
+    store8(buf + nbytes, 0);
+    var output = str_new(buf, nbytes);
+    var sessions = pam_parse_who_output(output);
+    return Ok(sessions);
+}
+
+# ================================================================
+# Render PAM rule to string
+# ================================================================
+
+# Render a single PamRule to a config-file line (Str).
+fn pam_render_rule(rule) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pam_rule_type_name(pam_rule_type(rule)));
+    str_builder_add_cstr(sb, "\t");
+    str_builder_add_cstr(sb, pam_control_name(pam_rule_control(rule)));
+    str_builder_add_cstr(sb, "\t");
+    str_builder_add(sb, pam_rule_module(rule));
+
+    var args = pam_rule_args(rule);
+    var ai = 0;
+    while (ai < vec_len(args)) {
+        str_builder_add_cstr(sb, "\t");
+        str_builder_add(sb, vec_get(args, ai));
+        ai = ai + 1;
+    }
+
+    return str_builder_build(sb);
+}
+
+# Render a full PAM config from a vec of PamRule pointers.
+# Returns Str.
+fn pam_render_config(rules) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "# Generated by AGNOS PAM manager\n");
+
+    var idx = 0;
+    while (idx < vec_len(rules)) {
+        str_builder_add(sb, pam_render_rule(vec_get(rules, idx)));
+        str_builder_add_cstr(sb, "\n");
+        idx = idx + 1;
+    }
+
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# Validate a PAM rule
+# ================================================================
+
+# Check module path is reasonable and args have no shell metacharacters.
+# Returns Result: Ok(0) on valid, Err on invalid.
+fn pam_validate_rule(rule) {
+    var module = pam_rule_module(rule);
+    if (str_len(module) == 0) {
+        return err_invalid_argument("PAM module path cannot be empty");
+    }
+
+    # Module must not contain ".."
+    if (str_contains(module, "..") == 1) {
+        return err_invalid_argument("PAM module path must not contain '..'");
+    }
+
+    # Reject shell metacharacters in module name
+    # Dangerous chars: | ; & $ ` > < ! { }
+    var md = str_data(module);
+    var mlen = str_len(module);
+    var mi = 0;
+    while (mi < mlen) {
+        var ch = load8(md + mi);
+        if (ch == 124) { return err_invalid_argument("PAM module contains dangerous character '|'"); }
+        if (ch == 59) { return err_invalid_argument("PAM module contains dangerous character ';'"); }
+        if (ch == 38) { return err_invalid_argument("PAM module contains dangerous character '&'"); }
+        if (ch == 36) { return err_invalid_argument("PAM module contains dangerous character '$'"); }
+        if (ch == 96) { return err_invalid_argument("PAM module contains dangerous character '`'"); }
+        if (ch == 62) { return err_invalid_argument("PAM module contains dangerous character '>'"); }
+        if (ch == 60) { return err_invalid_argument("PAM module contains dangerous character '<'"); }
+        if (ch == 33) { return err_invalid_argument("PAM module contains dangerous character '!'"); }
+        if (ch == 123) { return err_invalid_argument("PAM module contains dangerous character '{'"); }
+        if (ch == 125) { return err_invalid_argument("PAM module contains dangerous character '}'"); }
+        mi = mi + 1;
+    }
+
+    # Same check for each argument
+    var args = pam_rule_args(rule);
+    var ai = 0;
+    while (ai < vec_len(args)) {
+        var arg = vec_get(args, ai);
+        var ad = str_data(arg);
+        var alen = str_len(arg);
+        var aj = 0;
+        while (aj < alen) {
+            var ach = load8(ad + aj);
+            if (ach == 124) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 59) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 38) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 36) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 96) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 62) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 60) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 33) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 123) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 125) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            aj = aj + 1;
+        }
+        ai = ai + 1;
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Get user info by username
+# ================================================================
+
+# Lookup a user in /etc/passwd by name.
+# Returns Result: Ok(user_info_ptr) or Err.
+fn pam_get_user_info(username) {
+    var res = pam_validate_username(username);
+    if (is_err_result(res) == 1) { return res; }
+
+    var fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (fd < 0) {
+        return err_syscall_failed(0 - fd, "failed to open /etc/passwd");
+    }
+
+    var buf = alloc(65536);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(fd, buf + total, 65536 - total);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= 65536) { rgo = 0; }
+        }
+    }
+    sys_close(fd);
+
+    store8(buf + total, 0);
+    var content = str_new(buf, total);
+    var lines = str_split(content, 10);
+    var name_str = str_from(username);
+
+    var idx = 0;
+    while (idx < vec_len(lines)) {
+        var line = vec_get(lines, idx);
+        if (str_len(line) == 0) {
+            idx = idx + 1;
+            continue;
+        }
+
+        # Check if line starts with username:
+        var fields = str_split(line, 58);  # ':'
+        if (vec_len(fields) >= 1) {
+            if (str_eq(vec_get(fields, 0), name_str) == 1) {
+                return pam_parse_passwd_line(line);
+            }
+        }
+        idx = idx + 1;
+    }
+
+    return err_invalid_argument("user not found");
+}

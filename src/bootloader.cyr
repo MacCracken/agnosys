@@ -1,0 +1,426 @@
+# bootloader.cyr — bootloader detection and boot entry management
+# Ported from rust-old/src/bootloader.rs
+#
+# Supports systemd-boot and GRUB2. Auto-detects which bootloader is
+# installed by probing well-known paths. Parses boot entries and
+# validates kernel command-line parameters.
+#
+# Requires: src/error.cyr, lib/syscalls.cyr, lib/process.cyr
+
+# ================================================================
+# Bootloader type constants
+# ================================================================
+
+enum BootloaderType {
+    BOOT_SYSTEMD_BOOT = 1;
+    BOOT_GRUB2 = 2;
+    BOOT_UNKNOWN = 3;
+}
+
+# ================================================================
+# Well-known paths
+# ================================================================
+
+# Checked as static strings in the detect function:
+# /boot/efi/EFI/systemd  -> systemd-boot
+# /boot/grub/grub.cfg    -> GRUB2
+# /boot/loader/loader.conf  -> systemd-boot loader config
+# /boot/loader/entries/  -> systemd-boot entries dir
+
+# ================================================================
+# BootEntry struct
+# ================================================================
+
+# Layout: { id, title, linux_path, initrd_path, options, is_default, version }
+# 7 fields * 8 = 56 bytes
+
+fn boot_entry_new() {
+    var e = alloc(56);
+    memset(e, 0, 56);
+    return e;
+}
+
+fn boot_entry_id(e) { return load64(e); }
+fn boot_entry_title(e) { return load64(e + 8); }
+fn boot_entry_linux(e) { return load64(e + 16); }
+fn boot_entry_initrd(e) { return load64(e + 24); }
+fn boot_entry_options(e) { return load64(e + 32); }
+fn boot_entry_is_default(e) { return load64(e + 40); }
+fn boot_entry_version(e) { return load64(e + 48); }
+
+fn boot_entry_set_id(e, v) { store64(e, v); return 0; }
+fn boot_entry_set_title(e, v) { store64(e + 8, v); return 0; }
+fn boot_entry_set_linux(e, v) { store64(e + 16, v); return 0; }
+fn boot_entry_set_initrd(e, v) { store64(e + 24, v); return 0; }
+fn boot_entry_set_options(e, v) { store64(e + 32, v); return 0; }
+fn boot_entry_set_is_default(e, v) { store64(e + 40, v); return 0; }
+fn boot_entry_set_version(e, v) { store64(e + 48, v); return 0; }
+
+# ================================================================
+# BootConfig struct
+# ================================================================
+
+# Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr, entry_count }
+# 5 fields * 8 = 40 bytes
+
+fn boot_config_new() {
+    var c = alloc(40);
+    memset(c, 0, 40);
+    return c;
+}
+
+fn boot_config_type(c) { return load64(c); }
+fn boot_config_timeout(c) { return load64(c + 8); }
+fn boot_config_default_id(c) { return load64(c + 16); }
+fn boot_config_entries(c) { return load64(c + 24); }
+fn boot_config_entry_count(c) { return load64(c + 32); }
+
+fn boot_config_set_type(c, v) { store64(c, v); return 0; }
+fn boot_config_set_timeout(c, v) { store64(c + 8, v); return 0; }
+fn boot_config_set_default_id(c, v) { store64(c + 16, v); return 0; }
+fn boot_config_set_entries(c, arr, count) {
+    store64(c + 24, arr);
+    store64(c + 32, count);
+    return 0;
+}
+
+# ================================================================
+# Bootloader detection
+# ================================================================
+
+# Detect the installed bootloader by probing well-known paths.
+# Returns Result: Ok(BootloaderType constant).
+fn bootloader_detect() {
+    # Check for systemd-boot: /boot/efi/EFI/systemd
+    var sd_path = "/boot/efi/EFI/systemd";
+    var fd = sys_open(sd_path, 0x10000, 0);  # O_RDONLY | O_DIRECTORY
+    if (fd >= 0) {
+        sys_close(fd);
+        return Ok(BOOT_SYSTEMD_BOOT);
+    }
+
+    # Check for GRUB2: /boot/grub/grub.cfg
+    var grub_path = "/boot/grub/grub.cfg";
+    fd = sys_open(grub_path, 0, 0);
+    if (fd >= 0) {
+        sys_close(fd);
+        return Ok(BOOT_GRUB2);
+    }
+
+    return Ok(BOOT_UNKNOWN);
+}
+
+# ================================================================
+# Parse loader.conf (systemd-boot)
+# ================================================================
+
+# Helper: check if line starts with prefix (skipping leading whitespace)
+fn bootloader_line_starts_with(line, linelen, prefix) {
+    var plen = strlen(prefix);
+    # Skip leading whitespace
+    var start = 0;
+    while (start < linelen) {
+        var ch = load8(line + start);
+        if (ch != 32) { if (ch != 9) { break; } }
+        start = start + 1;
+    }
+    if (linelen - start < plen) { return 0; }
+    var i = 0;
+    while (i < plen) {
+        if (load8(line + start + i) != load8(prefix + i)) { return 0; }
+        i = i + 1;
+    }
+    return start + plen;
+}
+
+# Extract the value after a key in a line (trim whitespace).
+# Returns heap string pointer.
+fn bootloader_extract_value(line, linelen, key_end_pos) {
+    var start = key_end_pos;
+    # Skip whitespace
+    while (start < linelen) {
+        var ch = load8(line + start);
+        if (ch != 32) { if (ch != 9) { break; } }
+        start = start + 1;
+    }
+    var vlen = linelen - start;
+    if (vlen <= 0) { return 0; }
+    var val = alloc(vlen + 1);
+    memcpy(val, line + start, vlen);
+    store8(val + vlen, 0);
+    return val;
+}
+
+# Parse loader.conf file contents.
+# Returns { timeout, default_id } as a 16-byte struct.
+fn bootloader_parse_loader_conf(text) {
+    var result = alloc(16);
+    store64(result, 5);  # default timeout: 5 seconds
+    store64(result + 8, 0);  # default_id: null
+
+    if (text == 0) { return result; }
+
+    var textlen = strlen(text);
+    var pos = 0;
+
+    while (pos < textlen) {
+        var linestart = pos;
+        while (pos < textlen) {
+            if (load8(text + pos) == 10) { break; }
+            pos = pos + 1;
+        }
+        var linelen = pos - linestart;
+        if (pos < textlen) { pos = pos + 1; }  # skip newline
+
+        if (linelen == 0) { continue; }
+
+        # Skip comment lines
+        var first = linestart;
+        while (first < linestart + linelen) {
+            var ch = load8(text + first);
+            if (ch != 32) { if (ch != 9) { break; } }
+            first = first + 1;
+        }
+        if (first < linestart + linelen) {
+            if (load8(text + first) == 35) { continue; }  # '#'
+        }
+
+        var kp = bootloader_line_starts_with(text + linestart, linelen, "timeout");
+        if (kp > 0) {
+            var val = bootloader_extract_value(text + linestart, linelen, kp);
+            if (val != 0) {
+                # Parse integer
+                var t = 0;
+                var vi = 0;
+                var vl = strlen(val);
+                while (vi < vl) {
+                    var ch = load8(val + vi);
+                    if (ch >= 48) { if (ch <= 57) {
+                        t = t * 10 + (ch - 48);
+                    } }
+                    vi = vi + 1;
+                }
+                store64(result, t);
+            }
+            continue;
+        }
+
+        kp = bootloader_line_starts_with(text + linestart, linelen, "default");
+        if (kp > 0) {
+            var val = bootloader_extract_value(text + linestart, linelen, kp);
+            if (val != 0) {
+                # Strip .conf suffix if present
+                var vl = strlen(val);
+                if (vl > 5) {
+                    if (load8(val + vl - 5) == 46) {  # '.'
+                        if (load8(val + vl - 4) == 99) {  # 'c'
+                            if (load8(val + vl - 3) == 111) {  # 'o'
+                                if (load8(val + vl - 2) == 110) {  # 'n'
+                                    if (load8(val + vl - 1) == 102) {  # 'f'
+                                        store8(val + vl - 5, 0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                store64(result + 8, val);
+            }
+            continue;
+        }
+    }
+
+    return result;
+}
+
+# ================================================================
+# List boot entries (high-level)
+# ================================================================
+
+# List boot entries using bootctl or by reading loader entries.
+# result_arr: pre-allocated array of BootEntry pointers.
+# max_entries: capacity.
+# Returns Result: Ok(count) or Err.
+fn bootloader_list_boot_entries(result_arr, max_entries) {
+    # Use bootctl list (systemd-boot) as it provides structured output
+    var cmd = "bootctl";
+    var argv = alloc(16);
+    store64(argv, cmd);
+    store64(argv + 8, "list");
+
+    var res = run_capture(cmd, argv);
+    if (is_ok(res) == 1) {
+        var output = payload(res);
+        if (output != 0) {
+            return bootloader_parse_bootctl_list(output, result_arr, max_entries);
+        }
+    }
+
+    # Fallback: try reading /boot/loader/entries/ directly
+    # For now, return 0 entries on failure
+    return Ok(0);
+}
+
+# Parse bootctl list output (simplified).
+# Each entry block starts with a line containing "title:" or "id:".
+fn bootloader_parse_bootctl_list(text, result_arr, max_entries) {
+    var count = 0;
+    var current = 0;
+    var textlen = strlen(text);
+    var pos = 0;
+
+    while (pos < textlen) {
+        var linestart = pos;
+        while (pos < textlen) {
+            if (load8(text + pos) == 10) { break; }
+            pos = pos + 1;
+        }
+        var linelen = pos - linestart;
+        if (pos < textlen) { pos = pos + 1; }
+        if (linelen == 0) { continue; }
+
+        var kp = bootloader_line_starts_with(text + linestart, linelen, "id:");
+        if (kp > 0) {
+            if (current != 0) {
+                if (count < max_entries) {
+                    store64(result_arr + count * 8, current);
+                    count = count + 1;
+                }
+            }
+            current = boot_entry_new();
+            var val = bootloader_extract_value(text + linestart, linelen, kp);
+            boot_entry_set_id(current, val);
+            continue;
+        }
+
+        if (current != 0) {
+            kp = bootloader_line_starts_with(text + linestart, linelen, "title:");
+            if (kp > 0) {
+                var val = bootloader_extract_value(text + linestart, linelen, kp);
+                boot_entry_set_title(current, val);
+                continue;
+            }
+
+            kp = bootloader_line_starts_with(text + linestart, linelen, "linux:");
+            if (kp > 0) {
+                var val = bootloader_extract_value(text + linestart, linelen, kp);
+                boot_entry_set_linux(current, val);
+                continue;
+            }
+
+            kp = bootloader_line_starts_with(text + linestart, linelen, "initrd:");
+            if (kp > 0) {
+                var val = bootloader_extract_value(text + linestart, linelen, kp);
+                boot_entry_set_initrd(current, val);
+                continue;
+            }
+
+            kp = bootloader_line_starts_with(text + linestart, linelen, "options:");
+            if (kp > 0) {
+                var val = bootloader_extract_value(text + linestart, linelen, kp);
+                boot_entry_set_options(current, val);
+                continue;
+            }
+        }
+    }
+
+    # Don't forget last entry
+    if (current != 0) {
+        if (count < max_entries) {
+            store64(result_arr + count * 8, current);
+            count = count + 1;
+        }
+    }
+
+    return Ok(count);
+}
+
+# ================================================================
+# Kernel command line validation
+# ================================================================
+
+# Dangerous command-line tokens that must be rejected.
+# We check for these as substrings (case-insensitive matching via lowercase).
+
+fn bootloader_is_dangerous_token(text, textlen, token) {
+    var tlen = strlen(token);
+    if (tlen > textlen) { return 0; }
+    var i = 0;
+    var limit = textlen - tlen;
+    while (i <= limit) {
+        var match = 1;
+        var j = 0;
+        while (j < tlen) {
+            var c1 = load8(text + i + j);
+            var c2 = load8(token + j);
+            # Lowercase c1 if uppercase
+            if (c1 >= 65) { if (c1 <= 90) { c1 = c1 + 32; } }
+            if (c1 != c2) { match = 0; break; }
+            j = j + 1;
+        }
+        if (match == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Validate kernel command-line parameters.
+# Returns Result: Ok(0) if valid, Err if dangerous or malformed.
+fn bootloader_validate_kernel_cmdline(options) {
+    if (options == 0) {
+        return err_invalid_argument("kernel cmdline is null");
+    }
+
+    var optlen = strlen(options);
+    if (optlen > 4096) {
+        return err_invalid_argument("kernel command line exceeds 4096-character limit");
+    }
+
+    # Check for dangerous tokens
+    if (bootloader_is_dangerous_token(options, optlen, "init=/bin/sh") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: init=/bin/sh");
+    }
+    if (bootloader_is_dangerous_token(options, optlen, "init=/bin/bash") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: init=/bin/bash");
+    }
+    if (bootloader_is_dangerous_token(options, optlen, "init=/bin/dash") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: init=/bin/dash");
+    }
+    if (bootloader_is_dangerous_token(options, optlen, "single") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: single");
+    }
+    if (bootloader_is_dangerous_token(options, optlen, "emergency") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: emergency");
+    }
+    if (bootloader_is_dangerous_token(options, optlen, "rd.break") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: rd.break");
+    }
+    if (bootloader_is_dangerous_token(options, optlen, "debug_shell") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: debug_shell");
+    }
+    if (bootloader_is_dangerous_token(options, optlen, "systemd.debug-shell") == 1) {
+        return err_invalid_argument("kernel cmdline contains dangerous parameter: systemd.debug-shell");
+    }
+
+    # Check for non-printable / non-ASCII characters
+    var i = 0;
+    while (i < optlen) {
+        var c = load8(options + i);
+        if (c < 32) {
+            return err_invalid_argument("kernel cmdline contains non-printable characters");
+        }
+        if (c > 126) {
+            return err_invalid_argument("kernel cmdline contains non-ASCII characters");
+        }
+        i = i + 1;
+    }
+
+    return Ok(0);
+}
+
+# Bootloader type to string.
+fn bootloader_type_str(bt) {
+    if (bt == BOOT_SYSTEMD_BOOT) { return "systemd-boot"; }
+    if (bt == BOOT_GRUB2) { return "GRUB2"; }
+    return "unknown";
+}

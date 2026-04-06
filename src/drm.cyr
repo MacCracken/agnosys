@@ -1,0 +1,310 @@
+# drm.cyr — DRM (Direct Rendering Manager) device interface
+# Ported from rust-old/src/drm.rs
+#
+# Enumerate GPU devices under /dev/dri/, query driver version
+# and capabilities via ioctl. Uses raw syscalls for fd management
+# and ioctl invocation.
+#
+# Requires: src/error.cyr, lib/syscalls.cyr
+
+# ================================================================
+# DRM ioctl constants
+# ================================================================
+
+# DRM ioctl type byte is 'd' (0x64)
+# _IOWR('d', nr, size) = (3 << 30) | (size << 16) | (0x64 << 8) | nr
+
+# DRM_IOCTL_VERSION: _IOWR('d', 0x00, 72)  [DrmVersion is 72 bytes]
+# = (3 << 30) | (72 << 16) | (0x64 << 8) | 0x00
+# = 0xC0486400
+
+# DRM_IOCTL_GET_CAP: _IOWR('d', 0x0C, 16)  [DrmGetCap is 16 bytes]
+# = (3 << 30) | (16 << 16) | (0x64 << 8) | 0x0C
+# = 0xC010640C
+
+enum DrmIoctl {
+    DRM_IOCTL_VERSION = 0xC0486400;
+    DRM_IOCTL_GET_CAP = 0xC010640C;
+}
+
+# DRM capability IDs
+enum DrmCap {
+    DRM_CAP_DUMB_BUFFER = 1;
+    DRM_CAP_VBLANK_HIGH_CRTC = 2;
+    DRM_CAP_DUMB_PREFERRED_DEPTH = 3;
+    DRM_CAP_DUMB_PREFER_SHADOW = 4;
+    DRM_CAP_PRIME = 5;
+    DRM_CAP_TIMESTAMP_MONOTONIC = 6;
+    DRM_CAP_ASYNC_PAGE_FLIP = 7;
+    DRM_CAP_CURSOR_WIDTH = 8;
+    DRM_CAP_CURSOR_HEIGHT = 9;
+    DRM_CAP_ADDFB2_MODIFIERS = 16;
+    DRM_CAP_PAGE_FLIP_TARGET = 17;
+    DRM_CAP_CRTC_IN_VBLANK_EVENT = 18;
+    DRM_CAP_SYNCOBJ = 19;
+    DRM_CAP_SYNCOBJ_TIMELINE = 20;
+}
+
+# Connector type constants
+enum DrmConnectorType {
+    DRM_CONN_UNKNOWN = 0;
+    DRM_CONN_VGA = 1;
+    DRM_CONN_DVII = 2;
+    DRM_CONN_DVID = 3;
+    DRM_CONN_DVIA = 4;
+    DRM_CONN_COMPOSITE = 5;
+    DRM_CONN_SVIDEO = 6;
+    DRM_CONN_LVDS = 7;
+    DRM_CONN_COMPONENT = 8;
+    DRM_CONN_DISPLAYPORT = 10;
+    DRM_CONN_HDMIA = 11;
+    DRM_CONN_HDMIB = 12;
+    DRM_CONN_TV = 13;
+    DRM_CONN_EDP = 14;
+    DRM_CONN_VIRTUAL = 15;
+    DRM_CONN_DSI = 16;
+    DRM_CONN_USB = 20;
+}
+
+# Connection status
+enum DrmConnStatus {
+    DRM_CONNECTED = 1;
+    DRM_DISCONNECTED = 2;
+    DRM_CONN_STATUS_UNKNOWN = 3;
+}
+
+# ================================================================
+# Syscall numbers
+# ================================================================
+
+enum DrmSysNr {
+    SYS_IOCTL = 16;
+    SYS_GETDENTS64 = 217;
+}
+
+# ================================================================
+# DRM Version struct (on-wire for ioctl)
+# ================================================================
+
+# DrmVersion layout (72 bytes):
+#   +0:  version_major    (i32, 4 bytes)
+#   +4:  version_minor    (i32, 4 bytes)
+#   +8:  version_patchlevel (i32, 4 bytes)
+#   +12: padding          (4 bytes)
+#   +16: name_len         (u64)
+#   +24: name_ptr         (u64)
+#   +32: date_len         (u64)
+#   +40: date_ptr         (u64)
+#   +48: desc_len         (u64)
+#   +56: desc_ptr         (u64)
+# Total: 64 bytes (with packing)
+
+enum DrmVerOff {
+    DRM_VER_SIZE = 72;
+    DRM_VER_MAJOR = 0;
+    DRM_VER_MINOR = 4;
+    DRM_VER_PATCH = 8;
+    DRM_VER_NAME_LEN = 16;
+    DRM_VER_NAME_PTR = 24;
+    DRM_VER_DATE_LEN = 32;
+    DRM_VER_DATE_PTR = 40;
+    DRM_VER_DESC_LEN = 48;
+    DRM_VER_DESC_PTR = 56;
+}
+
+# DrmGetCap layout (16 bytes):
+#   +0: capability (u64)
+#   +8: value      (u64)
+
+# ================================================================
+# Version result struct
+# ================================================================
+
+# DrmVersionInfo: { major, minor, patchlevel, name_ptr, date_ptr, desc_ptr }
+# Layout: 48 bytes
+
+fn drm_verinfo_new(major, minor, patch, name, date, desc) {
+    var v = alloc(48);
+    store64(v, major);
+    store64(v + 8, minor);
+    store64(v + 16, patch);
+    store64(v + 24, name);
+    store64(v + 32, date);
+    store64(v + 40, desc);
+    return v;
+}
+
+fn drm_verinfo_major(v) { return load64(v); }
+fn drm_verinfo_minor(v) { return load64(v + 8); }
+fn drm_verinfo_patch(v) { return load64(v + 16); }
+fn drm_verinfo_name(v) { return load64(v + 24); }
+fn drm_verinfo_date(v) { return load64(v + 32); }
+fn drm_verinfo_desc(v) { return load64(v + 40); }
+
+# ================================================================
+# Device enumeration
+# ================================================================
+
+# List DRM card device paths under /dev/dri/.
+# result_arr: pre-allocated array of string pointers.
+# max_cards: capacity of result_arr.
+# Returns Result: Ok(count) or Err.
+fn drm_list_devices(result_arr, max_cards) {
+    # Open /dev/dri/ directory
+    var dri_path = "/dev/dri";
+    # O_RDONLY | O_DIRECTORY = 0x10000
+    var fd = sys_open(dri_path, 0x10000, 0);
+    if (fd < 0) {
+        return err_not_supported("DRM (/dev/dri not found)");
+    }
+
+    # Read directory entries
+    var buf = alloc(4096);
+    var count = 0;
+
+    var nread = syscall(SYS_GETDENTS64, fd, buf, 4096);
+    while (nread > 0) {
+        var pos = 0;
+        while (pos < nread) {
+            # dirent64: d_ino(8), d_off(8), d_reclen(2), d_type(1), d_name(...)
+            var reclen = load16(buf + pos + 16);
+            var name_ptr = buf + pos + 19;
+
+            # Check if name starts with "card"
+            if (load8(name_ptr) == 99) {       # 'c'
+                if (load8(name_ptr + 1) == 97) {   # 'a'
+                    if (load8(name_ptr + 2) == 114) {  # 'r'
+                        if (load8(name_ptr + 3) == 100) {  # 'd'
+                            if (count < max_cards) {
+                                # Build full path: /dev/dri/cardN
+                                var nlen = strlen(name_ptr);
+                                var path = alloc(10 + nlen);
+                                memcpy(path, "/dev/dri/", 9);
+                                memcpy(path + 9, name_ptr, nlen);
+                                store8(path + 9 + nlen, 0);
+                                store64(result_arr + count * 8, path);
+                                count = count + 1;
+                            }
+                        }
+                    }
+                }
+            }
+            pos = pos + reclen;
+        }
+        nread = syscall(SYS_GETDENTS64, fd, buf, 4096);
+    }
+
+    sys_close(fd);
+    return Ok(count);
+}
+
+# ================================================================
+# Open a DRM device
+# ================================================================
+
+# Open a DRM device by path. Returns Result: Ok(fd) or Err.
+fn drm_open(path) {
+    if (path == 0) {
+        return err_invalid_argument("drm device path is null");
+    }
+    # O_RDWR | O_CLOEXEC = 0x80002
+    var fd = sys_open(path, 0x80002, 0);
+    if (fd < 0) {
+        return err_io(0 - fd, "failed to open DRM device");
+    }
+    return Ok(fd);
+}
+
+# Close a DRM device fd.
+fn drm_close(fd) {
+    sys_close(fd);
+    return 0;
+}
+
+# ================================================================
+# Query driver version
+# ================================================================
+
+# Get the DRM driver version for an open device fd.
+# Returns Result: Ok(drm_verinfo_ptr) or Err.
+fn drm_get_driver_version(fd) {
+    # First call: get string lengths
+    var ver = alloc(DRM_VER_SIZE);
+    memset(ver, 0, DRM_VER_SIZE);
+
+    var ret = syscall(SYS_IOCTL, fd, DRM_IOCTL_VERSION, ver);
+    if (ret < 0) {
+        return err_syscall_failed(0 - ret, "DRM_IOCTL_VERSION (lengths) failed");
+    }
+
+    # Read reported lengths (cap at 4096)
+    var name_len = load64(ver + DRM_VER_NAME_LEN);
+    var date_len = load64(ver + DRM_VER_DATE_LEN);
+    var desc_len = load64(ver + DRM_VER_DESC_LEN);
+    if (name_len > 4096) { name_len = 4096; }
+    if (date_len > 4096) { date_len = 4096; }
+    if (desc_len > 4096) { desc_len = 4096; }
+
+    # Allocate buffers
+    var name_buf = alloc(name_len + 1);
+    var date_buf = alloc(date_len + 1);
+    var desc_buf = alloc(desc_len + 1);
+    memset(name_buf, 0, name_len + 1);
+    memset(date_buf, 0, date_len + 1);
+    memset(desc_buf, 0, desc_len + 1);
+
+    # Second call: fill buffers
+    store64(ver + DRM_VER_NAME_LEN, name_len);
+    store64(ver + DRM_VER_NAME_PTR, name_buf);
+    store64(ver + DRM_VER_DATE_LEN, date_len);
+    store64(ver + DRM_VER_DATE_PTR, date_buf);
+    store64(ver + DRM_VER_DESC_LEN, desc_len);
+    store64(ver + DRM_VER_DESC_PTR, desc_buf);
+
+    ret = syscall(SYS_IOCTL, fd, DRM_IOCTL_VERSION, ver);
+    if (ret < 0) {
+        return err_syscall_failed(0 - ret, "DRM_IOCTL_VERSION (fill) failed");
+    }
+
+    var major = load32(ver + DRM_VER_MAJOR);
+    var minor = load32(ver + DRM_VER_MINOR);
+    var patch = load32(ver + DRM_VER_PATCH);
+
+    var info = drm_verinfo_new(major, minor, patch, name_buf, date_buf, desc_buf);
+    return Ok(info);
+}
+
+# ================================================================
+# Query capability
+# ================================================================
+
+# Query a DRM capability value for an open device fd.
+# cap: one of the DRM_CAP_* constants.
+# Returns Result: Ok(value) or Err.
+fn drm_get_capability(fd, cap) {
+    # DrmGetCap struct: { capability: u64, value: u64 } = 16 bytes
+    var getcap = alloc(16);
+    store64(getcap, cap);
+    store64(getcap + 8, 0);
+
+    var ret = syscall(SYS_IOCTL, fd, DRM_IOCTL_GET_CAP, getcap);
+    if (ret < 0) {
+        var errno = 0 - ret;
+        # EINVAL means capability not supported, return 0
+        if (errno == EINVAL) { return Ok(0); }
+        return err_syscall_failed(errno, "DRM_IOCTL_GET_CAP failed");
+    }
+
+    var value = load64(getcap + 8);
+    return Ok(value);
+}
+
+# Check if device supports dumb buffers.
+# Returns Result: Ok(1) or Ok(0).
+fn drm_supports_dumb_buffer(fd) {
+    var res = drm_get_capability(fd, DRM_CAP_DUMB_BUFFER);
+    if (is_err_result(res) == 1) { return res; }
+    var val = payload(res);
+    if (val != 0) { return Ok(1); }
+    return Ok(0);
+}

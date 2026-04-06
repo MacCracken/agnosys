@@ -1,0 +1,199 @@
+# logging.cyr — simple structured logging to stderr
+# New module (no Rust source)
+#
+# Thin wrapper providing log level control via the AGNOSYS_LOG env var
+# and formatted output to stderr (fd 2).
+#
+# Requires: src/error.cyr, lib/syscalls.cyr
+
+# ================================================================
+# Log level constants
+# ================================================================
+
+enum LogLevel {
+    LOG_TRACE = 0;
+    LOG_DEBUG = 1;
+    LOG_INFO = 2;
+    LOG_WARN = 3;
+    LOG_ERROR = 4;
+    LOG_OFF = 5;
+}
+
+# ================================================================
+# Global log level (module-level state)
+# ================================================================
+
+# The current log level. Default: LOG_INFO.
+# Initialized from AGNOSYS_LOG env var on first use.
+# We store this in a small heap-allocated cell so it persists.
+# 0 = not initialized, positive = level + 1 (to distinguish from 0/TRACE)
+
+var _log_level_cell = 0;
+
+fn log_init_from_env() {
+    if (_log_level_cell != 0) { return 0; }
+    _log_level_cell = alloc(8);
+    store64(_log_level_cell, LOG_INFO + 1);  # default: INFO
+
+    # Try reading AGNOSYS_LOG env var
+    # We'll check /proc/self/environ for the variable
+    var fd = sys_open("/proc/self/environ", 0, 0);
+    if (fd < 0) { return 0; }
+
+    var buf = alloc(4096);
+    var nread = sys_read(fd, buf, 4096);
+    sys_close(fd);
+
+    if (nread <= 0) { return 0; }
+
+    # environ is null-delimited key=value pairs
+    var pos = 0;
+    var target = "AGNOSYS_LOG=";
+    var tlen = strlen(target);
+
+    while (pos < nread) {
+        # Check if this entry starts with AGNOSYS_LOG=
+        var found = 1;
+        var i = 0;
+        while (i < tlen) {
+            if (pos + i >= nread) { found = 0; break; }
+            if (load8(buf + pos + i) != load8(target + i)) { found = 0; break; }
+            i = i + 1;
+        }
+
+        if (found == 1) {
+            # Found it. Extract value (until null byte).
+            var vstart = pos + tlen;
+            var vend = vstart;
+            while (vend < nread) {
+                if (load8(buf + vend) == 0) { break; }
+                vend = vend + 1;
+            }
+            var vlen = vend - vstart;
+            if (vlen > 0) {
+                var val = buf + vstart;
+                # Parse level string
+                if (vlen == 5) {
+                    if (load8(val) == 116) {  # 't'
+                        store64(_log_level_cell, LOG_TRACE + 1);
+                    }
+                }
+                if (vlen == 5) {
+                    if (load8(val) == 100) {  # 'd'
+                        store64(_log_level_cell, LOG_DEBUG + 1);
+                    }
+                }
+                if (vlen == 4) {
+                    if (load8(val) == 105) {  # 'i'
+                        store64(_log_level_cell, LOG_INFO + 1);
+                    }
+                    if (load8(val) == 119) {  # 'w'
+                        store64(_log_level_cell, LOG_WARN + 1);
+                    }
+                }
+                if (vlen == 5) {
+                    if (load8(val) == 101) {  # 'e'
+                        store64(_log_level_cell, LOG_ERROR + 1);
+                    }
+                }
+                if (vlen == 3) {
+                    if (load8(val) == 111) {  # 'o'
+                        store64(_log_level_cell, LOG_OFF + 1);
+                    }
+                }
+            }
+            return 0;
+        }
+
+        # Skip to next null byte
+        while (pos < nread) {
+            if (load8(buf + pos) == 0) { pos = pos + 1; break; }
+            pos = pos + 1;
+        }
+    }
+
+    return 0;
+}
+
+fn log_get_level() {
+    log_init_from_env();
+    return load64(_log_level_cell) - 1;
+}
+
+fn log_set_level(level) {
+    if (_log_level_cell == 0) {
+        _log_level_cell = alloc(8);
+    }
+    store64(_log_level_cell, level + 1);
+    return 0;
+}
+
+# ================================================================
+# Log level prefix strings
+# ================================================================
+
+fn log_level_prefix(level) {
+    if (level == LOG_TRACE) { return "[TRACE] "; }
+    if (level == LOG_DEBUG) { return "[DEBUG] "; }
+    if (level == LOG_INFO)  { return "[INFO]  "; }
+    if (level == LOG_WARN)  { return "[WARN]  "; }
+    if (level == LOG_ERROR) { return "[ERROR] "; }
+    return "[?????] ";
+}
+
+# ================================================================
+# Core logging function
+# ================================================================
+
+# Log a message at the given level to stderr (fd 2).
+# Does nothing if the current level is above the message level.
+fn log_msg(level, message) {
+    var current = log_get_level();
+    if (level < current) { return 0; }
+
+    var prefix = log_level_prefix(level);
+    var plen = strlen(prefix);
+    var mlen = strlen(message);
+
+    # Write prefix
+    syscall(1, 2, prefix, plen);
+    # Write message
+    syscall(1, 2, message, mlen);
+    # Write newline
+    syscall(1, 2, "\n", 1);
+
+    return 0;
+}
+
+# ================================================================
+# Convenience functions
+# ================================================================
+
+fn log_trace(message) { return log_msg(LOG_TRACE, message); }
+fn log_debug(message) { return log_msg(LOG_DEBUG, message); }
+fn log_info(message)  { return log_msg(LOG_INFO, message); }
+fn log_warn(message)  { return log_msg(LOG_WARN, message); }
+fn log_error(message) { return log_msg(LOG_ERROR, message); }
+
+# Log a message with a key=value context pair.
+# Outputs: [LEVEL] message key=value
+fn log_msg_kv(level, message, key, value) {
+    var current = log_get_level();
+    if (level < current) { return 0; }
+
+    var prefix = log_level_prefix(level);
+    var plen = strlen(prefix);
+    var mlen = strlen(message);
+    var klen = strlen(key);
+    var vlen = strlen(value);
+
+    syscall(1, 2, prefix, plen);
+    syscall(1, 2, message, mlen);
+    syscall(1, 2, " ", 1);
+    syscall(1, 2, key, klen);
+    syscall(1, 2, "=", 1);
+    syscall(1, 2, value, vlen);
+    syscall(1, 2, "\n", 1);
+
+    return 0;
+}

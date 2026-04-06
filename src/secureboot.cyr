@@ -1,0 +1,215 @@
+# secureboot.cyr — UEFI Secure Boot state detection and EFI variable reading
+# Ported from rust-old/src/secureboot.rs
+#
+# Reads EFI variables from /sys/firmware/efi/efivars/ to detect
+# secure boot state. Falls back to mokutil subprocess.
+#
+# Requires: src/error.cyr, lib/syscalls.cyr, lib/process.cyr
+
+# ================================================================
+# Secure Boot state constants
+# ================================================================
+
+enum SecureBootState {
+    SB_ENABLED = 1;
+    SB_DISABLED = 2;
+    SB_SETUP_MODE = 3;
+    SB_NOT_SUPPORTED = 4;
+}
+
+# ================================================================
+# Well-known EFI variable paths
+# ================================================================
+
+# The SecureBoot variable GUID
+# Full path: /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
+
+# ================================================================
+# EFI variable reading
+# ================================================================
+
+# Read a raw EFI variable from sysfs.
+# path: full path to the EFI variable file.
+# Returns Result: Ok(data_ptr) where data_ptr points to { value_byte, size }.
+# EFI variables have a 4-byte attributes header followed by the payload.
+#
+# Layout of returned struct: { attrs (4 bytes at +0), payload_byte at +4, total_size at +8 }
+fn secureboot_read_efi_variable(path) {
+    if (path == 0) {
+        return err_invalid_argument("efi variable path is null");
+    }
+    if (strlen(path) == 0) {
+        return err_invalid_argument("efi variable path is empty");
+    }
+
+    # Open the file
+    var fd = sys_open(path, 0, 0);  # O_RDONLY = 0
+    if (fd < 0) {
+        return err_io(0 - fd, "failed to open efi variable");
+    }
+
+    # Read up to 256 bytes (EFI variables are typically small)
+    var buf = alloc(256);
+    memset(buf, 0, 256);
+    var nread = sys_read(fd, buf, 256);
+    sys_close(fd);
+
+    if (nread < 0) {
+        return err_io(0 - nread, "failed to read efi variable");
+    }
+
+    if (nread < 5) {
+        return err_invalid_argument("efi variable too short (need 4-byte header + payload)");
+    }
+
+    # Return the buffer with read count in a result struct
+    var result = alloc(16);
+    store64(result, buf);      # pointer to data
+    store64(result + 8, nread); # bytes read
+    return Ok(result);
+}
+
+# Get the payload byte at index (after the 4-byte attributes header).
+fn secureboot_efi_var_payload_byte(data, index) {
+    var buf = load64(data);
+    return load8(buf + 4 + index);
+}
+
+# Get total bytes read.
+fn secureboot_efi_var_size(data) {
+    return load64(data + 8);
+}
+
+# ================================================================
+# Secure Boot state detection
+# ================================================================
+
+# Detect the current Secure Boot state.
+# Returns Result: Ok(SecureBootState) or Err.
+fn secureboot_detect_state() {
+    # Check if EFI is available
+    var efi_dir = "/sys/firmware/efi";
+    var fd = sys_open(efi_dir, 0, 0);
+    if (fd < 0) {
+        return Ok(SB_NOT_SUPPORTED);
+    }
+    sys_close(fd);
+
+    # Try reading SecureBoot EFI variable
+    var sb_path = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+    var res = secureboot_read_efi_variable(sb_path);
+    if (is_ok(res) == 1) {
+        var data = payload(res);
+        var size = secureboot_efi_var_size(data);
+        if (size >= 5) {
+            var value = secureboot_efi_var_payload_byte(data, 0);
+            if (value == 1) {
+                # Check SetupMode
+                var setup_path = "/sys/firmware/efi/efivars/SetupMode-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+                var setup_res = secureboot_read_efi_variable(setup_path);
+                if (is_ok(setup_res) == 1) {
+                    var setup_data = payload(setup_res);
+                    var setup_size = secureboot_efi_var_size(setup_data);
+                    if (setup_size >= 5) {
+                        var setup_val = secureboot_efi_var_payload_byte(setup_data, 0);
+                        if (setup_val == 1) {
+                            return Ok(SB_SETUP_MODE);
+                        }
+                    }
+                }
+                return Ok(SB_ENABLED);
+            }
+            else {
+                return Ok(SB_DISABLED);
+            }
+        }
+    }
+
+    # Fallback: try mokutil --sb-state
+    var cmd = "mokutil";
+    var argv = alloc(16);
+    store64(argv, cmd);
+    var arg1 = "--sb-state";
+    store64(argv + 8, arg1);
+
+    var mok_res = run_capture(cmd, argv);
+    if (is_ok(mok_res) == 1) {
+        var output = payload(mok_res);
+        if (output != 0) {
+            # Simple substring search for known patterns
+            # "SecureBoot enabled" / "SecureBoot disabled" / "setup mode"
+            var outlen = strlen(output);
+            var i = 0;
+            while (i < outlen) {
+                # Check for 'e' 'n' 'a' 'b' 'l' 'e' 'd' (enabled)
+                if (load8(output + i) == 101) {  # 'e'
+                    if (i + 6 < outlen) {
+                        if (load8(output + i + 1) == 110) {  # 'n'
+                            if (load8(output + i + 2) == 97) {  # 'a'
+                                if (load8(output + i + 3) == 98) {  # 'b'
+                                    if (load8(output + i + 4) == 108) {  # 'l'
+                                        if (load8(output + i + 5) == 101) {  # 'e'
+                                            if (load8(output + i + 6) == 100) {  # 'd'
+                                                return Ok(SB_ENABLED);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                # Check for 'd' 'i' 's' 'a' 'b' (disabled)
+                if (load8(output + i) == 100) {  # 'd'
+                    if (i + 7 < outlen) {
+                        if (load8(output + i + 1) == 105) {  # 'i'
+                            if (load8(output + i + 2) == 115) {  # 's'
+                                if (load8(output + i + 3) == 97) {  # 'a'
+                                    if (load8(output + i + 4) == 98) {  # 'b'
+                                        return Ok(SB_DISABLED);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                # Check for 's' 'e' 't' 'u' 'p' (setup)
+                if (load8(output + i) == 115) {  # 's'
+                    if (i + 4 < outlen) {
+                        if (load8(output + i + 1) == 101) {  # 'e'
+                            if (load8(output + i + 2) == 116) {  # 't'
+                                if (load8(output + i + 3) == 117) {  # 'u'
+                                    if (load8(output + i + 4) == 112) {  # 'p'
+                                        return Ok(SB_SETUP_MODE);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+            return Ok(SB_DISABLED);
+        }
+    }
+
+    # mokutil not available, cannot determine
+    return Ok(SB_NOT_SUPPORTED);
+}
+
+# ================================================================
+# Helper: check if Secure Boot is enforcing
+# ================================================================
+
+fn secureboot_is_enforcing(state) {
+    if (state == SB_ENABLED) { return 1; }
+    return 0;
+}
+
+# State to string (returns pointer to static string)
+fn secureboot_state_str(state) {
+    if (state == SB_ENABLED) { return "enabled"; }
+    if (state == SB_DISABLED) { return "disabled"; }
+    if (state == SB_SETUP_MODE) { return "setup_mode"; }
+    return "not_supported";
+}

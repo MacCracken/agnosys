@@ -1,0 +1,235 @@
+# fuse.cyr — FUSE filesystem mount management
+# New module (no Rust source)
+#
+# Parses /proc/mounts for FUSE mounts, provides mount/unmount
+# via fusermount subprocess.
+#
+# Requires: src/error.cyr, lib/syscalls.cyr, lib/process.cyr
+
+# ================================================================
+# FuseMount struct
+# ================================================================
+
+# Layout: { device, mountpoint, fstype, options }
+# 4 fields * 8 = 32 bytes
+
+fn fuse_mount_new(device, mountpoint, fstype, options) {
+    var m = alloc(32);
+    store64(m, device);
+    store64(m + 8, mountpoint);
+    store64(m + 16, fstype);
+    store64(m + 24, options);
+    return m;
+}
+
+fn fuse_mount_device(m) { return load64(m); }
+fn fuse_mount_mountpoint(m) { return load64(m + 8); }
+fn fuse_mount_fstype(m) { return load64(m + 16); }
+fn fuse_mount_options(m) { return load64(m + 24); }
+
+# ================================================================
+# Parse /proc/mounts
+# ================================================================
+
+# Check if a string starts with a prefix.
+fn fuse_starts_with(str, prefix) {
+    var slen = strlen(str);
+    var plen = strlen(prefix);
+    if (slen < plen) { return 0; }
+    var i = 0;
+    while (i < plen) {
+        if (load8(str + i) != load8(prefix + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Extract a whitespace-delimited field from a line.
+# field_idx: 0-based field index.
+# Returns heap-allocated string or 0.
+fn fuse_extract_field(line, linelen, field_idx) {
+    var pos = 0;
+    var field = 0;
+
+    while (field < field_idx) {
+        # Skip to next whitespace
+        while (pos < linelen) {
+            var c = load8(line + pos);
+            if (c == 32) { break; }
+            if (c == 9) { break; }
+            pos = pos + 1;
+        }
+        # Skip whitespace
+        while (pos < linelen) {
+            var c = load8(line + pos);
+            if (c != 32) { if (c != 9) { break; } }
+            pos = pos + 1;
+        }
+        field = field + 1;
+    }
+
+    if (pos >= linelen) { return 0; }
+
+    var start = pos;
+    while (pos < linelen) {
+        var c = load8(line + pos);
+        if (c == 32) { break; }
+        if (c == 9) { break; }
+        pos = pos + 1;
+    }
+
+    var flen = pos - start;
+    if (flen == 0) { return 0; }
+
+    var out = alloc(flen + 1);
+    memcpy(out, line + start, flen);
+    store8(out + flen, 0);
+    return out;
+}
+
+# Parse /proc/mounts and return FUSE mounts.
+# result_arr: pre-allocated array of FuseMount pointers.
+# max_mounts: capacity.
+# fuse_only: 1 to return only fuse.* mounts, 0 for all.
+# Returns Result: Ok(count) or Err.
+fn fuse_parse_proc_mounts(result_arr, max_mounts, fuse_only) {
+    # Read /proc/mounts
+    var fd = sys_open("/proc/mounts", 0, 0);  # O_RDONLY
+    if (fd < 0) {
+        return err_io(0 - fd, "failed to open /proc/mounts");
+    }
+
+    var buf = alloc(8192);
+    var total_read = 0;
+    var nread = sys_read(fd, buf + total_read, 8192 - total_read);
+    while (nread > 0) {
+        total_read = total_read + nread;
+        if (total_read >= 8192) { break; }
+        nread = sys_read(fd, buf + total_read, 8192 - total_read);
+    }
+    sys_close(fd);
+    store8(buf + total_read, 0);
+
+    # Parse line by line
+    # Format: device mountpoint fstype options dump pass
+    var count = 0;
+    var pos = 0;
+
+    while (pos < total_read) {
+        var linestart = pos;
+        while (pos < total_read) {
+            if (load8(buf + pos) == 10) { break; }
+            pos = pos + 1;
+        }
+        var linelen = pos - linestart;
+        if (pos < total_read) { pos = pos + 1; }
+        if (linelen == 0) { continue; }
+
+        # Extract fstype (field 2)
+        var fstype = fuse_extract_field(buf + linestart, linelen, 2);
+        if (fstype == 0) { continue; }
+
+        var include = 1;
+        if (fuse_only == 1) {
+            if (fuse_starts_with(fstype, "fuse") != 1) {
+                include = 0;
+            }
+        }
+
+        if (include == 1) {
+            if (count < max_mounts) {
+                var device = fuse_extract_field(buf + linestart, linelen, 0);
+                var mpoint = fuse_extract_field(buf + linestart, linelen, 1);
+                var opts = fuse_extract_field(buf + linestart, linelen, 3);
+
+                var mount = fuse_mount_new(device, mpoint, fstype, opts);
+                store64(result_arr + count * 8, mount);
+                count = count + 1;
+            }
+        }
+    }
+
+    return Ok(count);
+}
+
+# ================================================================
+# Mount FUSE filesystem
+# ================================================================
+
+# Mount a FUSE filesystem.
+# device: the FUSE filesystem source (e.g., sshfs#user@host:path).
+# mountpoint: target directory.
+# fuse_type: the specific FUSE fs type command (e.g., "sshfs", "ntfs-3g").
+# extra_opts: additional mount options string, or 0 for none.
+# Returns Result: Ok(0) or Err.
+fn fuse_mount(device, mountpoint, fuse_type, extra_opts) {
+    if (device == 0) { return err_invalid_argument("fuse device is null"); }
+    if (mountpoint == 0) { return err_invalid_argument("fuse mountpoint is null"); }
+    if (fuse_type == 0) { return err_invalid_argument("fuse type is null"); }
+
+    if (strlen(device) == 0) { return err_invalid_argument("fuse device is empty"); }
+    if (strlen(mountpoint) == 0) { return err_invalid_argument("fuse mountpoint is empty"); }
+
+    # Use the fuse type command directly (e.g., sshfs, ntfs-3g)
+    # Or fusermount for generic mounts
+    var argv_size = 32;
+    if (extra_opts != 0) { argv_size = 48; }
+    var argv = alloc(argv_size);
+
+    store64(argv, fuse_type);
+    store64(argv + 8, device);
+    store64(argv + 16, mountpoint);
+
+    var argc = 3;
+    if (extra_opts != 0) {
+        if (strlen(extra_opts) > 0) {
+            store64(argv + 24, "-o");
+            store64(argv + 32, extra_opts);
+            argc = 5;
+        }
+    }
+
+    var res = run_capture(fuse_type, argv);
+    if (is_err_result(res) == 1) { return res; }
+    return Ok(0);
+}
+
+# ================================================================
+# Unmount FUSE filesystem
+# ================================================================
+
+# Unmount a FUSE filesystem at the given mountpoint.
+# Returns Result: Ok(0) or Err.
+fn fuse_unmount(mountpoint) {
+    if (mountpoint == 0) { return err_invalid_argument("unmount mountpoint is null"); }
+    if (strlen(mountpoint) == 0) { return err_invalid_argument("unmount mountpoint is empty"); }
+
+    var cmd = "fusermount";
+    var argv = alloc(24);
+    store64(argv, cmd);
+    store64(argv + 8, "-u");
+    store64(argv + 16, mountpoint);
+
+    var res = run_capture(cmd, argv);
+    if (is_err_result(res) == 1) { return res; }
+    return Ok(0);
+}
+
+# ================================================================
+# Lazy unmount (fallback)
+# ================================================================
+
+# Lazy unmount via fusermount -uz (for busy mounts).
+fn fuse_unmount_lazy(mountpoint) {
+    if (mountpoint == 0) { return err_invalid_argument("unmount mountpoint is null"); }
+
+    var cmd = "fusermount";
+    var argv = alloc(24);
+    store64(argv, cmd);
+    store64(argv + 8, "-uz");
+    store64(argv + 16, mountpoint);
+
+    var res = run_capture(cmd, argv);
+    if (is_err_result(res) == 1) { return res; }
+    return Ok(0);
+}

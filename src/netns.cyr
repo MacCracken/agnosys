@@ -1,0 +1,637 @@
+# netns.cyr — per-agent network namespace management
+# Ported from rust-old/src/netns.rs
+#
+# Creates isolated network namespaces with veth pairs for AGNOS agents.
+# Shells out to `ip` (standard practice — avoids raw netlink).
+# Firewall policy rendered as nftables rulesets.
+#
+# Requires: src/error.cyr, lib/syscalls.cyr, lib/process.cyr
+
+# ================================================================
+# Traffic direction / protocol / action constants
+# ================================================================
+
+enum TrafficDir {
+    TRAFFIC_INBOUND = 1;
+    TRAFFIC_OUTBOUND = 2;
+}
+
+enum NetProtocol {
+    PROTO_TCP = 1;
+    PROTO_UDP = 2;
+    PROTO_ANY = 3;
+}
+
+enum FwAction {
+    FW_ACCEPT = 1;
+    FW_DROP = 2;
+}
+
+# ================================================================
+# NetNamespaceConfig struct
+# ================================================================
+
+# Layout: { name, agent_ip, host_ip, prefix_len, enable_nat, dns_arr, dns_count }
+# 7 fields * 8 = 56 bytes
+
+fn netns_config_new(name, agent_ip, host_ip, prefix_len, enable_nat) {
+    var c = alloc(56);
+    store64(c, name);
+    store64(c + 8, agent_ip);
+    store64(c + 16, host_ip);
+    store64(c + 24, prefix_len);
+    store64(c + 32, enable_nat);
+    store64(c + 40, 0);  # dns_arr
+    store64(c + 48, 0);  # dns_count
+    return c;
+}
+
+fn netns_config_name(c) { return load64(c); }
+fn netns_config_agent_ip(c) { return load64(c + 8); }
+fn netns_config_host_ip(c) { return load64(c + 16); }
+fn netns_config_prefix_len(c) { return load64(c + 24); }
+fn netns_config_enable_nat(c) { return load64(c + 32); }
+
+fn netns_config_set_dns(c, dns_arr, dns_count) {
+    store64(c + 40, dns_arr);
+    store64(c + 48, dns_count);
+    return 0;
+}
+
+# ================================================================
+# NetNamespaceHandle struct
+# ================================================================
+
+# Layout: { name, veth_host, veth_agent, netns_path }
+# 4 fields * 8 = 32 bytes
+
+fn netns_handle_new(name, veth_host, veth_agent, netns_path) {
+    var h = alloc(32);
+    store64(h, name);
+    store64(h + 8, veth_host);
+    store64(h + 16, veth_agent);
+    store64(h + 24, netns_path);
+    return h;
+}
+
+fn netns_handle_name(h) { return load64(h); }
+fn netns_handle_veth_host(h) { return load64(h + 8); }
+fn netns_handle_veth_agent(h) { return load64(h + 16); }
+fn netns_handle_netns_path(h) { return load64(h + 24); }
+
+# ================================================================
+# FirewallRule struct
+# ================================================================
+
+# Layout: { direction, protocol, port, remote_addr, action, comment }
+# 6 fields * 8 = 48 bytes
+
+fn fw_rule_new(direction, protocol, port, remote_addr, action, comment) {
+    var r = alloc(48);
+    store64(r, direction);
+    store64(r + 8, protocol);
+    store64(r + 16, port);
+    store64(r + 24, remote_addr);
+    store64(r + 32, action);
+    store64(r + 40, comment);
+    return r;
+}
+
+fn fw_rule_direction(r) { return load64(r); }
+fn fw_rule_protocol(r) { return load64(r + 8); }
+fn fw_rule_port(r) { return load64(r + 16); }
+fn fw_rule_remote_addr(r) { return load64(r + 24); }
+fn fw_rule_action(r) { return load64(r + 32); }
+fn fw_rule_comment(r) { return load64(r + 40); }
+
+# ================================================================
+# FirewallPolicy struct
+# ================================================================
+
+# Layout: { default_inbound, default_outbound, rules_arr, rule_count }
+# 4 fields * 8 = 32 bytes
+
+fn fw_policy_new(default_in, default_out) {
+    var p = alloc(32);
+    store64(p, default_in);
+    store64(p + 8, default_out);
+    store64(p + 16, 0);
+    store64(p + 24, 0);
+    return p;
+}
+
+fn fw_policy_default_in(p) { return load64(p); }
+fn fw_policy_default_out(p) { return load64(p + 8); }
+fn fw_policy_rules(p) { return load64(p + 16); }
+fn fw_policy_rule_count(p) { return load64(p + 24); }
+
+fn fw_policy_set_rules(p, rules_arr, count) {
+    store64(p + 16, rules_arr);
+    store64(p + 24, count);
+    return 0;
+}
+
+# ================================================================
+# IP address generation from agent name hash
+# ================================================================
+
+# Simple hash function for agent name -> 10.100.x.{1,2}/30
+fn netns_hash_name(name) {
+    var h = 5381;
+    var i = 0;
+    var len = strlen(name);
+    while (i < len) {
+        var c = load8(name + i);
+        h = h * 33 + c;
+        i = i + 1;
+    }
+    # Make positive
+    if (h < 0) { h = 0 - h; }
+    return h;
+}
+
+# Generate agent IPs. Returns a struct { host_ip, agent_ip }.
+fn netns_generate_agent_ips(agent_name) {
+    var h = netns_hash_name(agent_name);
+    var third = h % 255;
+
+    # Build "10.100.X.1" and "10.100.X.2"
+    var host_ip = alloc(16);
+    var agent_ip = alloc(16);
+
+    var prefix = "10.100.";
+    memcpy(host_ip, prefix, 7);
+    memcpy(agent_ip, prefix, 7);
+
+    # Convert third octet to string
+    var tbuf = alloc(4);
+    var tlen = fmt_int_buf(third, tbuf);
+
+    memcpy(host_ip + 7, tbuf, tlen);
+    store8(host_ip + 7 + tlen, 46);  # '.'
+    store8(host_ip + 7 + tlen + 1, 49);  # '1'
+    store8(host_ip + 7 + tlen + 2, 0);
+
+    memcpy(agent_ip + 7, tbuf, tlen);
+    store8(agent_ip + 7 + tlen, 46);  # '.'
+    store8(agent_ip + 7 + tlen + 1, 50);  # '2'
+    store8(agent_ip + 7 + tlen + 2, 0);
+
+    var result = alloc(16);
+    store64(result, host_ip);
+    store64(result + 8, agent_ip);
+    return result;
+}
+
+# ================================================================
+# Create convenience config for an agent
+# ================================================================
+
+fn netns_config_for_agent(name) {
+    var ips = netns_generate_agent_ips(name);
+    var host_ip = load64(ips);
+    var agent_ip = load64(ips + 8);
+    return netns_config_new(name, agent_ip, host_ip, 30, 1);
+}
+
+# ================================================================
+# Validate namespace config
+# ================================================================
+
+fn netns_validate_config(config) {
+    var name = netns_config_name(config);
+    if (name == 0) { return err_invalid_argument("namespace name is null"); }
+    if (strlen(name) == 0) { return err_invalid_argument("namespace name cannot be empty"); }
+    if (strlen(name) > 64) { return err_invalid_argument("namespace name too long (max 64)"); }
+
+    var aip = netns_config_agent_ip(config);
+    var hip = netns_config_host_ip(config);
+    if (aip == 0) { return err_invalid_argument("agent IP is null"); }
+    if (hip == 0) { return err_invalid_argument("host IP is null"); }
+    if (strlen(aip) == 0) { return err_invalid_argument("agent IP cannot be empty"); }
+    if (strlen(hip) == 0) { return err_invalid_argument("host IP cannot be empty"); }
+
+    var plen = netns_config_prefix_len(config);
+    if (plen == 0) { return err_invalid_argument("invalid prefix length: 0"); }
+    if (plen > 32) { return err_invalid_argument("invalid prefix length: > 32"); }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Truncate veth name to 15 chars (Linux max)
+# ================================================================
+
+fn netns_truncate_veth(base) {
+    var len = strlen(base);
+    if (len <= 15) {
+        var out = alloc(len + 1);
+        memcpy(out, base, len);
+        store8(out + len, 0);
+        return out;
+    }
+    var out = alloc(16);
+    memcpy(out, base, 15);
+    store8(out + 15, 0);
+    return out;
+}
+
+# ================================================================
+# Helper: run ip command
+# ================================================================
+
+fn netns_run_ip(argv) {
+    var cmd = "ip";
+    var res = run_capture(cmd, argv);
+    if (is_err_result(res) == 1) { return res; }
+    return Ok(0);
+}
+
+# ================================================================
+# Build a string by concatenating parts
+# ================================================================
+
+fn netns_concat2(a, b) {
+    var alen = strlen(a);
+    var blen = strlen(b);
+    var out = alloc(alen + blen + 1);
+    memcpy(out, a, alen);
+    memcpy(out + alen, b, blen);
+    store8(out + alen + blen, 0);
+    return out;
+}
+
+fn netns_concat3(a, b, c) {
+    var ab = netns_concat2(a, b);
+    return netns_concat2(ab, c);
+}
+
+# ================================================================
+# Create agent network namespace
+# ================================================================
+
+# Create a network namespace for an agent with veth pair and IP configuration.
+# Returns Result: Ok(handle_ptr) or Err.
+fn netns_create_agent_netns(config) {
+    var vres = netns_validate_config(config);
+    if (is_err_result(vres) == 1) { return vres; }
+
+    var name = netns_config_name(config);
+    var ns_name = netns_concat2("agnos-agent-", name);
+    var veth_host = netns_truncate_veth(netns_concat3("veth-", name, "-h"));
+    var veth_agent = netns_truncate_veth(netns_concat3("veth-", name, "-a"));
+
+    # 1. Create namespace: ip netns add <ns_name>
+    var argv1 = alloc(32);
+    store64(argv1, "ip");
+    store64(argv1 + 8, "netns");
+    store64(argv1 + 16, "add");
+    store64(argv1 + 24, ns_name);
+    var res = netns_run_ip(argv1);
+    if (is_err_result(res) == 1) { return res; }
+
+    # 2. Create veth pair: ip link add <host> type veth peer name <agent>
+    var argv2 = alloc(72);
+    store64(argv2, "ip");
+    store64(argv2 + 8, "link");
+    store64(argv2 + 16, "add");
+    store64(argv2 + 24, veth_host);
+    store64(argv2 + 32, "type");
+    store64(argv2 + 40, "veth");
+    store64(argv2 + 48, "peer");
+    store64(argv2 + 56, "name");
+    store64(argv2 + 64, veth_agent);
+    res = netns_run_ip(argv2);
+    if (is_err_result(res) == 1) {
+        # Cleanup namespace
+        var cleanup = alloc(32);
+        store64(cleanup, "ip");
+        store64(cleanup + 8, "netns");
+        store64(cleanup + 16, "delete");
+        store64(cleanup + 24, ns_name);
+        netns_run_ip(cleanup);
+        return res;
+    }
+
+    # 3. Move agent veth into namespace: ip link set <agent> netns <ns>
+    var argv3 = alloc(48);
+    store64(argv3, "ip");
+    store64(argv3 + 8, "link");
+    store64(argv3 + 16, "set");
+    store64(argv3 + 24, veth_agent);
+    store64(argv3 + 32, "netns");
+    store64(argv3 + 40, ns_name);
+    res = netns_run_ip(argv3);
+    if (is_err_result(res) == 1) {
+        # Cleanup
+        var cl1 = alloc(32);
+        store64(cl1, "ip");
+        store64(cl1 + 8, "link");
+        store64(cl1 + 16, "delete");
+        store64(cl1 + 24, veth_host);
+        netns_run_ip(cl1);
+        var cl2 = alloc(32);
+        store64(cl2, "ip");
+        store64(cl2 + 8, "netns");
+        store64(cl2 + 16, "delete");
+        store64(cl2 + 24, ns_name);
+        netns_run_ip(cl2);
+        return res;
+    }
+
+    # 4. Assign IPs
+    var plen_str = alloc(4);
+    var plen_slen = fmt_int_buf(netns_config_prefix_len(config), plen_str);
+    store8(plen_str + plen_slen, 0);
+
+    var host_cidr = netns_concat3(netns_config_host_ip(config), "/", plen_str);
+    var agent_cidr = netns_concat3(netns_config_agent_ip(config), "/", plen_str);
+
+    # ip addr add <host_cidr> dev <veth_host>
+    var argv4 = alloc(48);
+    store64(argv4, "ip");
+    store64(argv4 + 8, "addr");
+    store64(argv4 + 16, "add");
+    store64(argv4 + 24, host_cidr);
+    store64(argv4 + 32, "dev");
+    store64(argv4 + 40, veth_host);
+    netns_run_ip(argv4);
+
+    # ip netns exec <ns> ip addr add <agent_cidr> dev <agent>
+    var argv5 = alloc(72);
+    store64(argv5, "ip");
+    store64(argv5 + 8, "netns");
+    store64(argv5 + 16, "exec");
+    store64(argv5 + 24, ns_name);
+    store64(argv5 + 32, "ip");
+    store64(argv5 + 40, "addr");
+    store64(argv5 + 48, "add");
+    store64(argv5 + 56, agent_cidr);
+    store64(argv5 + 64, "dev");
+    # Need 11th element
+    var argv5b = alloc(88);
+    memcpy(argv5b, argv5, 72);
+    store64(argv5b + 72, veth_agent);
+    netns_run_ip(argv5b);
+
+    # 5. Bring interfaces up
+    var argv6 = alloc(40);
+    store64(argv6, "ip");
+    store64(argv6 + 8, "link");
+    store64(argv6 + 16, "set");
+    store64(argv6 + 24, veth_host);
+    store64(argv6 + 32, "up");
+    netns_run_ip(argv6);
+
+    # Bring up agent side in namespace
+    var argv7 = alloc(64);
+    store64(argv7, "ip");
+    store64(argv7 + 8, "netns");
+    store64(argv7 + 16, "exec");
+    store64(argv7 + 24, ns_name);
+    store64(argv7 + 32, "ip");
+    store64(argv7 + 40, "link");
+    store64(argv7 + 48, "set");
+    store64(argv7 + 56, veth_agent);
+    var argv7b = alloc(80);
+    memcpy(argv7b, argv7, 64);
+    store64(argv7b + 64, "up");
+    netns_run_ip(argv7b);
+
+    # Bring up loopback in namespace
+    var argv8 = alloc(72);
+    store64(argv8, "ip");
+    store64(argv8 + 8, "netns");
+    store64(argv8 + 16, "exec");
+    store64(argv8 + 24, ns_name);
+    store64(argv8 + 32, "ip");
+    store64(argv8 + 40, "link");
+    store64(argv8 + 48, "set");
+    store64(argv8 + 56, "lo");
+    store64(argv8 + 64, "up");
+    netns_run_ip(argv8);
+
+    # Set default route inside namespace
+    var argv9 = alloc(80);
+    store64(argv9, "ip");
+    store64(argv9 + 8, "netns");
+    store64(argv9 + 16, "exec");
+    store64(argv9 + 24, ns_name);
+    store64(argv9 + 32, "ip");
+    store64(argv9 + 40, "route");
+    store64(argv9 + 48, "add");
+    store64(argv9 + 56, "default");
+    store64(argv9 + 64, "via");
+    store64(argv9 + 72, netns_config_host_ip(config));
+    netns_run_ip(argv9);
+
+    # Build netns path
+    var netns_path = netns_concat2("/var/run/netns/", ns_name);
+
+    var handle = netns_handle_new(ns_name, veth_host, veth_agent, netns_path);
+    return Ok(handle);
+}
+
+# ================================================================
+# Destroy agent network namespace
+# ================================================================
+
+fn netns_destroy_agent_netns(handle) {
+    var veth_host = netns_handle_veth_host(handle);
+    var ns_name = netns_handle_name(handle);
+
+    # Delete host-side veth (peer is auto-deleted)
+    var argv1 = alloc(32);
+    store64(argv1, "ip");
+    store64(argv1 + 8, "link");
+    store64(argv1 + 16, "delete");
+    store64(argv1 + 24, veth_host);
+    netns_run_ip(argv1);
+
+    # Delete namespace
+    var argv2 = alloc(32);
+    store64(argv2, "ip");
+    store64(argv2 + 8, "netns");
+    store64(argv2 + 16, "delete");
+    store64(argv2 + 24, ns_name);
+    return netns_run_ip(argv2);
+}
+
+# ================================================================
+# Render nftables ruleset from FirewallPolicy
+# ================================================================
+
+# Helper to append a string to a buffer, return new position.
+fn nft_append(buf, pos, str) {
+    var len = strlen(str);
+    memcpy(buf + pos, str, len);
+    return pos + len;
+}
+
+fn nft_action_str(action) {
+    if (action == FW_ACCEPT) { return "accept"; }
+    return "drop";
+}
+
+fn nft_proto_str(proto) {
+    if (proto == PROTO_TCP) { return "tcp"; }
+    if (proto == PROTO_UDP) { return "udp"; }
+    return 0;
+}
+
+# Render a FirewallPolicy into an nftables ruleset string.
+# Returns a heap-allocated null-terminated string.
+fn netns_render_nftables_ruleset(policy) {
+    var buf = alloc(4096);
+    var pos = 0;
+
+    pos = nft_append(buf, pos, "table inet kavach {\n");
+
+    # Input chain
+    pos = nft_append(buf, pos, "  chain input { type filter hook input priority 0; policy ");
+    pos = nft_append(buf, pos, nft_action_str(fw_policy_default_in(policy)));
+    pos = nft_append(buf, pos, ";\n");
+    pos = nft_append(buf, pos, "    ct state established,related accept\n");
+    pos = nft_append(buf, pos, "    iif lo accept\n");
+
+    var rules = fw_policy_rules(policy);
+    var count = fw_policy_rule_count(policy);
+    var i = 0;
+    while (i < count) {
+        var rule = load64(rules + i * 8);
+        if (fw_rule_direction(rule) == TRAFFIC_INBOUND) {
+            var action = nft_action_str(fw_rule_action(rule));
+            var proto = nft_proto_str(fw_rule_protocol(rule));
+            var port = fw_rule_port(rule);
+            if (proto != 0) {
+                if (port > 0) {
+                    pos = nft_append(buf, pos, "    ");
+                    pos = nft_append(buf, pos, proto);
+                    pos = nft_append(buf, pos, " dport ");
+                    var pbuf = alloc(8);
+                    var plen = fmt_int_buf(port, pbuf);
+                    store8(pbuf + plen, 0);
+                    pos = nft_append(buf, pos, pbuf);
+                    pos = nft_append(buf, pos, " ");
+                    pos = nft_append(buf, pos, action);
+                    pos = nft_append(buf, pos, " comment \"");
+                    pos = nft_append(buf, pos, fw_rule_comment(rule));
+                    pos = nft_append(buf, pos, "\"\n");
+                }
+            }
+            var raddr = fw_rule_remote_addr(rule);
+            if (raddr != 0) {
+                if (strlen(raddr) > 0) {
+                    pos = nft_append(buf, pos, "    ip saddr ");
+                    pos = nft_append(buf, pos, raddr);
+                    pos = nft_append(buf, pos, " ");
+                    pos = nft_append(buf, pos, action);
+                    pos = nft_append(buf, pos, " comment \"");
+                    pos = nft_append(buf, pos, fw_rule_comment(rule));
+                    pos = nft_append(buf, pos, "\"\n");
+                }
+            }
+        }
+        i = i + 1;
+    }
+    pos = nft_append(buf, pos, "  }\n");
+
+    # Output chain
+    pos = nft_append(buf, pos, "  chain output { type filter hook output priority 0; policy ");
+    pos = nft_append(buf, pos, nft_action_str(fw_policy_default_out(policy)));
+    pos = nft_append(buf, pos, ";\n");
+    pos = nft_append(buf, pos, "    ct state established,related accept\n");
+    pos = nft_append(buf, pos, "    oif lo accept\n");
+
+    i = 0;
+    while (i < count) {
+        var rule = load64(rules + i * 8);
+        if (fw_rule_direction(rule) == TRAFFIC_OUTBOUND) {
+            var action = nft_action_str(fw_rule_action(rule));
+            var proto = nft_proto_str(fw_rule_protocol(rule));
+            var port = fw_rule_port(rule);
+            if (proto != 0) {
+                if (port > 0) {
+                    pos = nft_append(buf, pos, "    ");
+                    pos = nft_append(buf, pos, proto);
+                    pos = nft_append(buf, pos, " dport ");
+                    var pbuf = alloc(8);
+                    var plen = fmt_int_buf(port, pbuf);
+                    store8(pbuf + plen, 0);
+                    pos = nft_append(buf, pos, pbuf);
+                    pos = nft_append(buf, pos, " ");
+                    pos = nft_append(buf, pos, action);
+                    pos = nft_append(buf, pos, " comment \"");
+                    pos = nft_append(buf, pos, fw_rule_comment(rule));
+                    pos = nft_append(buf, pos, "\"\n");
+                }
+            }
+            var raddr = fw_rule_remote_addr(rule);
+            if (raddr != 0) {
+                if (strlen(raddr) > 0) {
+                    pos = nft_append(buf, pos, "    ip daddr ");
+                    pos = nft_append(buf, pos, raddr);
+                    pos = nft_append(buf, pos, " ");
+                    pos = nft_append(buf, pos, action);
+                    pos = nft_append(buf, pos, " comment \"");
+                    pos = nft_append(buf, pos, fw_rule_comment(rule));
+                    pos = nft_append(buf, pos, "\"\n");
+                }
+            }
+        }
+        i = i + 1;
+    }
+    pos = nft_append(buf, pos, "  }\n");
+    pos = nft_append(buf, pos, "}\n");
+    store8(buf + pos, 0);
+
+    return buf;
+}
+
+# ================================================================
+# Apply nftables ruleset to a namespace
+# ================================================================
+
+# Apply a pre-rendered nftables ruleset inside the namespace.
+# ruleset: null-terminated nftables script string.
+# Returns Result.
+fn netns_apply_nftables_ruleset(handle, ruleset) {
+    var ns_name = netns_handle_name(handle);
+
+    # Write ruleset to temp file
+    var tmp_path = "/run/agnos/nft-tmp.conf";
+
+    # Ensure directory exists (ignore errors)
+    var mkdir_argv = alloc(24);
+    store64(mkdir_argv, "mkdir");
+    store64(mkdir_argv + 8, "-p");
+    store64(mkdir_argv + 16, "/run/agnos");
+    run_capture("mkdir", mkdir_argv);
+
+    # Write ruleset to file
+    var fd = sys_open(tmp_path, 0x241, 0x1A4);  # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    if (fd < 0) {
+        return err_io(0 - fd, "failed to create nft temp file");
+    }
+    var rlen = strlen(ruleset);
+    sys_write(fd, ruleset, rlen);
+    sys_close(fd);
+
+    # ip netns exec <ns> nft -f <path>
+    var argv = alloc(56);
+    store64(argv, "ip");
+    store64(argv + 8, "netns");
+    store64(argv + 16, "exec");
+    store64(argv + 24, ns_name);
+    store64(argv + 32, "nft");
+    store64(argv + 40, "-f");
+    store64(argv + 48, tmp_path);
+
+    var res = netns_run_ip(argv);
+
+    # Clean up temp file (ignore errors)
+    # unlink
+    syscall(87, tmp_path);
+
+    return res;
+}

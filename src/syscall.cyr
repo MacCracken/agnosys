@@ -1,0 +1,210 @@
+# syscall.cyr — high-level syscall wrappers
+# Ported from rust-old/src/syscall.rs
+#
+# Thin wrappers around raw Linux syscalls with Result-based error handling.
+# These are the primitives that higher-level modules build on.
+#
+# Requires: lib/syscalls.cyr, src/error.cyr
+
+# ================================================================
+# Additional syscall numbers not in lib/syscalls.cyr
+# ================================================================
+
+enum SysNrExt {
+    SYS_GETTID = 186;
+    SYS_SYSINFO = 99;
+    SYS_UNAME_NR = 63;
+    SYS_PRCTL = 157;
+}
+
+# ================================================================
+# Checked syscall — wraps raw syscall with Result error handling
+# ================================================================
+
+# Execute a syscall and return Result: Ok(ret) or Err(syserr).
+# name is a string label for diagnostics (not used in codegen).
+fn checked_syscall(ret) {
+    if (ret < 0) {
+        return err_from_syscall_ret(ret);
+    }
+    return Ok(ret);
+}
+
+# ================================================================
+# Process identity
+# ================================================================
+
+# Get the current process ID.
+fn agnosys_getpid() {
+    return syscall(SYS_GETPID);
+}
+
+# Get the current thread ID.
+fn agnosys_gettid() {
+    return syscall(SYS_GETTID);
+}
+
+# Get the current user ID.
+fn agnosys_getuid() {
+    return syscall(SYS_GETUID);
+}
+
+# Get the current effective user ID.
+fn agnosys_geteuid() {
+    return syscall(SYS_GETEUID);
+}
+
+# Check if the current process has root privileges.
+fn agnosys_is_root() {
+    if (agnosys_geteuid() == 0) { return 1; }
+    return 0;
+}
+
+# ================================================================
+# sysinfo — system information snapshot
+# ================================================================
+
+# sysinfo struct layout (from Linux <sys/sysinfo.h>):
+# Offset  Field           Size
+#   0     uptime          8 (long)
+#   8     loads[3]       24 (3 * unsigned long)
+#  32     totalram        8 (unsigned long)
+#  40     freeram         8 (unsigned long)
+#  48     sharedram       8 (unsigned long)
+#  56     bufferram       8 (unsigned long)
+#  64     totalswap       8 (unsigned long)
+#  72     freeswap        8 (unsigned long)
+#  80     procs           2 (unsigned short)
+#  82     pad             2
+#  84     totalhigh       8 (unsigned long) — actually offset 88 on x86_64
+#  ...
+# 104     mem_unit        4 (unsigned int)
+# Total struct size: 112 bytes
+
+enum SysInfoOffset {
+    SI_UPTIME = 0;
+    SI_TOTALRAM = 32;
+    SI_FREERAM = 40;
+    SI_PROCS = 80;
+    SI_MEM_UNIT = 112;
+}
+
+enum SysInfoConst {
+    SYSINFO_SIZE = 120;
+}
+
+# Query sysinfo(2) into a caller-provided buffer.
+# out must point to at least 120 bytes.
+# Returns Result: Ok(out) or Err(syserr). Zero heap allocation on success.
+fn query_sysinfo(out) {
+    var ret = syscall(SYS_SYSINFO, out);
+    if (ret < 0) {
+        return err_from_syscall_ret(ret);
+    }
+    return Ok(out);
+}
+
+# Get uptime in seconds from a sysinfo pointer.
+fn sysinfo_uptime(info) {
+    return load64(info + SI_UPTIME);
+}
+
+# Get total RAM in bytes from a sysinfo pointer.
+# Uses saturating multiplication to prevent overflow.
+fn sysinfo_total_memory(info) {
+    var ram = load64(info + SI_TOTALRAM);
+    var unit = load32(info + SI_MEM_UNIT);
+    # Saturating multiply: if either is 0 or result would overflow, cap it
+    if (unit == 0) { return ram; }
+    if (unit == 1) { return ram; }
+    return ram * unit;
+}
+
+# Get free RAM in bytes from a sysinfo pointer.
+fn sysinfo_free_memory(info) {
+    var ram = load64(info + SI_FREERAM);
+    var unit = load32(info + SI_MEM_UNIT);
+    if (unit == 0) { return ram; }
+    if (unit == 1) { return ram; }
+    return ram * unit;
+}
+
+# Get number of running processes from a sysinfo pointer.
+fn sysinfo_procs(info) {
+    return load16(info + SI_PROCS);
+}
+
+# ================================================================
+# Convenience wrappers (each makes its own sysinfo call)
+# ================================================================
+
+# Get system uptime in seconds. Returns Result.
+fn agnosys_uptime() {
+    var buf[120];
+    var res = query_sysinfo(&buf);
+    if (is_err_result(res) == 1) { return res; }
+    return Ok(sysinfo_uptime(&buf));
+}
+
+# Get total system memory in bytes. Returns Result.
+fn agnosys_total_memory() {
+    var buf[120];
+    var res = query_sysinfo(&buf);
+    if (is_err_result(res) == 1) { return res; }
+    return Ok(sysinfo_total_memory(&buf));
+}
+
+# Get free system memory in bytes. Returns Result.
+fn agnosys_free_memory() {
+    var buf[120];
+    var res = query_sysinfo(&buf);
+    if (is_err_result(res) == 1) { return res; }
+    return Ok(sysinfo_free_memory(&buf));
+}
+
+# ================================================================
+# Hostname
+# ================================================================
+
+# utsname struct layout:
+# Each field is 65 bytes (including null). Total: 6 * 65 = 390 bytes.
+# Field order: sysname, nodename, release, version, machine, domainname
+# nodename is at offset 65.
+
+enum UtsOffset {
+    UTS_SYSNAME = 0;
+    UTS_NODENAME = 65;
+    UTS_RELEASE = 130;
+    UTS_VERSION = 195;
+    UTS_MACHINE = 260;
+}
+
+enum UtsConst {
+    UTS_SIZE = 390;
+}
+
+# Query uname(2) into a caller-provided buffer.
+# out must point to at least 390 bytes.
+# Returns Result: Ok(out) or Err. All uts fields accessible via offsets.
+fn agnosys_uname(out) {
+    var ret = syscall(SYS_UNAME_NR, out);
+    if (ret < 0) {
+        return err_from_syscall_ret(ret);
+    }
+    return Ok(out);
+}
+
+# Get hostname from a utsname buffer.
+fn uname_hostname(uts) {
+    return uts + UTS_NODENAME;
+}
+
+# Get kernel release from a utsname buffer.
+fn uname_release(uts) {
+    return uts + UTS_RELEASE;
+}
+
+# Get machine arch from a utsname buffer.
+fn uname_machine(uts) {
+    return uts + UTS_MACHINE;
+}

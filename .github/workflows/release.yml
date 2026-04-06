@@ -2,71 +2,110 @@ name: Release
 
 on:
   push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+*"]
+    tags: ['*']
 
 permissions:
   contents: write
 
+env:
+  CYRIUS_VERSION: "1.6.1"
+
 jobs:
+  # ── CI Gate (must pass before release) ──
   ci:
     name: CI Gate
     uses: ./.github/workflows/ci.yml
 
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
+  # ── Build release binary ──
+  build:
+    name: Build Release
     needs: [ci]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
       - name: Verify version consistency
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG_VERSION="${GITHUB_REF_NAME}"
           if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
             echo "ERROR: VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"
             exit 1
           fi
-          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
-            echo "ERROR: Cargo.toml ($CARGO_VERSION) != tag ($TAG_VERSION)"
-            exit 1
-          fi
           echo "Version verified: $TAG_VERSION"
+
+      - name: Install Cyrius toolchain
+        run: |
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          export CYRIUS_HOME="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p build
+          cp "$CYRIUS_HOME/bin/cc2" ./build/cc2
+          cp "$CYRIUS_HOME/bin/cyrb" ./build/cyrb
+          chmod +x ./build/cc2 ./build/cyrb
+
+      - name: Build x86_64 binary
+        run: |
+          ./build/cyrb build src/main.cyr build/agnosys
+          echo "agnosys: $(wc -c < build/agnosys) bytes"
+          cp build/agnosys agnosys-x86_64
+
+      - name: Smoke test
+        run: |
+          ./agnosys-x86_64 | grep -q "agnosys ready"
+          echo "PASS: smoke test"
+
       - name: Extract changelog
         id: changelog
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          # Extract the section for this version from CHANGELOG.md
-          # Matches from "## [VERSION]" until the next "## [" or EOF
           BODY=$(awk "/^## \\[$VERSION\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
           if [ -z "$BODY" ]; then
-            echo "WARNING: No CHANGELOG entry found for $VERSION"
             BODY="No changelog entry for this release."
           fi
           echo "$BODY" > /tmp/release-body.md
-      - name: Build source tarball
+
+      - name: Create source archive
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # Create clean source archive from git
-          git archive --format=tar.gz --prefix="agnosys-${TAG}/" -o "agnosys-${TAG}.tar.gz" HEAD
-      - name: Vendor dependencies
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          cargo vendor vendor/
-          tar czf "agnosys-${TAG}-vendor.tar.gz" vendor/
-          rm -rf vendor/
+          git archive --format=tar.gz --prefix="agnosys-${TAG}/" -o "agnosys-${TAG}-src.tar.gz" HEAD
+
       - name: Generate checksums
         run: |
           TAG="${GITHUB_REF_NAME}"
-          sha256sum agnosys-${TAG}.tar.gz agnosys-${TAG}-vendor.tar.gz > SHA256SUMS
-      - name: Create GitHub Release
+          sha256sum agnosys-x86_64 "agnosys-${TAG}-src.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: |
+            agnosys-x86_64
+            agnosys-*-src.tar.gz
+            SHA256SUMS
+          retention-days: 5
+
+  # ── Create GitHub Release ──
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           name: "agnosys ${{ github.ref_name }}"
           body_path: /tmp/release-body.md
           prerelease: ${{ startsWith(github.ref_name, '0.') }}
           files: |
-            agnosys-${{ github.ref_name }}.tar.gz
-            agnosys-${{ github.ref_name }}-vendor.tar.gz
+            agnosys-x86_64
+            agnosys-${{ github.ref_name }}-src.tar.gz
             SHA256SUMS

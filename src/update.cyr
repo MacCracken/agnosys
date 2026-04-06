@@ -1,0 +1,354 @@
+# update.cyr — atomic updates, version comparison, update manifest
+# Ported from rust-old/src/update.rs
+#
+# Provides atomic file operations (write, copy, swap), CalVer version
+# comparison (YYYY.M.D), and update manifest validation.
+#
+# Requires: src/error.cyr, lib/syscalls.cyr
+
+# ================================================================
+# Update slot constants
+# ================================================================
+
+enum UpdateSlot {
+    SLOT_A = 1;
+    SLOT_B = 2;
+}
+
+# ================================================================
+# Update phase constants
+# ================================================================
+
+enum UpdatePhase {
+    PHASE_DOWNLOADING = 1;
+    PHASE_VERIFYING = 2;
+    PHASE_APPLYING = 3;
+    PHASE_FINALIZING = 4;
+    PHASE_ROLLING_BACK = 5;
+    PHASE_COMPLETE = 6;
+    PHASE_FAILED = 7;
+}
+
+# ================================================================
+# Version comparison result constants
+# ================================================================
+
+# Version comparison results (can't use negative in enum)
+var VER_LESS = 0 - 1;
+var VER_EQUAL = 0;
+var VER_GREATER = 1;
+
+# ================================================================
+# Atomic file write
+# ================================================================
+
+# Atomically write data to a file path. Writes to a temp file first,
+# then renames to the target path.
+# path: destination file path (null-terminated).
+# data: pointer to data buffer.
+# data_len: number of bytes to write.
+# Returns Result: Ok(0) or Err.
+fn update_atomic_write(path, data, data_len) {
+    if (path == 0) {
+        return err_invalid_argument("atomic_write path is null");
+    }
+    if (data_len < 0) {
+        return err_invalid_argument("atomic_write data_len is negative");
+    }
+
+    # Create temp path: path + ".tmp"
+    var pathlen = strlen(path);
+    var tmppath = alloc(pathlen + 5);
+    memcpy(tmppath, path, pathlen);
+    memcpy(tmppath + pathlen, ".tmp", 4);
+    store8(tmppath + pathlen + 4, 0);
+
+    # Write to temp file
+    # O_WRONLY | O_CREAT | O_TRUNC = 0x241, mode 0644 = 0x1A4
+    var fd = sys_open(tmppath, 0x241, 0x1A4);
+    if (fd < 0) {
+        return err_io(0 - fd, "atomic_write: failed to create temp file");
+    }
+
+    var written = 0;
+    while (written < data_len) {
+        var chunk = data_len - written;
+        if (chunk > 4096) { chunk = 4096; }
+        var ret = sys_write(fd, data + written, chunk);
+        if (ret < 0) {
+            sys_close(fd);
+            # Unlink temp file
+            syscall(87, tmppath);
+            return err_io(0 - ret, "atomic_write: write failed");
+        }
+        written = written + ret;
+    }
+
+    # fsync
+    var ret = syscall(74, fd);  # SYS_FSYNC
+    sys_close(fd);
+
+    if (ret < 0) {
+        syscall(87, tmppath);
+        return err_io(0 - ret, "atomic_write: fsync failed");
+    }
+
+    # Rename temp to target: syscall 82 = SYS_RENAME
+    ret = syscall(82, tmppath, path);
+    if (ret < 0) {
+        syscall(87, tmppath);
+        return err_io(0 - ret, "atomic_write: rename failed");
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Atomic file copy
+# ================================================================
+
+# Atomically copy src to dst (via temp + rename).
+# Returns Result: Ok(bytes_copied) or Err.
+fn update_atomic_copy(src, dst) {
+    if (src == 0) { return err_invalid_argument("atomic_copy src is null"); }
+    if (dst == 0) { return err_invalid_argument("atomic_copy dst is null"); }
+
+    # Open source
+    var src_fd = sys_open(src, 0, 0);  # O_RDONLY
+    if (src_fd < 0) {
+        return err_io(0 - src_fd, "atomic_copy: failed to open source");
+    }
+
+    # Create temp dest
+    var dstlen = strlen(dst);
+    var tmppath = alloc(dstlen + 5);
+    memcpy(tmppath, dst, dstlen);
+    memcpy(tmppath + dstlen, ".tmp", 4);
+    store8(tmppath + dstlen + 4, 0);
+
+    var dst_fd = sys_open(tmppath, 0x241, 0x1A4);  # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    if (dst_fd < 0) {
+        sys_close(src_fd);
+        return err_io(0 - dst_fd, "atomic_copy: failed to create temp dest");
+    }
+
+    # Copy loop
+    var buf = alloc(4096);
+    var total = 0;
+    var nread = sys_read(src_fd, buf, 4096);
+    while (nread > 0) {
+        var nwritten = 0;
+        while (nwritten < nread) {
+            var ret = sys_write(dst_fd, buf + nwritten, nread - nwritten);
+            if (ret < 0) {
+                sys_close(src_fd);
+                sys_close(dst_fd);
+                syscall(87, tmppath);
+                return err_io(0 - ret, "atomic_copy: write failed");
+            }
+            nwritten = nwritten + ret;
+        }
+        total = total + nread;
+        nread = sys_read(src_fd, buf, 4096);
+    }
+
+    sys_close(src_fd);
+
+    if (nread < 0) {
+        sys_close(dst_fd);
+        syscall(87, tmppath);
+        return err_io(0 - nread, "atomic_copy: read failed");
+    }
+
+    # fsync + close
+    syscall(74, dst_fd);
+    sys_close(dst_fd);
+
+    # Rename temp to target
+    var ret = syscall(82, tmppath, dst);
+    if (ret < 0) {
+        syscall(87, tmppath);
+        return err_io(0 - ret, "atomic_copy: rename failed");
+    }
+
+    return Ok(total);
+}
+
+# ================================================================
+# Version validation (CalVer YYYY.M.D)
+# ================================================================
+
+# Parse a version string into { year, month, day }.
+# Returns pointer to 24-byte struct, or 0 on parse failure.
+fn update_parse_version(version) {
+    if (version == 0) { return 0; }
+    var vlen = strlen(version);
+    if (vlen == 0) { return 0; }
+
+    # Find first dot
+    var dot1 = 0;
+    var i = 0;
+    while (i < vlen) {
+        if (load8(version + i) == 46) { dot1 = i; break; }
+        i = i + 1;
+    }
+    if (dot1 == 0) { return 0; }
+
+    # Find second dot
+    var dot2 = 0;
+    i = dot1 + 1;
+    while (i < vlen) {
+        if (load8(version + i) == 46) { dot2 = i; break; }
+        i = i + 1;
+    }
+    if (dot2 == 0) { return 0; }
+
+    # Parse year (before first dot)
+    var year = 0;
+    i = 0;
+    while (i < dot1) {
+        var c = load8(version + i);
+        if (c < 48) { return 0; }
+        if (c > 57) { return 0; }
+        year = year * 10 + (c - 48);
+        i = i + 1;
+    }
+
+    # Parse month (between dots)
+    var month = 0;
+    i = dot1 + 1;
+    while (i < dot2) {
+        var c = load8(version + i);
+        if (c < 48) { return 0; }
+        if (c > 57) { return 0; }
+        month = month * 10 + (c - 48);
+        i = i + 1;
+    }
+
+    # Parse day (after second dot)
+    var day = 0;
+    i = dot2 + 1;
+    while (i < vlen) {
+        var c = load8(version + i);
+        if (c < 48) { return 0; }
+        if (c > 57) { return 0; }
+        day = day * 10 + (c - 48);
+        i = i + 1;
+    }
+
+    var v = alloc(24);
+    store64(v, year);
+    store64(v + 8, month);
+    store64(v + 16, day);
+    return v;
+}
+
+# Validate a CalVer version string (YYYY.M.D).
+# Returns Result: Ok(0) or Err.
+fn update_validate_version(version) {
+    var v = update_parse_version(version);
+    if (v == 0) {
+        return err_invalid_argument("version must have exactly 3 parts (YYYY.M.D)");
+    }
+    var year = load64(v);
+    var month = load64(v + 8);
+
+    if (year < 2024) {
+        return err_invalid_argument("version year out of range (2024-2100)");
+    }
+    if (year > 2100) {
+        return err_invalid_argument("version year out of range (2024-2100)");
+    }
+    if (month < 1) {
+        return err_invalid_argument("version month out of range (1-12)");
+    }
+    if (month > 12) {
+        return err_invalid_argument("version month out of range (1-12)");
+    }
+    return Ok(0);
+}
+
+# ================================================================
+# Version comparison
+# ================================================================
+
+# Compare two CalVer version strings.
+# Returns VER_LESS (-1), VER_EQUAL (0), or VER_GREATER (1).
+# Falls back to byte-by-byte comparison if either string is malformed.
+fn update_compare_versions(a, b) {
+    var va = update_parse_version(a);
+    var vb = update_parse_version(b);
+
+    if (va == 0) {
+        if (vb == 0) {
+            # Both malformed: lexicographic comparison
+            var alen = strlen(a);
+            var blen = strlen(b);
+            var minlen = alen;
+            if (blen < minlen) { minlen = blen; }
+            var i = 0;
+            while (i < minlen) {
+                var ca = load8(a + i);
+                var cb = load8(b + i);
+                if (ca < cb) { return VER_LESS; }
+                if (ca > cb) { return VER_GREATER; }
+                i = i + 1;
+            }
+            if (alen < blen) { return VER_LESS; }
+            if (alen > blen) { return VER_GREATER; }
+            return VER_EQUAL;
+        }
+        return VER_LESS;
+    }
+    if (vb == 0) { return VER_GREATER; }
+
+    # Compare year
+    var ay = load64(va);
+    var by = load64(vb);
+    if (ay < by) { return VER_LESS; }
+    if (ay > by) { return VER_GREATER; }
+
+    # Compare month
+    var am = load64(va + 8);
+    var bm = load64(vb + 8);
+    if (am < bm) { return VER_LESS; }
+    if (am > bm) { return VER_GREATER; }
+
+    # Compare day
+    var ad = load64(va + 16);
+    var bd = load64(vb + 16);
+    if (ad < bd) { return VER_LESS; }
+    if (ad > bd) { return VER_GREATER; }
+
+    return VER_EQUAL;
+}
+
+# ================================================================
+# Update slot helpers
+# ================================================================
+
+fn update_other_slot(slot) {
+    if (slot == SLOT_A) { return SLOT_B; }
+    return SLOT_A;
+}
+
+fn update_slot_suffix(slot) {
+    if (slot == SLOT_A) { return "a"; }
+    return "b";
+}
+
+fn update_slot_str(slot) {
+    if (slot == SLOT_A) { return "A"; }
+    return "B";
+}
+
+fn update_phase_str(phase) {
+    if (phase == PHASE_DOWNLOADING) { return "Downloading"; }
+    if (phase == PHASE_VERIFYING) { return "Verifying"; }
+    if (phase == PHASE_APPLYING) { return "Applying"; }
+    if (phase == PHASE_FINALIZING) { return "Finalizing"; }
+    if (phase == PHASE_ROLLING_BACK) { return "Rolling back"; }
+    if (phase == PHASE_COMPLETE) { return "Complete"; }
+    if (phase == PHASE_FAILED) { return "Failed"; }
+    return "Unknown";
+}

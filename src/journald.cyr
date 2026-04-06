@@ -1,0 +1,505 @@
+# journald.cyr — systemd journal integration
+# Ported from rust-old/src/journald.rs
+#
+# Send structured log messages to journald via AF_UNIX datagram socket,
+# and query the journal via journalctl subprocess.
+#
+# Requires: lib/string.cyr, lib/str.cyr, lib/vec.cyr, lib/process.cyr,
+#           lib/syscalls.cyr, src/error.cyr
+#
+# All structs are bags of i64 fields accessed via store64/load64.
+# Strings are Str (fat pointer: data + length) from lib/str.cyr.
+
+# ================================================================
+# Constants
+# ================================================================
+
+enum JournalConst {
+    # AF_UNIX = 1, SOCK_DGRAM = 2
+    AF_UNIX = 1;
+    # sendto syscall
+    SYS_SENDTO = 44;
+    # sockaddr_un: { family(2), path(108) } = 110 bytes
+    SOCKADDR_UN_SIZE = 110;
+    # Journal socket path length (including null)
+    JOURNAL_SOCKET_PATH_LEN = 33;
+}
+
+# Syslog priority levels
+enum JournalPriority {
+    JOURNAL_EMERG = 0;
+    JOURNAL_ALERT = 1;
+    JOURNAL_CRIT = 2;
+    JOURNAL_ERR = 3;
+    JOURNAL_WARNING = 4;
+    JOURNAL_NOTICE = 5;
+    JOURNAL_INFO = 6;
+    JOURNAL_DEBUG = 7;
+}
+
+# ================================================================
+# JournalEntry struct
+# { timestamp, unit (Str), priority, message (Str), pid, fields (vec) }
+# Layout: +0 timestamp, +8 unit, +16 priority, +24 message,
+#         +32 pid, +40 fields_keys (vec), +48 fields_vals (vec).
+# Total: 56 bytes.
+# ================================================================
+
+fn journal_entry_new(timestamp, unit, priority, message, pid) {
+    var e = alloc(56);
+    store64(e, timestamp);
+    store64(e + 8, unit);
+    store64(e + 16, priority);
+    store64(e + 24, message);
+    store64(e + 32, pid);
+    store64(e + 40, vec_new());   # fields keys
+    store64(e + 48, vec_new());   # fields values
+    return e;
+}
+
+fn journal_entry_timestamp(e) { return load64(e); }
+fn journal_entry_unit(e) { return load64(e + 8); }
+fn journal_entry_priority(e) { return load64(e + 16); }
+fn journal_entry_message(e) { return load64(e + 24); }
+fn journal_entry_pid(e) { return load64(e + 32); }
+fn journal_entry_field_keys(e) { return load64(e + 40); }
+fn journal_entry_field_vals(e) { return load64(e + 48); }
+
+# Add an extra field (key-value pair) to a journal entry
+fn journal_entry_add_field(e, key, val) {
+    vec_push(load64(e + 40), key);
+    vec_push(load64(e + 48), val);
+    return 0;
+}
+
+# ================================================================
+# JournalFilter struct
+# { unit (Str or 0), since (Str or 0), until (Str or 0),
+#   priority (-1 = unset), grep (Str or 0), lines (-1 = unset),
+#   boot (Str or 0) }
+# Layout: +0 unit, +8 since, +16 until, +24 priority,
+#         +32 grep, +40 lines, +48 boot. Total: 56 bytes.
+# ================================================================
+
+fn journal_filter_new() {
+    var f = alloc(56);
+    store64(f, 0);          # unit
+    store64(f + 8, 0);      # since
+    store64(f + 16, 0);     # until
+    store64(f + 24, 0 - 1); # priority (unset)
+    store64(f + 32, 0);     # grep
+    store64(f + 40, 0 - 1); # lines (unset)
+    store64(f + 48, 0);     # boot
+    return f;
+}
+
+fn journal_filter_set_unit(f, unit) { store64(f, unit); return 0; }
+fn journal_filter_set_since(f, since) { store64(f + 8, since); return 0; }
+fn journal_filter_set_until(f, until) { store64(f + 16, until); return 0; }
+fn journal_filter_set_priority(f, prio) { store64(f + 24, prio); return 0; }
+fn journal_filter_set_grep(f, grep) { store64(f + 32, grep); return 0; }
+fn journal_filter_set_lines(f, lines) { store64(f + 40, lines); return 0; }
+fn journal_filter_set_boot(f, boot) { store64(f + 48, boot); return 0; }
+
+fn journal_filter_unit(f) { return load64(f); }
+fn journal_filter_since(f) { return load64(f + 8); }
+fn journal_filter_until(f) { return load64(f + 16); }
+fn journal_filter_priority(f) { return load64(f + 24); }
+fn journal_filter_grep(f) { return load64(f + 32); }
+fn journal_filter_lines(f) { return load64(f + 40); }
+fn journal_filter_boot(f) { return load64(f + 48); }
+
+# ================================================================
+# Build journalctl argument string
+# ================================================================
+
+# Build the argument list for a journalctl invocation from a filter.
+# Returns a Str with all arguments space-separated (for run_capture).
+# Note: since run_capture uses _exec3 with only 2 extra args, we build
+# a single combined argument string and use /bin/sh -c for complex queries.
+fn journal_build_args(filter) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "journalctl --output=json --no-pager");
+
+    var unit = load64(filter);
+    if (unit != 0) {
+        str_builder_add_cstr(sb, " --unit=");
+        str_builder_add(sb, unit);
+    }
+
+    var since = load64(filter + 8);
+    if (since != 0) {
+        str_builder_add_cstr(sb, " --since=");
+        str_builder_add(sb, since);
+    }
+
+    var until = load64(filter + 16);
+    if (until != 0) {
+        str_builder_add_cstr(sb, " --until=");
+        str_builder_add(sb, until);
+    }
+
+    var prio = load64(filter + 24);
+    if (prio >= 0) {
+        str_builder_add_cstr(sb, " --priority=");
+        str_builder_add_int(sb, prio);
+    }
+
+    var grep = load64(filter + 32);
+    if (grep != 0) {
+        str_builder_add_cstr(sb, " --grep=");
+        str_builder_add(sb, grep);
+    }
+
+    var lines = load64(filter + 40);
+    if (lines >= 0) {
+        str_builder_add_cstr(sb, " --lines=");
+        str_builder_add_int(sb, lines);
+    }
+
+    var boot = load64(filter + 48);
+    if (boot != 0) {
+        str_builder_add_cstr(sb, " --boot=");
+        str_builder_add(sb, boot);
+    }
+
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# Send structured log message to journald via unix socket
+# ================================================================
+
+# Build a sockaddr_un pointing to /run/systemd/journal/socket.
+# Returns pointer to the struct (110 bytes).
+fn journal_make_sockaddr() {
+    var sa = alloc(SOCKADDR_UN_SIZE);
+    memset(sa, 0, SOCKADDR_UN_SIZE);
+    store16(sa, AF_UNIX);  # sa_family = AF_UNIX
+    # Copy socket path starting at offset 2
+    var path = "/run/systemd/journal/socket";
+    var plen = strlen(path);
+    memcpy(sa + 2, path, plen);
+    return sa;
+}
+
+# Send a structured log message to the journald socket.
+# message: C string — the log message text.
+# priority: integer 0-7 (JOURNAL_EMERG through JOURNAL_DEBUG).
+# identifier: C string — syslog identifier (e.g. "agnosys").
+#
+# The journal native protocol uses newline-separated KEY=VALUE pairs
+# sent as a single datagram to /run/systemd/journal/socket.
+#
+# Returns Result: Ok(0) on success, Err on failure.
+fn journal_send(message, priority, identifier) {
+    if (message == 0) {
+        return err_invalid_argument("journal message cannot be null");
+    }
+    if (priority < 0) {
+        return err_invalid_argument("journal priority must be 0-7");
+    }
+    if (priority > 7) {
+        return err_invalid_argument("journal priority must be 0-7");
+    }
+
+    # Build the datagram payload: KEY=VALUE\n pairs
+    var sb = str_builder_new();
+
+    # PRIORITY=<n>
+    str_builder_add_cstr(sb, "PRIORITY=");
+    str_builder_add_int(sb, priority);
+    str_builder_add_cstr(sb, "\n");
+
+    # MESSAGE=<text>
+    str_builder_add_cstr(sb, "MESSAGE=");
+    str_builder_add_cstr(sb, message);
+    str_builder_add_cstr(sb, "\n");
+
+    # SYSLOG_IDENTIFIER=<id>
+    if (identifier != 0) {
+        str_builder_add_cstr(sb, "SYSLOG_IDENTIFIER=");
+        str_builder_add_cstr(sb, identifier);
+        str_builder_add_cstr(sb, "\n");
+    }
+
+    var payload = str_builder_build(sb);
+
+    # Create AF_UNIX SOCK_DGRAM socket
+    var SYS_SOCKET = 41;
+    var fd = syscall(SYS_SOCKET, AF_UNIX, 2, 0);  # SOCK_DGRAM = 2
+    if (fd < 0) {
+        return err_syscall_failed(0 - fd, "failed to create unix socket");
+    }
+
+    # Build sockaddr_un
+    var sa = journal_make_sockaddr();
+
+    # sendto(fd, buf, len, flags, dest_addr, addrlen)
+    var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
+    sys_close(fd);
+
+    if (ret < 0) {
+        return err_syscall_failed(0 - ret, "sendto journal socket failed");
+    }
+
+    return Ok(0);
+}
+
+# Send a structured log with extra key-value fields.
+# fields_keys: vec of C string pointers (field names).
+# fields_vals: vec of C string pointers (field values).
+# Returns Result: Ok(0) or Err.
+fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) {
+    if (message == 0) {
+        return err_invalid_argument("journal message cannot be null");
+    }
+    if (priority < 0) {
+        return err_invalid_argument("journal priority must be 0-7");
+    }
+    if (priority > 7) {
+        return err_invalid_argument("journal priority must be 0-7");
+    }
+
+    var sb = str_builder_new();
+
+    str_builder_add_cstr(sb, "PRIORITY=");
+    str_builder_add_int(sb, priority);
+    str_builder_add_cstr(sb, "\n");
+
+    str_builder_add_cstr(sb, "MESSAGE=");
+    str_builder_add_cstr(sb, message);
+    str_builder_add_cstr(sb, "\n");
+
+    if (identifier != 0) {
+        str_builder_add_cstr(sb, "SYSLOG_IDENTIFIER=");
+        str_builder_add_cstr(sb, identifier);
+        str_builder_add_cstr(sb, "\n");
+    }
+
+    # Append extra fields
+    var nfields = vec_len(fields_keys);
+    var fi = 0;
+    while (fi < nfields) {
+        str_builder_add_cstr(sb, vec_get(fields_keys, fi));
+        str_builder_add_cstr(sb, "=");
+        str_builder_add_cstr(sb, vec_get(fields_vals, fi));
+        str_builder_add_cstr(sb, "\n");
+        fi = fi + 1;
+    }
+
+    var payload = str_builder_build(sb);
+
+    var SYS_SOCKET = 41;
+    var fd = syscall(SYS_SOCKET, AF_UNIX, 2, 0);
+    if (fd < 0) {
+        return err_syscall_failed(0 - fd, "failed to create unix socket");
+    }
+
+    var sa = journal_make_sockaddr();
+    var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
+    sys_close(fd);
+
+    if (ret < 0) {
+        return err_syscall_failed(0 - ret, "sendto journal socket failed");
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Parse a single JSON line from journalctl --output=json
+# ================================================================
+
+# Minimal JSON field extraction: find a key in a JSON object string
+# and extract the string value. Returns Str or 0 if not found.
+# This is a lightweight parser — handles flat JSON objects only.
+fn journal_json_get_str(json, key) {
+    # Search for "key" in the JSON
+    var jlen = str_len(json);
+    var jd = str_data(json);
+    var klen = strlen(key);
+
+    var pos = 0;
+    while (pos < jlen - klen - 3) {
+        # Look for "<key>"
+        if (load8(jd + pos) == 34) {  # '"'
+            if (memeq(jd + pos + 1, key, klen) == 1) {
+                if (load8(jd + pos + 1 + klen) == 34) {  # closing '"'
+                    # Found the key. Now find the value after ':'
+                    var vpos = pos + 2 + klen;
+                    # Skip whitespace and colon
+                    while (vpos < jlen) {
+                        var vc = load8(jd + vpos);
+                        if (vc == 58) { vpos = vpos + 1; break; }  # ':'
+                        if (vc == 32) { vpos = vpos + 1; continue; }
+                        if (vc == 9) { vpos = vpos + 1; continue; }
+                        break;
+                    }
+                    # Skip whitespace
+                    while (vpos < jlen) {
+                        var wc = load8(jd + vpos);
+                        if (wc == 32) { vpos = vpos + 1; continue; }
+                        if (wc == 9) { vpos = vpos + 1; continue; }
+                        if (wc == 10) { vpos = vpos + 1; continue; }
+                        break;
+                    }
+                    # Value should start with '"'
+                    if (vpos < jlen) {
+                        if (load8(jd + vpos) == 34) {
+                            # Find closing '"'
+                            var vstart = vpos + 1;
+                            var vend = vstart;
+                            while (vend < jlen) {
+                                if (load8(jd + vend) == 34) { break; }
+                                # Skip escaped characters
+                                if (load8(jd + vend) == 92) { vend = vend + 1; }  # '\'
+                                vend = vend + 1;
+                            }
+                            return str_new(jd + vstart, vend - vstart);
+                        }
+                    }
+                }
+            }
+        }
+        pos = pos + 1;
+    }
+
+    return 0;
+}
+
+# Parse a single JSON line from journalctl output into a JournalEntry.
+# Returns Result: Ok(entry_ptr) or Err.
+fn journal_parse_json(json_line) {
+    var jlen = str_len(json_line);
+    if (jlen == 0) {
+        return err_invalid_argument("empty journal JSON line");
+    }
+
+    # Check it starts with '{'
+    if (load8(str_data(json_line)) != 123) {
+        return err_invalid_argument("journal JSON is not an object");
+    }
+
+    # Extract known fields
+    var ts_str = journal_json_get_str(json_line, "__REALTIME_TIMESTAMP");
+    var timestamp = 0;
+    if (ts_str != 0) {
+        timestamp = str_to_int(ts_str);
+    }
+
+    var unit = journal_json_get_str(json_line, "_SYSTEMD_UNIT");
+    if (unit == 0) { unit = str_from(""); }
+
+    var prio_str = journal_json_get_str(json_line, "PRIORITY");
+    var priority = JOURNAL_INFO;  # default
+    if (prio_str != 0) {
+        priority = str_to_int(prio_str);
+    }
+
+    var message = journal_json_get_str(json_line, "MESSAGE");
+    if (message == 0) { message = str_from(""); }
+
+    var pid_str = journal_json_get_str(json_line, "_PID");
+    var pid = 0;
+    if (pid_str != 0) {
+        pid = str_to_int(pid_str);
+    }
+
+    var entry = journal_entry_new(timestamp, unit, priority, message, pid);
+    return Ok(entry);
+}
+
+# ================================================================
+# Query journal via journalctl subprocess
+# ================================================================
+
+# Query the systemd journal using journalctl and parse JSON output.
+# filter: JournalFilter pointer (from journal_filter_new).
+# Returns Result: Ok(vec_of_entry_ptrs) or Err.
+fn journal_query(filter) {
+    var cmd_str = journal_build_args(filter);
+
+    # Use /bin/sh -c "<cmd>" to execute the full command
+    var buf = alloc(131072);  # 128KB capture buffer
+    var res = run_capture("/bin/sh", "-c", str_data(cmd_str), buf, 131072);
+    if (is_err_result(res) == 1) {
+        return err_unknown("failed to execute journalctl");
+    }
+
+    var nbytes = payload(res);
+    store8(buf + nbytes, 0);
+    var output = str_new(buf, nbytes);
+
+    # Parse each JSON line
+    var entries = vec_new();
+    var lines = str_split(output, 10);  # '\n'
+    var idx = 0;
+
+    while (idx < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, idx));
+        if (str_len(line) == 0) {
+            idx = idx + 1;
+            continue;
+        }
+
+        var parse_res = journal_parse_json(line);
+        if (is_ok(parse_res) == 1) {
+            vec_push(entries, payload(parse_res));
+        }
+        # Skip unparseable lines silently
+
+        idx = idx + 1;
+    }
+
+    return Ok(entries);
+}
+
+# ================================================================
+# Convenience: get last N log entries for a unit
+# ================================================================
+
+# Get the last `lines` journal entries for a specific systemd unit.
+# unit_name: C string (e.g. "sshd.service").
+# lines: number of entries to return.
+# Returns Result: Ok(vec_of_entry_ptrs) or Err.
+fn journal_get_unit_logs(unit_name, lines) {
+    if (unit_name == 0) {
+        return err_invalid_argument("unit name cannot be null");
+    }
+    if (strlen(unit_name) == 0) {
+        return err_invalid_argument("unit name cannot be empty");
+    }
+
+    var filter = journal_filter_new();
+    journal_filter_set_unit(filter, str_from(unit_name));
+    journal_filter_set_lines(filter, lines);
+
+    return journal_query(filter);
+}
+
+# ================================================================
+# Convenience: send info-level log
+# ================================================================
+
+# Send an info-level message to the journal.
+# message: C string.
+# Returns Result: Ok(0) or Err.
+fn journal_info(message) {
+    return journal_send(message, JOURNAL_INFO, "agnosys");
+}
+
+# Send a warning-level message to the journal.
+fn journal_warning(message) {
+    return journal_send(message, JOURNAL_WARNING, "agnosys");
+}
+
+# Send an error-level message to the journal.
+fn journal_error(message) {
+    return journal_send(message, JOURNAL_ERR, "agnosys");
+}
+
+# Send a debug-level message to the journal.
+fn journal_debug(message) {
+    return journal_send(message, JOURNAL_DEBUG, "agnosys");
+}

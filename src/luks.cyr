@@ -1,0 +1,477 @@
+# luks.cyr — LUKS2 encrypted volume management
+# Ported from rust-old/src/luks.rs
+#
+# Per-agent LUKS2-encrypted loopback volumes for encrypted-at-rest sandbox
+# storage. Shells out to `cryptsetup` (standard tool from the cryptsetup
+# package), `fallocate`, `losetup`, `mkfs.*`, `mount`, and `umount`.
+#
+# Requires: lib/syscalls.cyr, lib/process.cyr, lib/string.cyr, lib/vec.cyr,
+#           lib/alloc.cyr, lib/fmt.cyr, src/error.cyr
+
+# ================================================================
+# Constants
+# ================================================================
+
+enum LuksFilesystem {
+    LUKS_FS_EXT4 = 0;
+    LUKS_FS_XFS = 1;
+    LUKS_FS_BTRFS = 2;
+}
+
+enum LuksPbkdf {
+    LUKS_PBKDF_ARGON2ID = 0;
+    LUKS_PBKDF_PBKDF2 = 1;
+}
+
+enum LuksConst {
+    LUKS_MIN_SIZE_MB = 4;
+    LUKS_MAX_SIZE_MB = 1048576;
+    LUKS_KEY_MAX_BYTES = 1024;
+    LUKS_NAME_MAX_LEN = 128;
+    LUKS_DEFAULT_SIZE_MB = 256;
+    LUKS_DEFAULT_KEY_BITS = 512;
+    SYS_GETRANDOM = 318;
+}
+
+# ================================================================
+# LuksConfig struct
+# Layout: name(+0) backing_path(+8) size_mb(+16) mount_point(+24)
+#         filesystem(+32) cipher_algo(+40) cipher_mode(+48)
+#         key_size_bits(+56) pbkdf(+64)
+# Total: 72 bytes
+# ================================================================
+
+fn luks_config_new(name, backing_path, size_mb, mount_point, filesystem, cipher_algo, cipher_mode, key_size_bits, pbkdf) {
+    var c = alloc(72);
+    store64(c, name);
+    store64(c + 8, backing_path);
+    store64(c + 16, size_mb);
+    store64(c + 24, mount_point);
+    store64(c + 32, filesystem);
+    store64(c + 40, cipher_algo);
+    store64(c + 48, cipher_mode);
+    store64(c + 56, key_size_bits);
+    store64(c + 64, pbkdf);
+    return c;
+}
+
+fn luks_config_name(c) { return load64(c); }
+fn luks_config_backing_path(c) { return load64(c + 8); }
+fn luks_config_size_mb(c) { return load64(c + 16); }
+fn luks_config_mount_point(c) { return load64(c + 24); }
+fn luks_config_filesystem(c) { return load64(c + 32); }
+fn luks_config_cipher_algo(c) { return load64(c + 40); }
+fn luks_config_cipher_mode(c) { return load64(c + 48); }
+fn luks_config_key_size_bits(c) { return load64(c + 56); }
+fn luks_config_pbkdf(c) { return load64(c + 64); }
+
+# Create a default config with sensible defaults (AES-XTS, 512-bit, Argon2id)
+fn luks_config_default(name, backing_path, mount_point) {
+    return luks_config_new(
+        name, backing_path, LUKS_DEFAULT_SIZE_MB, mount_point,
+        LUKS_FS_EXT4, "aes", "xts-plain64",
+        LUKS_DEFAULT_KEY_BITS, LUKS_PBKDF_ARGON2ID
+    );
+}
+
+# ================================================================
+# Filesystem string helpers
+# ================================================================
+
+fn luks_fs_as_str(fs) {
+    if (fs == LUKS_FS_EXT4) { return "ext4"; }
+    if (fs == LUKS_FS_XFS) { return "xfs"; }
+    if (fs == LUKS_FS_BTRFS) { return "btrfs"; }
+    return "ext4";
+}
+
+fn luks_fs_mkfs_cmd(fs) {
+    if (fs == LUKS_FS_EXT4) { return "/usr/sbin/mkfs.ext4"; }
+    if (fs == LUKS_FS_XFS) { return "/usr/sbin/mkfs.xfs"; }
+    if (fs == LUKS_FS_BTRFS) { return "/usr/sbin/mkfs.btrfs"; }
+    return "/usr/sbin/mkfs.ext4";
+}
+
+fn luks_pbkdf_as_str(pbkdf) {
+    if (pbkdf == LUKS_PBKDF_ARGON2ID) { return "argon2id"; }
+    if (pbkdf == LUKS_PBKDF_PBKDF2) { return "pbkdf2"; }
+    return "argon2id";
+}
+
+# ================================================================
+# Validation helpers
+# ================================================================
+
+# Check if a byte is alphanumeric, dash, or underscore
+fn luks_is_name_char(ch) {
+    if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
+    if (ch >= 65 && ch <= 90) { return 1; }   # A-Z
+    if (ch >= 97 && ch <= 122) { return 1; }  # a-z
+    if (ch == 45) { return 1; }                # -
+    if (ch == 95) { return 1; }                # _
+    return 0;
+}
+
+# Validate a LuksConfig. Returns Ok(0) or Err.
+fn luks_config_validate(config) {
+    var name = luks_config_name(config);
+    var namelen = strlen(name);
+
+    if (namelen == 0) {
+        return err_invalid_argument("LUKS volume name cannot be empty");
+    }
+    if (namelen > LUKS_NAME_MAX_LEN) {
+        return err_invalid_argument("LUKS volume name too long (max 128)");
+    }
+
+    # Check name characters
+    var i = 0;
+    while (i < namelen) {
+        var ch = load8(name + i);
+        if (luks_is_name_char(ch) == 0) {
+            return err_invalid_argument("LUKS volume name contains invalid characters");
+        }
+        i = i + 1;
+    }
+
+    var size = luks_config_size_mb(config);
+    if (size < LUKS_MIN_SIZE_MB) {
+        return err_invalid_argument("LUKS volume must be at least 4 MB");
+    }
+    if (size > LUKS_MAX_SIZE_MB) {
+        return err_invalid_argument("LUKS volume exceeds maximum size of 1 TB");
+    }
+
+    var key_bits = luks_config_key_size_bits(config);
+    if (key_bits != 256 && key_bits != 512) {
+        return err_invalid_argument("Invalid key size (must be 256 or 512)");
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Key generation via getrandom(2)
+# ================================================================
+
+# Generate a random key of `size` bytes. Returns Ok(ptr) or Err.
+# The returned pointer points to `size` bytes of random data.
+fn luks_generate_key(size) {
+    if (size == 0) {
+        return err_invalid_argument("Key size must be > 0");
+    }
+    if (size > LUKS_KEY_MAX_BYTES) {
+        return err_invalid_argument("Key size too large (max 1024 bytes)");
+    }
+
+    var buf = alloc(size);
+    memset(buf, 0, size);
+
+    var filled = 0;
+    while (filled < size) {
+        var ret = syscall(SYS_GETRANDOM, buf + filled, size - filled, 0);
+        if (ret < 0) {
+            return err_syscall_failed(0 - ret, "getrandom failed");
+        }
+        filled = filled + ret;
+    }
+
+    return Ok(buf);
+}
+
+# Zeroize key material in memory
+fn luks_zeroize_key(key_ptr, size) {
+    memset(key_ptr, 0, size);
+    return 0;
+}
+
+# ================================================================
+# Build cipher string for cryptsetup (e.g., "aes-xts-plain64")
+# ================================================================
+
+fn luks_cipher_str(config) {
+    var algo = luks_config_cipher_algo(config);
+    var mode = luks_config_cipher_mode(config);
+    var alen = strlen(algo);
+    var mlen = strlen(mode);
+    var total = alen + 1 + mlen + 1;
+    var buf = alloc(total);
+    memcpy(buf, algo, alen);
+    store8(buf + alen, 45);  # '-'
+    memcpy(buf + alen + 1, mode, mlen);
+    store8(buf + alen + 1 + mlen, 0);
+    return buf;
+}
+
+# ================================================================
+# LUKS operations — shells out to cryptsetup, losetup, etc.
+# ================================================================
+
+# Helper: build argv vec and run with exec_capture, return Ok(bytes_read) or Err
+fn luks_run_capture(args, buf, buflen) {
+    var n = exec_capture(args, buf, buflen);
+    if (n < 0) {
+        return err_unknown("command execution failed");
+    }
+    return Ok(n);
+}
+
+# Helper: build argv vec and run, return Ok(exit_code) or Err
+fn luks_run_checked(args) {
+    var rc = exec_vec(args);
+    if (rc != 0) {
+        return err_unknown("command failed with non-zero exit");
+    }
+    return Ok(0);
+}
+
+# Format a LUKS2 encrypted volume.
+# Steps: 1) fallocate backing file 2) losetup 3) cryptsetup luksFormat
+# key_ptr: pointer to key bytes, key_len: key length
+# Returns Ok(loop_device_str) or Err.
+fn luks_format(config, key_ptr, key_len) {
+    var res = luks_config_validate(config);
+    if (is_err_result(res) == 1) { return res; }
+
+    var backing = luks_config_backing_path(config);
+    var size_mb = luks_config_size_mb(config);
+    var size_bytes = size_mb * 1024 * 1024;
+
+    # 1. fallocate backing file
+    var size_buf[24];
+    var slen = fmt_int_buf(size_bytes, &size_buf);
+
+    var fa_args = vec_new();
+    vec_push(fa_args, "/usr/bin/fallocate");
+    vec_push(fa_args, "-l");
+    vec_push(fa_args, &size_buf);
+    vec_push(fa_args, backing);
+
+    var fa_res = luks_run_checked(fa_args);
+    if (is_err_result(fa_res) == 1) { return fa_res; }
+
+    # 2. losetup --find --show <backing>
+    var lo_args = vec_new();
+    vec_push(lo_args, "/usr/sbin/losetup");
+    vec_push(lo_args, "--find");
+    vec_push(lo_args, "--show");
+    vec_push(lo_args, backing);
+
+    var lobuf[256];
+    memset(&lobuf, 0, 256);
+    var lo_res = luks_run_capture(lo_args, &lobuf, 255);
+    if (is_err_result(lo_res) == 1) { return lo_res; }
+
+    # Trim trailing newline from loop device path
+    var lolen = strlen(&lobuf);
+    if (lolen > 0 && load8(&lobuf + lolen - 1) == 10) {
+        store8(&lobuf + lolen - 1, 0);
+        lolen = lolen - 1;
+    }
+
+    # Copy loop device path to heap
+    var loop_dev = alloc(lolen + 1);
+    memcpy(loop_dev, &lobuf, lolen + 1);
+
+    # 3. cryptsetup luksFormat
+    var cipher = luks_cipher_str(config);
+    var key_bits = luks_config_key_size_bits(config);
+    var kbuf[24];
+    var klen = fmt_int_buf(key_bits, &kbuf);
+    var pbkdf = luks_pbkdf_as_str(luks_config_pbkdf(config));
+
+    # Write key to a temp file for --key-file
+    var keyfile = "/tmp/.agnos-luks-keyfile";
+    var kfd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);  # 0600
+    if (kfd < 0) {
+        return err_syscall_failed(0 - kfd, "failed to create keyfile");
+    }
+    sys_write(kfd, key_ptr, key_len);
+    sys_close(kfd);
+
+    var cs_args = vec_new();
+    vec_push(cs_args, "/usr/sbin/cryptsetup");
+    vec_push(cs_args, "luksFormat");
+    vec_push(cs_args, "--type");
+    vec_push(cs_args, "luks2");
+    vec_push(cs_args, "--cipher");
+    vec_push(cs_args, cipher);
+    vec_push(cs_args, "--key-size");
+    vec_push(cs_args, &kbuf);
+    vec_push(cs_args, "--pbkdf");
+    vec_push(cs_args, pbkdf);
+    vec_push(cs_args, "--batch-mode");
+    vec_push(cs_args, "--key-file");
+    vec_push(cs_args, keyfile);
+    vec_push(cs_args, loop_dev);
+
+    var cs_res = luks_run_checked(cs_args);
+
+    # Clean up keyfile
+    sys_unlink(keyfile);
+
+    if (is_err_result(cs_res) == 1) {
+        # Detach loop on failure
+        var det_args = vec_new();
+        vec_push(det_args, "/usr/sbin/losetup");
+        vec_push(det_args, "-d");
+        vec_push(det_args, loop_dev);
+        exec_vec(det_args);
+        return cs_res;
+    }
+
+    return Ok(loop_dev);
+}
+
+# Open (unlock) a LUKS volume. Maps to /dev/mapper/{name}.
+# key_ptr/key_len: key material.
+# Returns Ok(mapper_path_ptr) or Err.
+fn luks_open(config, key_ptr, key_len) {
+    var res = luks_config_validate(config);
+    if (is_err_result(res) == 1) { return res; }
+
+    var name = luks_config_name(config);
+    var backing = luks_config_backing_path(config);
+
+    # Find or attach loop device
+    var lo_args = vec_new();
+    vec_push(lo_args, "/usr/sbin/losetup");
+    vec_push(lo_args, "--find");
+    vec_push(lo_args, "--show");
+    vec_push(lo_args, backing);
+
+    var lobuf[256];
+    memset(&lobuf, 0, 256);
+    var lo_res = luks_run_capture(lo_args, &lobuf, 255);
+    if (is_err_result(lo_res) == 1) { return lo_res; }
+
+    var lolen = strlen(&lobuf);
+    if (lolen > 0 && load8(&lobuf + lolen - 1) == 10) {
+        store8(&lobuf + lolen - 1, 0);
+        lolen = lolen - 1;
+    }
+    var loop_dev = alloc(lolen + 1);
+    memcpy(loop_dev, &lobuf, lolen + 1);
+
+    # Write key to temp file
+    var keyfile = "/tmp/.agnos-luks-keyfile";
+    var kfd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);
+    if (kfd < 0) {
+        return err_syscall_failed(0 - kfd, "failed to create keyfile");
+    }
+    sys_write(kfd, key_ptr, key_len);
+    sys_close(kfd);
+
+    # cryptsetup open --type luks2 --key-file <keyfile> <loop_dev> <name>
+    var cs_args = vec_new();
+    vec_push(cs_args, "/usr/sbin/cryptsetup");
+    vec_push(cs_args, "open");
+    vec_push(cs_args, "--type");
+    vec_push(cs_args, "luks2");
+    vec_push(cs_args, "--key-file");
+    vec_push(cs_args, keyfile);
+    vec_push(cs_args, loop_dev);
+    vec_push(cs_args, name);
+
+    var cs_res = luks_run_checked(cs_args);
+    sys_unlink(keyfile);
+
+    if (is_err_result(cs_res) == 1) { return cs_res; }
+
+    # Build /dev/mapper/<name>
+    var prefix = "/dev/mapper/";
+    var plen = strlen(prefix);
+    var nlen = strlen(name);
+    var mapper = alloc(plen + nlen + 1);
+    memcpy(mapper, prefix, plen);
+    memcpy(mapper + plen, name, nlen);
+    store8(mapper + plen + nlen, 0);
+
+    return Ok(mapper);
+}
+
+# Close (lock) a LUKS volume. Closes the dm-crypt mapping.
+# name: volume name (string pointer).
+# Returns Ok(0) or Err.
+fn luks_close(name) {
+    if (strlen(name) == 0) {
+        return err_invalid_argument("Volume name cannot be empty");
+    }
+
+    # Check if /dev/mapper/<name> exists via sys_access
+    var prefix = "/dev/mapper/";
+    var plen = strlen(prefix);
+    var nlen = strlen(name);
+    var mapper = alloc(plen + nlen + 1);
+    memcpy(mapper, prefix, plen);
+    memcpy(mapper + plen, name, nlen);
+    store8(mapper + plen + nlen, 0);
+
+    var acc = syscall(SYS_ACCESS, mapper, 0);
+    if (acc < 0) {
+        # Not open, nothing to close
+        return Ok(0);
+    }
+
+    var args = vec_new();
+    vec_push(args, "/usr/sbin/cryptsetup");
+    vec_push(args, "close");
+    vec_push(args, name);
+
+    return luks_run_checked(args);
+}
+
+# Create a filesystem on a device.
+# device: path to device (e.g., /dev/mapper/name)
+# filesystem: LUKS_FS_EXT4 / LUKS_FS_XFS / LUKS_FS_BTRFS
+# Returns Ok(0) or Err.
+fn luks_mkfs(device, filesystem) {
+    var cmd = luks_fs_mkfs_cmd(filesystem);
+
+    var args = vec_new();
+    vec_push(args, cmd);
+    # -F for ext4, -f for xfs/btrfs (force)
+    if (filesystem == LUKS_FS_EXT4) {
+        vec_push(args, "-F");
+    } else {
+        vec_push(args, "-f");
+    }
+    vec_push(args, device);
+
+    return luks_run_checked(args);
+}
+
+# Mount a device at a mount point.
+# device: path to block device
+# mount_point: path to mount directory
+# filesystem: LUKS_FS_* constant
+# Returns Ok(0) or Err.
+fn luks_mount(device, mount_point, filesystem) {
+    # Create mount point directory
+    var mk_args = vec_new();
+    vec_push(mk_args, "/usr/bin/mkdir");
+    vec_push(mk_args, "-p");
+    vec_push(mk_args, mount_point);
+    exec_vec(mk_args);
+
+    var fs_str = luks_fs_as_str(filesystem);
+
+    var args = vec_new();
+    vec_push(args, "/usr/bin/mount");
+    vec_push(args, "-t");
+    vec_push(args, fs_str);
+    vec_push(args, device);
+    vec_push(args, mount_point);
+
+    return luks_run_checked(args);
+}
+
+# Unmount a mount point.
+# Returns Ok(0) or Err.
+fn luks_unmount(mount_point) {
+    var args = vec_new();
+    vec_push(args, "/usr/bin/umount");
+    vec_push(args, mount_point);
+
+    return luks_run_checked(args);
+}

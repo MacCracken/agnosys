@@ -1,0 +1,582 @@
+# ima.cyr — IMA/EVM integrity measurement architecture
+# Ported from rust-old/src/ima.rs
+#
+# Provides IMA policy rule construction, measurement parsing, status
+# querying, and file integrity verification via xattr.
+#
+# Requires: lib/syscalls.cyr, lib/process.cyr, lib/string.cyr, lib/vec.cyr,
+#           lib/alloc.cyr, lib/fmt.cyr, src/error.cyr
+
+# ================================================================
+# IMA action constants
+# ================================================================
+
+enum ImaAction {
+    IMA_MEASURE = 0;
+    IMA_APPRAISE = 1;
+    IMA_AUDIT = 2;
+    IMA_HASH = 3;
+    IMA_DONT_MEASURE = 4;
+    IMA_DONT_APPRAISE = 5;
+}
+
+# ================================================================
+# IMA target (func=) constants
+# ================================================================
+
+enum ImaTarget {
+    IMA_FILE_CHECK = 0;
+    IMA_BPRM_CHECK = 1;
+    IMA_MMAP_CHECK = 2;
+    IMA_MODULE_CHECK = 3;
+    IMA_FIRMWARE_CHECK = 4;
+    IMA_POLICY_CHECK = 5;
+}
+
+# ================================================================
+# String representations
+# ================================================================
+
+fn ima_action_str(action) {
+    if (action == IMA_MEASURE) { return "measure"; }
+    if (action == IMA_APPRAISE) { return "appraise"; }
+    if (action == IMA_AUDIT) { return "audit"; }
+    if (action == IMA_HASH) { return "hash"; }
+    if (action == IMA_DONT_MEASURE) { return "dont_measure"; }
+    if (action == IMA_DONT_APPRAISE) { return "dont_appraise"; }
+    return "measure";
+}
+
+fn ima_target_str(target) {
+    if (target == IMA_FILE_CHECK) { return "FILE_CHECK"; }
+    if (target == IMA_BPRM_CHECK) { return "BPRM_CHECK"; }
+    if (target == IMA_MMAP_CHECK) { return "MMAP_CHECK"; }
+    if (target == IMA_MODULE_CHECK) { return "MODULE_CHECK"; }
+    if (target == IMA_FIRMWARE_CHECK) { return "FIRMWARE_CHECK"; }
+    if (target == IMA_POLICY_CHECK) { return "POLICY_CHECK"; }
+    return "FILE_CHECK";
+}
+
+# ================================================================
+# ImaPolicyRule struct
+# Layout: action(+0) target(+8) uid(+16) fowner(+24)
+#         fsuuid(+32) obj_type(+40) mask(+48)
+# Total: 56 bytes.
+# uid/fowner: -1 means not set. fsuuid/obj_type/mask: 0 means not set.
+# ================================================================
+
+fn ima_rule_new(action, target) {
+    var r = alloc(56);
+    store64(r, action);
+    store64(r + 8, target);
+    store64(r + 16, 0 - 1);  # uid: not set
+    store64(r + 24, 0 - 1);  # fowner: not set
+    store64(r + 32, 0);      # fsuuid: not set
+    store64(r + 40, 0);      # obj_type: not set
+    store64(r + 48, 0);      # mask: not set
+    return r;
+}
+
+fn ima_rule_action(r) { return load64(r); }
+fn ima_rule_target(r) { return load64(r + 8); }
+fn ima_rule_uid(r) { return load64(r + 16); }
+fn ima_rule_fowner(r) { return load64(r + 24); }
+fn ima_rule_fsuuid(r) { return load64(r + 32); }
+fn ima_rule_obj_type(r) { return load64(r + 40); }
+fn ima_rule_mask(r) { return load64(r + 48); }
+
+fn ima_rule_set_uid(r, uid) { store64(r + 16, uid); return r; }
+fn ima_rule_set_fowner(r, fowner) { store64(r + 24, fowner); return r; }
+fn ima_rule_set_fsuuid(r, fsuuid) { store64(r + 32, fsuuid); return r; }
+fn ima_rule_set_obj_type(r, obj_type) { store64(r + 40, obj_type); return r; }
+fn ima_rule_set_mask(r, mask) { store64(r + 48, mask); return r; }
+
+# ================================================================
+# ImaPolicyRule validation
+# ================================================================
+
+fn ima_is_hex_char(ch) {
+    if (ch >= 48 && ch <= 57) { return 1; }
+    if (ch >= 65 && ch <= 70) { return 1; }
+    if (ch >= 97 && ch <= 102) { return 1; }
+    return 0;
+}
+
+# Validate a single rule. Returns Ok(0) or Err.
+fn ima_rule_validate(rule) {
+    # Validate fsuuid if set
+    var fsuuid = ima_rule_fsuuid(rule);
+    if (fsuuid != 0) {
+        var ulen = strlen(fsuuid);
+        if (ulen == 0) {
+            return err_invalid_argument("fsuuid cannot be empty");
+        }
+        if (ulen != 32) {
+            return err_invalid_argument("fsuuid must be 32 hex characters");
+        }
+        var i = 0;
+        while (i < ulen) {
+            if (ima_is_hex_char(load8(fsuuid + i)) == 0) {
+                return err_invalid_argument("fsuuid contains non-hex characters");
+            }
+            i = i + 1;
+        }
+    }
+
+    # Validate mask if set
+    var mask = ima_rule_mask(rule);
+    if (mask != 0) {
+        if (streq(mask, "MAY_READ") != 1 &&
+            streq(mask, "MAY_WRITE") != 1 &&
+            streq(mask, "MAY_EXEC") != 1 &&
+            streq(mask, "MAY_APPEND") != 1) {
+            return err_invalid_argument("Invalid mask (expected MAY_READ/MAY_WRITE/MAY_EXEC/MAY_APPEND)");
+        }
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Render a rule as a policy line
+# e.g., "measure func=BPRM_CHECK uid=0 mask=MAY_EXEC"
+# Returns Ok(policy_line_ptr) or Err.
+# ================================================================
+
+fn ima_rule_to_policy_line(rule) {
+    var res = ima_rule_validate(rule);
+    if (is_err_result(res) == 1) { return res; }
+
+    # Build string: "<action> func=<target> [uid=N] [fowner=N] [fsuuid=X] [obj_type=X] [mask=X]"
+    # Allocate generous buffer
+    var buf = alloc(512);
+    var pos = 0;
+
+    # Action
+    var act_str = ima_action_str(ima_rule_action(rule));
+    var act_len = strlen(act_str);
+    memcpy(buf + pos, act_str, act_len);
+    pos = pos + act_len;
+
+    # " func="
+    memcpy(buf + pos, " func=", 6);
+    pos = pos + 6;
+
+    # Target
+    var tgt_str = ima_target_str(ima_rule_target(rule));
+    var tgt_len = strlen(tgt_str);
+    memcpy(buf + pos, tgt_str, tgt_len);
+    pos = pos + tgt_len;
+
+    # Optional uid
+    var uid = ima_rule_uid(rule);
+    if (uid >= 0) {
+        memcpy(buf + pos, " uid=", 5);
+        pos = pos + 5;
+        var ubuf[24];
+        var ulen = fmt_int_buf(uid, &ubuf);
+        memcpy(buf + pos, &ubuf, ulen);
+        pos = pos + ulen;
+    }
+
+    # Optional fowner
+    var fowner = ima_rule_fowner(rule);
+    if (fowner >= 0) {
+        memcpy(buf + pos, " fowner=", 8);
+        pos = pos + 8;
+        var fbuf[24];
+        var flen = fmt_int_buf(fowner, &fbuf);
+        memcpy(buf + pos, &fbuf, flen);
+        pos = pos + flen;
+    }
+
+    # Optional fsuuid
+    var fsuuid = ima_rule_fsuuid(rule);
+    if (fsuuid != 0) {
+        memcpy(buf + pos, " fsuuid=", 8);
+        pos = pos + 8;
+        var fslen = strlen(fsuuid);
+        memcpy(buf + pos, fsuuid, fslen);
+        pos = pos + fslen;
+    }
+
+    # Optional obj_type
+    var obj_type = ima_rule_obj_type(rule);
+    if (obj_type != 0) {
+        memcpy(buf + pos, " obj_type=", 10);
+        pos = pos + 10;
+        var olen = strlen(obj_type);
+        memcpy(buf + pos, obj_type, olen);
+        pos = pos + olen;
+    }
+
+    # Optional mask
+    var mask = ima_rule_mask(rule);
+    if (mask != 0) {
+        memcpy(buf + pos, " mask=", 6);
+        pos = pos + 6;
+        var mlen = strlen(mask);
+        memcpy(buf + pos, mask, mlen);
+        pos = pos + mlen;
+    }
+
+    store8(buf + pos, 0);
+    return Ok(buf);
+}
+
+# ================================================================
+# ImaStatus struct
+# Layout: active(+0) measurement_count(+8) policy_loaded(+16)
+# Total: 24 bytes
+# ================================================================
+
+fn ima_status_new(active, measurement_count, policy_loaded) {
+    var s = alloc(24);
+    store64(s, active);
+    store64(s + 8, measurement_count);
+    store64(s + 16, policy_loaded);
+    return s;
+}
+
+fn ima_status_active(s) { return load64(s); }
+fn ima_status_measurement_count(s) { return load64(s + 8); }
+fn ima_status_policy_loaded(s) { return load64(s + 16); }
+
+# ================================================================
+# ImaMeasurement struct
+# Layout: pcr(+0) template_hash(+8) template_name(+16)
+#         filedata_hash(+24) filename(+32)
+# Total: 40 bytes
+# ================================================================
+
+fn ima_measurement_new(pcr, template_hash, template_name, filedata_hash, filename) {
+    var m = alloc(40);
+    store64(m, pcr);
+    store64(m + 8, template_hash);
+    store64(m + 16, template_name);
+    store64(m + 24, filedata_hash);
+    store64(m + 32, filename);
+    return m;
+}
+
+fn ima_measurement_pcr(m) { return load64(m); }
+fn ima_measurement_template_hash(m) { return load64(m + 8); }
+fn ima_measurement_template_name(m) { return load64(m + 16); }
+fn ima_measurement_filedata_hash(m) { return load64(m + 24); }
+fn ima_measurement_filename(m) { return load64(m + 32); }
+
+# ================================================================
+# Get IMA status
+# Returns Ok(ima_status_ptr) or Err.
+# ================================================================
+
+fn ima_get_status() {
+    var ima_dir = "/sys/kernel/security/ima";
+    var acc = syscall(SYS_ACCESS, ima_dir, 0);
+
+    if (acc < 0) {
+        # IMA not active
+        return Ok(ima_status_new(0, 0, 0));
+    }
+
+    # Count measurements by reading ascii_runtime_measurements
+    var mpath = "/sys/kernel/security/ima/ascii_runtime_measurements";
+    var mcount = 0;
+    var mfd = sys_open(mpath, O_RDONLY, 0);
+    if (mfd >= 0) {
+        var rbuf[4096];
+        var rgo = 1;
+        while (rgo == 1) {
+            var n = sys_read(mfd, &rbuf, 4096);
+            if (n <= 0) {
+                rgo = 0;
+            } else {
+                # Count newlines
+                var ri = 0;
+                while (ri < n) {
+                    if (load8(&rbuf + ri) == 10) {
+                        mcount = mcount + 1;
+                    }
+                    ri = ri + 1;
+                }
+            }
+        }
+        sys_close(mfd);
+    }
+
+    # Check if policy file exists
+    var ppath = "/sys/kernel/security/ima/policy";
+    var policy_loaded = 0;
+    var pacc = syscall(SYS_ACCESS, ppath, 0);
+    if (pacc == 0) { policy_loaded = 1; }
+
+    return Ok(ima_status_new(1, mcount, policy_loaded));
+}
+
+# ================================================================
+# Parse IMA measurements from a buffer
+# Format per line: "PCR TEMPLATE_HASH TEMPLATE_NAME FILEDATA_HASH FILENAME"
+# Returns Ok(vec_of_measurement_ptrs) or Err.
+# ================================================================
+
+fn ima_parse_measurements(content) {
+    var measurements = vec_new();
+    var clen = strlen(content);
+    var pos = 0;
+
+    while (pos < clen) {
+        # Skip leading whitespace
+        while (pos < clen && (load8(content + pos) == 32 || load8(content + pos) == 9)) {
+            pos = pos + 1;
+        }
+        if (pos >= clen) { pos = clen; }
+
+        # Skip empty lines
+        if (pos < clen && load8(content + pos) == 10) {
+            pos = pos + 1;
+        } else if (pos < clen) {
+            # Parse 5 space-separated fields
+            # Field 1: PCR (integer)
+            var pcr_start = pos;
+            while (pos < clen && load8(content + pos) != 32 && load8(content + pos) != 10) {
+                pos = pos + 1;
+            }
+            var pcr_len = pos - pcr_start;
+
+            # Parse PCR number from digits
+            var pcr = 0;
+            var pi = pcr_start;
+            while (pi < pcr_start + pcr_len) {
+                var ch = load8(content + pi);
+                if (ch >= 48 && ch <= 57) {
+                    pcr = pcr * 10 + (ch - 48);
+                }
+                pi = pi + 1;
+            }
+
+            # Skip space
+            if (pos < clen && load8(content + pos) == 32) { pos = pos + 1; }
+
+            # Field 2: template_hash
+            var th_start = pos;
+            while (pos < clen && load8(content + pos) != 32 && load8(content + pos) != 10) {
+                pos = pos + 1;
+            }
+            var th_len = pos - th_start;
+            var template_hash = alloc(th_len + 1);
+            memcpy(template_hash, content + th_start, th_len);
+            store8(template_hash + th_len, 0);
+
+            if (pos < clen && load8(content + pos) == 32) { pos = pos + 1; }
+
+            # Field 3: template_name
+            var tn_start = pos;
+            while (pos < clen && load8(content + pos) != 32 && load8(content + pos) != 10) {
+                pos = pos + 1;
+            }
+            var tn_len = pos - tn_start;
+            var template_name = alloc(tn_len + 1);
+            memcpy(template_name, content + tn_start, tn_len);
+            store8(template_name + tn_len, 0);
+
+            if (pos < clen && load8(content + pos) == 32) { pos = pos + 1; }
+
+            # Field 4: filedata_hash
+            var fh_start = pos;
+            while (pos < clen && load8(content + pos) != 32 && load8(content + pos) != 10) {
+                pos = pos + 1;
+            }
+            var fh_len = pos - fh_start;
+            var filedata_hash = alloc(fh_len + 1);
+            memcpy(filedata_hash, content + fh_start, fh_len);
+            store8(filedata_hash + fh_len, 0);
+
+            if (pos < clen && load8(content + pos) == 32) { pos = pos + 1; }
+
+            # Field 5: filename (rest of line)
+            var fn_start = pos;
+            while (pos < clen && load8(content + pos) != 10) {
+                pos = pos + 1;
+            }
+            var fn_len = pos - fn_start;
+            var filename = alloc(fn_len + 1);
+            memcpy(filename, content + fn_start, fn_len);
+            store8(filename + fn_len, 0);
+
+            # Skip newline
+            if (pos < clen && load8(content + pos) == 10) { pos = pos + 1; }
+
+            # Only add if we got all 5 fields
+            if (th_len > 0 && tn_len > 0 && fh_len > 0 && fn_len > 0) {
+                var m = ima_measurement_new(pcr, template_hash, template_name, filedata_hash, filename);
+                vec_push(measurements, m);
+            }
+        }
+    }
+
+    return Ok(measurements);
+}
+
+# ================================================================
+# Read IMA measurements from the kernel's measurement file
+# Returns Ok(vec_of_measurement_ptrs) or Err.
+# ================================================================
+
+fn ima_read_measurements() {
+    var path = "/sys/kernel/security/ima/ascii_runtime_measurements";
+    var fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) {
+        return err_io(0 - fd, "Failed to read IMA measurements");
+    }
+
+    # Read entire file into buffer (max 64KB)
+    var bufsize = 65536;
+    var buf = alloc(bufsize);
+    memset(buf, 0, bufsize);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(fd, buf + total, bufsize - total - 1);
+        if (n <= 0) { rgo = 0; }
+        else {
+            total = total + n;
+            if (total >= bufsize - 1) { rgo = 0; }
+        }
+    }
+    sys_close(fd);
+    store8(buf + total, 0);
+
+    return ima_parse_measurements(buf);
+}
+
+# ================================================================
+# Write IMA policy to the kernel (append-only!)
+# rules: vec of ima_rule pointers
+# Returns Ok(0) or Err.
+# ================================================================
+
+fn ima_write_policy(rules) {
+    var count = vec_len(rules);
+    if (count == 0) {
+        return err_invalid_argument("IMA policy has no rules");
+    }
+
+    # Validate all rules first
+    var vi = 0;
+    while (vi < count) {
+        var rule = vec_get(rules, vi);
+        var vres = ima_rule_validate(rule);
+        if (is_err_result(vres) == 1) { return vres; }
+        vi = vi + 1;
+    }
+
+    # Build the policy string
+    var policy_buf = alloc(count * 256);
+    var pos = 0;
+
+    var ri = 0;
+    while (ri < count) {
+        var rule = vec_get(rules, ri);
+        var line_res = ima_rule_to_policy_line(rule);
+        if (is_err_result(line_res) == 1) { return line_res; }
+        var line = payload(line_res);
+        var llen = strlen(line);
+
+        if (ri > 0) {
+            store8(policy_buf + pos, 10);  # newline
+            pos = pos + 1;
+        }
+        memcpy(policy_buf + pos, line, llen);
+        pos = pos + llen;
+        ri = ri + 1;
+    }
+    store8(policy_buf + pos, 0);
+
+    # Write to /sys/kernel/security/ima/policy
+    var ppath = "/sys/kernel/security/ima/policy";
+    var pacc = syscall(SYS_ACCESS, ppath, 0);
+    if (pacc < 0) {
+        return err_unknown("IMA policy file not found; is IMA enabled?");
+    }
+
+    var fd = sys_open(ppath, O_WRONLY, 0);
+    if (fd < 0) {
+        var errno = 0 - fd;
+        if (errno == EACCES || errno == EPERM) {
+            return err_permission_denied("write ima policy");
+        }
+        return err_io(errno, "Failed to write IMA policy");
+    }
+
+    var wret = sys_write(fd, policy_buf, pos);
+    sys_close(fd);
+
+    if (wret < 0) {
+        return err_io(0 - wret, "Failed to write IMA policy");
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Verify file integrity via xattr (security.ima)
+# Uses getfattr to read stored hash, computes sha256sum.
+# Returns Ok(1) if matches, Ok(0) if not.
+# ================================================================
+
+fn ima_verify_file_integrity(path) {
+    var acc = syscall(SYS_ACCESS, path, 0);
+    if (acc < 0) {
+        return err_invalid_argument("File not found");
+    }
+
+    # Read security.ima xattr via getfattr
+    var attr_args = vec_new();
+    vec_push(attr_args, "/usr/bin/getfattr");
+    vec_push(attr_args, "-n");
+    vec_push(attr_args, "security.ima");
+    vec_push(attr_args, "--only-values");
+    vec_push(attr_args, "--dump");
+    vec_push(attr_args, path);
+
+    var abuf[1024];
+    memset(&abuf, 0, 1024);
+    var an = exec_capture(attr_args, &abuf, 1023);
+    if (an <= 0) {
+        return err_unknown("File has no security.ima xattr or getfattr failed");
+    }
+    store8(&abuf + an, 0);
+
+    # Compute sha256sum of the file
+    var sha_args = vec_new();
+    vec_push(sha_args, "/usr/bin/sha256sum");
+    vec_push(sha_args, path);
+
+    var sbuf[256];
+    memset(&sbuf, 0, 256);
+    var sn = exec_capture(sha_args, &sbuf, 255);
+    if (sn <= 0) {
+        return err_unknown("sha256sum failed");
+    }
+    store8(&sbuf + sn, 0);
+
+    # sha256sum output: "<hex>  <filename>\n" — extract just the hex
+    var sha_len = 0;
+    while (sha_len < sn && load8(&sbuf + sha_len) != 32 && load8(&sbuf + sha_len) != 10) {
+        sha_len = sha_len + 1;
+    }
+
+    # Compare: the xattr may be binary or hex; compare hex representation
+    # For simplicity, compare the stored value trimmed against computed hex
+    var stored_len = strlen(&abuf);
+    # Trim trailing whitespace from stored
+    while (stored_len > 0 && (load8(&abuf + stored_len - 1) == 10 || load8(&abuf + stored_len - 1) == 32)) {
+        stored_len = stored_len - 1;
+    }
+
+    if (stored_len == sha_len && memeq(&abuf, &sbuf, sha_len) == 1) {
+        return Ok(1);
+    }
+
+    return Ok(0);
+}
