@@ -6,6 +6,8 @@
 # buffer limits, include only the modules your program needs.
 # This main.cyr demonstrates the core modules.
 
+#define LINUX
+
 # ================================================================
 # Standard library
 # ================================================================

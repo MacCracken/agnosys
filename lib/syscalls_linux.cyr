@@ -1,5 +1,5 @@
 # agnosys/syscalls.cyr — Linux x86_64 syscall wrappers
-# Usage: include "lib/agnosys/syscalls.cyr"
+# Usage: add to your source includes
 #
 # Cyrius re-implementation of agnosys syscall bindings.
 # Constants use enums to avoid gvar_toks overflow (64 slot limit).
