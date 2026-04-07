@@ -364,6 +364,24 @@ fn bootloader_is_dangerous_token(text, textlen, token) {
     return 0;
 }
 
+var _bootloader_danger_map = 0;
+
+fn bootloader_danger_reset() { _bootloader_danger_map = 0; return 0; }
+
+fn _bootloader_danger_init() {
+    if (_bootloader_danger_map != 0) { return 0; }
+    _bootloader_danger_map = map_new();
+    map_set(_bootloader_danger_map, "init=/bin/sh", 1);
+    map_set(_bootloader_danger_map, "init=/bin/bash", 1);
+    map_set(_bootloader_danger_map, "init=/bin/dash", 1);
+    map_set(_bootloader_danger_map, "single", 1);
+    map_set(_bootloader_danger_map, "emergency", 1);
+    map_set(_bootloader_danger_map, "rd.break", 1);
+    map_set(_bootloader_danger_map, "debug_shell", 1);
+    map_set(_bootloader_danger_map, "systemd.debug-shell", 1);
+    return 0;
+}
+
 # Validate kernel command-line parameters.
 # Returns Result: Ok(0) if valid, Err if dangerous or malformed.
 fn bootloader_validate_kernel_cmdline(options) {
@@ -376,41 +394,46 @@ fn bootloader_validate_kernel_cmdline(options) {
         return err_invalid_argument("kernel command line exceeds 4096-character limit");
     }
 
-    # Check for dangerous tokens
-    if (bootloader_is_dangerous_token(options, optlen, "init=/bin/sh") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: init=/bin/sh");
-    }
-    if (bootloader_is_dangerous_token(options, optlen, "init=/bin/bash") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: init=/bin/bash");
-    }
-    if (bootloader_is_dangerous_token(options, optlen, "init=/bin/dash") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: init=/bin/dash");
-    }
-    if (bootloader_is_dangerous_token(options, optlen, "single") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: single");
-    }
-    if (bootloader_is_dangerous_token(options, optlen, "emergency") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: emergency");
-    }
-    if (bootloader_is_dangerous_token(options, optlen, "rd.break") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: rd.break");
-    }
-    if (bootloader_is_dangerous_token(options, optlen, "debug_shell") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: debug_shell");
-    }
-    if (bootloader_is_dangerous_token(options, optlen, "systemd.debug-shell") == 1) {
-        return err_invalid_argument("kernel cmdline contains dangerous parameter: systemd.debug-shell");
-    }
+    # Single pass: validate chars + extract space-delimited tokens + check dangerous list.
+    _bootloader_danger_init();
 
-    # Check for non-printable / non-ASCII characters
     var i = 0;
-    while (i < optlen) {
-        var c = load8(options + i);
-        if (c < 32) {
-            return err_invalid_argument("kernel cmdline contains non-printable characters");
+    var tok_start = 0;
+    while (i <= optlen) {
+        var c = 0;
+        if (i < optlen) { c = load8(options + i); }
+
+        # Check printable ASCII (space=32..tilde=126)
+        if (i < optlen) {
+            if (c < 32) {
+                return err_invalid_argument("kernel cmdline contains non-printable characters");
+            }
+            if (c > 126) {
+                return err_invalid_argument("kernel cmdline contains non-ASCII characters");
+            }
         }
-        if (c > 126) {
-            return err_invalid_argument("kernel cmdline contains non-ASCII characters");
+
+        # On space or end-of-string, check the token
+        if (c == 32 || i == optlen) {
+            var tlen = i - tok_start;
+            if (tlen > 0) {
+                # Extract token to null-terminated buffer
+                var tok[128];
+                if (tlen > 127) { tlen = 127; }
+                memcpy(&tok, options + tok_start, tlen);
+                store8(&tok + tlen, 0);
+                # Lowercase the token for case-insensitive match
+                var ti = 0;
+                while (ti < tlen) {
+                    var tc = load8(&tok + ti);
+                    if (tc >= 65) { if (tc <= 90) { store8(&tok + ti, tc + 32); } }
+                    ti = ti + 1;
+                }
+                if (map_has(_bootloader_danger_map, &tok) == 1) {
+                    return err_invalid_argument("kernel cmdline contains dangerous parameter");
+                }
+            }
+            tok_start = i + 1;
         }
         i = i + 1;
     }

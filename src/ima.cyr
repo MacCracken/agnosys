@@ -334,7 +334,7 @@ fn ima_parse_measurements(content) {
         # Skip empty lines
         if (pos < clen && load8(content + pos) == 10) {
             pos = pos + 1;
-        } else if (pos < clen) {
+        } elif (pos < clen) {
             # Parse 5 space-separated fields
             # Field 1: PCR (integer)
             var pcr_start = pos;

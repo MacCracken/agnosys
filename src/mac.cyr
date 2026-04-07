@@ -363,22 +363,36 @@ fn mac_profile_set_apparmor_name(p, name) { store64(p + 16, name); return 0; }
 
 fn mac_default_profile(agent_type) {
     var p = mac_profile_new(agent_type);
+    var tlen = strlen(agent_type);
 
     # Build SELinux context: "system_u:system_r:agnos_agent_<type>_t:s0"
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "system_u:system_r:agnos_agent_");
-    str_builder_add_cstr(sb, agent_type);
-    str_builder_add_cstr(sb, "_t:s0");
-    var ctx = str_builder_build(sb);
-    # Store as null-terminated C string
-    mac_profile_set_selinux_ctx(p, str_data(ctx));
+    # Max: 29 + 32 (type) + 5 = 66 bytes
+    var ctx_prefix = "system_u:system_r:agnos_agent_";
+    var ctx_suffix = "_t:s0";
+    var cplen = 29;
+    var cslen = 5;
+    var ctx_buf[128];
+    memcpy(&ctx_buf, ctx_prefix, cplen);
+    memcpy(&ctx_buf + cplen, agent_type, tlen);
+    memcpy(&ctx_buf + cplen + tlen, ctx_suffix, cslen);
+    store8(&ctx_buf + cplen + tlen + cslen, 0);
+    # Copy to heap (caller may hold pointer beyond alloc_reset)
+    var ctx_total = cplen + tlen + cslen;
+    var ctx = alloc(ctx_total + 1);
+    memcpy(ctx, &ctx_buf, ctx_total + 1);
+    mac_profile_set_selinux_ctx(p, ctx);
 
     # Build AppArmor profile: "agnos-agent-<type>"
-    var ab = str_builder_new();
-    str_builder_add_cstr(ab, "agnos-agent-");
-    str_builder_add_cstr(ab, agent_type);
-    var aa_name = str_builder_build(ab);
-    mac_profile_set_apparmor_name(p, str_data(aa_name));
+    var aa_prefix = "agnos-agent-";
+    var aplen = 12;
+    var aa_buf[64];
+    memcpy(&aa_buf, aa_prefix, aplen);
+    memcpy(&aa_buf + aplen, agent_type, tlen);
+    store8(&aa_buf + aplen + tlen, 0);
+    var aa_total = aplen + tlen;
+    var aa = alloc(aa_total + 1);
+    memcpy(aa, &aa_buf, aa_total + 1);
+    mac_profile_set_apparmor_name(p, aa);
 
     return p;
 }

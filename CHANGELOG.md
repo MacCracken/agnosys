@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-04-07
+
+### Changed — Cyrius 1.9.2 Upgrade
+- **Compiler upgraded 1.6.1 → 1.9.2** across 13 compiler releases
+- CI workflows updated to Cyrius 1.9.2
+- `cyrb.toml` updated with consumer dep spec documentation for `modules = [...]` selective includes
+
+### Refactored — Return Comparisons (Cyrius 1.7.x)
+- Simplified ~25 if/return patterns to direct return comparisons across 16 files
+- `is_syscall_err`: `return ret < 0;`
+- `mac_file_exists`: `return sys_access(path, 0) == 0;`
+- `certpin_ct_streq`: `return acc == 0;`
+- `secureboot_is_enforcing`: `return state == SB_ENABLED;`
+- `WIFEXITED`: `return (status & 0x7F) == 0;`
+- `WIFSIGNALED`: `return sig > 0 && sig != 0x7F;`
+- `sigset_has`: `return (mask & (1 << (signum - 1))) != 0;`
+- `is_err`: `return ret < 0;`
+- `map_has`: `return load64(ep + 16) == 1;`
+- `is_dir`: `return n >= 0;`
+- Applied to both `lib/syscalls_linux.cyr` and `lib/syscalls_agnos.cyr`
+
+### Optimized — Algorithm Improvements
+- **`syscall_name_to_nr`: O(n) → O(1)** — replaced 75-entry if/elif chain with hashmap lookup. Miss case: 1.0us → 44ns (23x faster). Hit case: 28ns → 106ns (hashmap overhead vs best-case first-entry match)
+- **`bootloader_validate_kernel_cmdline`: single-pass** — replaced 8 sequential full-string scans with single-pass tokenizer + hashmap danger lookup. Static init (once). 975ns → 533ns (1.8x faster)
+- **`mac_default_profile`: stack-alloc strings** — replaced str_builder (13 heap allocs) with stack buffers + single heap copy. 2 allocs instead of 13
+- **`create_basic_seccomp_filter`: unrolled** — eliminated loop + 160-byte temp array. Direct BPF instruction writes, same 184-byte output
+
+### Added — Testing
+- `tests/test_integration.cyr` — integration test suite covering 12 modules, 45 assertions using `lib/assert.cyr`. Parity with `rust-old/tests/integration.rs`
+- `tests/bench_all.cyr` — batch-amortized benchmark suite (10K iters × 100 rounds). 12 modules, 30 benchmarks across 11 groups. Eliminates per-iteration `clock_gettime` overhead (~370ns)
+- `lib/bench.cyr` — added `bench_run_batch(b, fp, iters, rounds)` for batch-amortized timing
+- `syscall_map_reset()` / `bootloader_danger_reset()` — reset static hashmaps after `alloc_reset()` to prevent use-after-free in test harness
+
+### Added — Compiler Features Used
+- Return comparisons (`return expr == expr`) — v1.7.0
+- `&&`/`||` in return statements — v1.7.6
+- Nested `Err(fn())` calls — v1.7.6
+- Identifier deduplication (50% tok_names savings) — v1.7.8
+- Include-once semantics — v1.8.0
+- VCNT expanded 2048 → 4096 — v1.8.2
+- Preprocess buffer expanded 256KB → 512KB — v1.8.0
+- Codebuf expanded 192KB → 256KB — v1.8.5
+- Dense switch optimization — v1.7.7
+- Constant folding `+ - & | ^` — v1.7.7
+- f64 transcendentals — v1.7.8
+- Dep spec `modules = [...]` — v1.9.2
+
+### Performance — Batch-Amortized Benchmarks vs Rust
+| Benchmark | Rust | Cyrius | Ratio |
+|-----------|------|--------|-------|
+| getpid | 308ns | 307ns | 1.0x (parity) |
+| getuid | 292ns | 288ns | 1.0x (parity) |
+| is_root | 292ns | 299ns | 1.0x (parity) |
+| from_errno | 11ns | 18ns | 1.6x |
+| wrap_syscall | 306ns | 317ns | 1.0x (parity) |
+| validate_cmdline | 373ns | 533ns | 1.4x |
+| compare_versions | 74ns | 139ns | 1.9x |
+| validate_pin (valid) | 73ns | 249ns | 3.4x |
+| validate_pin (invalid) | 57ns | 9ns | 0.2x (Cyrius 6x faster) |
+| mac_default_profile | 275ns | 409ns | 1.5x |
+| streq (16ch) | — | 79ns | — |
+| map_get (hit) | — | 52ns | — |
+
+### Metrics
+- **Source**: 8,460 lines across 21 files (20 modules + main)
+- **Binary**: 52,016 bytes (was 53,312 at 0.60.0)
+- **Compile**: 8ms
+- **Dependencies**: 0
+- **Tests**: 45 integration assertions, 30 benchmarks
+- **Compiler**: Cyrius 1.9.2
+
+---
+
 ## [0.60.0] - 2026-04-06
 
 ### Changed
