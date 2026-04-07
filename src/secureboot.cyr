@@ -202,8 +202,7 @@ fn secureboot_detect_state() {
 # ================================================================
 
 fn secureboot_is_enforcing(state) {
-    if (state == SB_ENABLED) { return 1; }
-    return 0;
+    return state == SB_ENABLED;
 }
 
 # State to string (returns pointer to static string)

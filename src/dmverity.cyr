@@ -457,25 +457,18 @@ fn verity_verify(data_device, hash_device, root_hash) {
     vec_push(args, root_hash);
 
     var rc = exec_vec(args);
-    if (rc == 0) {
-        return Ok(1);
-    }
-    return Ok(0);
+    return Ok(rc == 0);
 }
 
 # Check if dm-verity is supported on this system.
 # Returns 1 if supported, 0 if not.
 fn verity_supported() {
     # Check for kernel module
-    var acc = syscall(SYS_ACCESS, "/sys/module/dm_verity", 0);
-    if (acc == 0) { return 1; }
+    if (syscall(SYS_ACCESS, "/sys/module/dm_verity", 0) == 0) { return 1; }
 
     # Check if veritysetup is available
     var args = vec_new();
     vec_push(args, "/usr/sbin/veritysetup");
     vec_push(args, "--version");
-    var rc = exec_vec(args);
-    if (rc == 0) { return 1; }
-
-    return 0;
+    return exec_vec(args) == 0;
 }

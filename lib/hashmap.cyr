@@ -141,8 +141,7 @@ fn map_get(m, key) {
 fn map_has(m, key) {
     var ep = _map_find(m, key);
     if (ep == 0) { return 0; }
-    if (load64(ep + 16) != 1) { return 0; }
-    return 1;
+    return load64(ep + 16) == 1;
 }
 
 # Delete key. Returns 1 if found, 0 if not.

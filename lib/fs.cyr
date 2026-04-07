@@ -111,8 +111,7 @@ fn is_dir(path) {
     var buf = alloc(32);
     var n = syscall(SYS_GETDENTS64, fd, buf, 32);
     sys_close(fd);
-    if (n >= 0) { return 1; }
-    return 0;
+    return n >= 0;
 }
 
 # Walk a directory tree, push all file paths to a vec
