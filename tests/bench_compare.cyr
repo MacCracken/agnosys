@@ -4,6 +4,8 @@
 # Build: cyrb build tests/bench_compare.cyr build/bench_compare
 # Run:   ./build/bench_compare
 
+#define LINUX
+
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
