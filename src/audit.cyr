@@ -9,6 +9,18 @@
 # Requires: lib/syscalls.cyr, lib/string.cyr, lib/str.cyr,
 #           lib/net.cyr, src/error.cyr
 
+#define LINUX
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "lib/net.cyr"
+include "lib/process.cyr"
+include "src/error.cyr"
+
 # ================================================================
 # Netlink / audit constants
 # ================================================================

@@ -4,6 +4,16 @@
 # Provides Landlock filesystem sandboxing, seccomp-BPF syscall filtering,
 # and Linux namespace creation via raw syscalls.
 
+#define LINUX
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "lib/hashmap.cyr"
+include "src/error.cyr"
+
 # ================================================================
 # Landlock constants (kernel 5.13+, x86_64)
 # ================================================================
@@ -16,6 +26,7 @@ enum LandlockConst {
     LANDLOCK_ACCESS_FS_READ_DIR = 8;
     LANDLOCK_ACCESS_FS_WRITE_FILE = 2;
     LANDLOCK_RULE_PATH_BENEATH = 1;
+    SYS_PRCTL = 157;
 }
 
 # Filesystem access levels

@@ -9,6 +9,14 @@
 #
 # Requires: lib/syscalls.cyr, lib/string.cyr, lib/str.cyr, src/error.cyr
 
+#define LINUX
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+
 # ================================================================
 # MAC system constants
 # ================================================================

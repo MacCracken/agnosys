@@ -6,6 +6,13 @@
 #
 # Requires: lib/syscalls.cyr, src/error.cyr
 
+#define LINUX
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+
 # ================================================================
 # Additional syscall numbers not in lib/syscalls.cyr
 # ================================================================

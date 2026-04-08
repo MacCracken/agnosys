@@ -1,84 +1,93 @@
 # Agnosys Roadmap
 
-> **Agnosys** is the kernel interface foundation. It extracts from the monolithic
-> `userland/agnos-sys/` in agnosticos into a standalone, feature-gated crate on crates.io.
+> **Agnosys** is the AGNOS kernel interface library. Cyrius bindings for Linux
+> kernel syscalls and security primitives. Consumers include only the modules
+> they need.
 >
-> See [monolith-extraction.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/monolith-extraction.md) for the full extraction plan.
+> Genesis repo: [agnosticos](https://github.com/MacCracken/agnosticos)
 
 ## Scope
 
-Agnosys owns **safe Rust bindings to Linux kernel interfaces**. It does NOT own:
+Agnosys owns **Cyrius bindings to Linux kernel interfaces**. It does NOT own:
 - **Higher-level device abstraction** → yukti (consumes agnosys[udev])
 - **Sandbox policy engine** → kavach (consumes agnosys[landlock,seccomp])
 - **Firewall rules** → nein (consumes agnosys[netns])
 - **Container runtime** → stiva (consumes agnosys[luks,dmverity])
 - **Rendering pipeline** → soorat (consumes agnosys[drm])
 
-## Phase 1 — Core (V0.1) ✅
+## Phase 1 — Core (V0.1)
 
-- [x] `error` — SysError with errno mapping, Cow<'static, str>, Result type alias
-- [x] `syscall` — Low-level syscall wrappers, SysInfo, checked_syscall
-- [x] `logging` — AGNOSYS_LOG env var, tracing-subscriber init
-- [x] Feature gate infrastructure — each module behind its own feature flag
-- [x] `#[non_exhaustive]` on all public enums
-- [x] `#[must_use]` on all pure functions
-- [x] `tracing` instrumentation on all kernel operations
-- [x] Send+Sync compile-time assertions on all public types
-- [x] CI/CD pipeline (ci.yml, release.yml, deny.toml, codecov.yml)
+- [x] `error` — SysError types, errno mapping, Result helpers
+- [x] `syscall` — getpid/uid/hostname/sysinfo wrappers
+- [x] `logging` — Log level control via AGNOSYS_LOG env var
+- [x] CI/CD pipeline (ci.yml, release.yml)
 - [x] Community files (SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md)
 
-## Phase 2 — Security Modules ✅
+## Phase 2 — Security Modules
 
-- [x] `landlock` — Filesystem/network sandboxing via Landlock LSM (ABI v1-v5)
-- [x] `seccomp` — BPF syscall filter builder, allowlist approach, architecture validation
-- [x] `mac` — LSM detection (SELinux/AppArmor/Smack/9 others), security contexts, labels
-- [x] `audit` — Kernel audit netlink socket, status queries, log parsing, line parser
-- [x] `pam` — PAM service inspection, stack parsing, config analysis
+- [x] `security` — Landlock filesystem sandboxing, seccomp-BPF syscall filtering, namespace creation
+- [x] `mac` — SELinux/AppArmor detection and context management
+- [x] `audit` — Kernel audit netlink socket, rule management
+- [x] `pam` — PAM service inspection, passwd/who parsing
 
-Consumer validation: **kavach** ✅, **aegis** ✅, **shakti** ✅, **libro** ✅
+Consumer validation: **kavach**, **aegis**, **shakti**, **libro**
 
-## Phase 3 — Storage, Integrity & Trust ✅
+## Phase 3 — Storage, Integrity & Trust
 
-- [x] `luks` — LUKS header parsing, key slot inspection, dm-crypt volume management
-- [x] `dmverity` — Verity superblock parsing, root hash validation (constant-time), volume status
-- [x] `ima` — IMA runtime measurements, policy parsing, violation count
-- [x] `certpin` — SHA-256 pin computation (zero-dep), base64, SPKI extraction, PinSet validation
-- [x] `tpm` — TPM2 device detection, PCR bank reading, capabilities, event log access
-- [x] `secureboot` — Secure Boot state, EFI variable reading, PK/KEK/db/dbx key databases
-- [x] `fuse` — FUSE protocol over /dev/fuse, request/reply, mount listing
+- [x] `luks` — LUKS2 encrypted volume management
+- [x] `dmverity` — dm-verity integrity verification
+- [x] `ima` — IMA measurements, policy rules
+- [x] `certpin` — Certificate pin validation, SPKI computation
+- [x] `tpm` — TPM2 device, PCR reading, seal/unseal
+- [x] `secureboot` — Secure Boot EFI variable reading
+- [x] `fuse` — FUSE mount parsing, mount/unmount
 
-Consumer validation: **stiva** ✅, **sigil** ✅, **ark** ✅ (partial — fuse done)
+Consumer validation: **stiva**, **sigil**, **ark**
 
-## Phase 4 — System Services & Device ✅
+## Phase 4 — System Services & Device
 
 - [x] ~~`agent`~~ — *(moved to agnosai crate)*
-- [x] `netns` — Network namespace create, enter, list, current ns fd/inode
-- [x] `udev` — Pure sysfs/netlink device enumeration, hotplug monitoring, uevent parsing
-- [x] `drm` — DRM/KMS device enumeration, driver version, capabilities, mode resources, connectors
-- [x] `journald` — Structured journal log sending, journal file listing, disk usage
-- [x] `bootloader` — systemd-boot/GRUB detection, boot entry parsing, kernel listing
-- [x] `update` — Atomic write/copy/swap, fsync, directory sync, renameat2(RENAME_EXCHANGE)
+- [x] `netns` — Network namespace create/destroy, veth, nftables
+- [x] `udev` — Device enumeration via udevadm
+- [x] `drm` — DRM device enumeration, ioctl version/caps
+- [x] `journald` — Systemd journal send/query
+- [x] `bootloader` — systemd-boot/GRUB detection, cmdline validation
+- [x] `update` — Atomic file ops, version comparison
 
-Consumer validation: **daimon** ✅, **nein** ✅, **yukti** ✅, **soorat** ✅, **argonaut** ✅, **ark** ✅
+Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, **ark**
 
-## All Modules Complete ✅
+## Phase 5 — Cyrius Port (V0.60.0)
 
-All 20 modules implemented (agent/llm moved to agnosai/hoosh). All 13 consumers unblocked.
+- [x] **Full port from Rust to Cyrius** — 29,257 lines Rust → ~8,500 lines Cyrius
+- [x] Zero dependencies, native ELF binary
+- [x] Dual-encoding errors: packed (hot path) + heap (diagnostics)
+- [x] Caller-provided stack buffers for syscall wrappers
+- [x] Security hardening across all modules
+- [x] Benchmark parity with Rust on syscall paths
+
+## Phase 6 — Compiler Upgrade & Optimization (V0.90.0)
+
+- [x] Cyrius 1.6.1 → 1.9.2 upgrade across 13 compiler releases
+- [x] Return comparison simplification (~25 patterns across 16 files)
+- [x] `syscall_name_to_nr`: O(n) → O(1) hashmap (23x faster miss case)
+- [x] `bootloader_validate_kernel_cmdline`: single-pass tokenizer (1.8x faster)
+- [x] `mac_default_profile`: stack-alloc strings (13 → 2 heap allocs)
+- [x] `create_basic_seccomp_filter`: unrolled BPF writes
+- [x] Integration test suite (45 assertions, 12 modules)
+- [x] Batch-amortized benchmark suite (30 benchmarks, 11 groups)
+- [x] Include-once module independence (`cyrb check` on all src/*.cyr)
 
 ## V1.0 — Stable API (Next)
 
 - [x] All 20 modules implemented (agent/llm moved to agnosai/hoosh)
-- [x] API stabilization review — public API signatures reviewed, breaking changes resolved (0.50.0)
-- [x] Comprehensive documentation with security considerations per module
-- [ ] All consumers migrated from monolith `agnos-sys` to path dependency on `agnosys`
-- [ ] Monolith `userland/agnos-sys/` deprecated (thin wrapper that re-exports agnosys)
-- [x] Fuzz testing for parsers (8 targets: LUKS, verity, DER/SPKI, audit, PAM, boot, IMA, uevent)
-- [x] `cargo-semver-checks` integration for API stability
-- [x] Example programs for each major module (14 examples)
-- [x] Coverage target: 80%+ line coverage via `cargo llvm-cov` (86.56%)
-
-> **Note:** Agnosys is an internal library crate — it is NOT published to crates.io.
-> Consumers depend on it via path or git dependency within the AGNOS workspace.
+- [x] All 13 consumers unblocked
+- [x] All modules pass `cyrb check` independently
+- [ ] All consumers migrated from monolith `agnos-sys` to `include "src/module.cyr"`
+- [ ] Monolith `userland/agnos-sys/` deprecated
+- [ ] Expanded test coverage (target: 100+ integration assertions)
+- [ ] `cyrb audit` clean pass
+- [ ] `cyrb fmt --check` on all files
+- [ ] Architecture overview documentation
 
 ## Progress
 
@@ -86,50 +95,30 @@ All 20 modules implemented (agent/llm moved to agnosai/hoosh). All 13 consumers 
 |--------|-------|
 | Modules implemented | **20 / 20** (100%) |
 | Consumer crates unblocked | **13 / 13** (100%) |
-| Unit tests | 1,551 |
-| Integration tests | 73 |
-| Doc-tests | 1 |
-| Total tests | **1,625** |
-| Benchmarks | **147** |
-| Fuzz targets | **8** |
-| Examples | **14** |
-| Line coverage | **86.56%** |
-| Version | 0.50.0 |
-
-## Migration Strategy
-
-The extraction is non-breaking. The monolith `agnos-sys` becomes a thin wrapper:
-
-```rust
-// userland/agnos-sys/src/lib.rs (after extraction)
-// Thin re-export — consumers migrate to agnosys directly over time
-pub use agnosys::*;
-```
-
-Each phase delivers independently. Consumers can migrate one module at a time:
-
-```toml
-# Before (depends on entire monolith)
-agnos-sys = { path = "../agnos-sys" }
-
-# After (only pulls what's needed)
-agnosys = { path = "../agnosys", features = ["landlock", "seccomp"] }
-```
+| Source lines (src/) | 8,672 |
+| Stdlib lines (lib/) | 3,562 |
+| Integration assertions | 45 |
+| Benchmarks | 30 |
+| Binary size | 52KB |
+| Compile time | 34ms |
+| Dependencies | 0 |
+| Compiler | Cyrius 1.9.2 |
+| Version | 0.90.0 |
 
 ## Consumer Map
 
-| Consumer | Features needed | Status |
-|----------|----------------|--------|
-| kavach | landlock, seccomp | ✅ Ready |
-| aegis | mac | ✅ Ready |
-| shakti | pam | ✅ Ready |
-| libro | audit | ✅ Ready |
-| stiva | luks, dmverity | ✅ Ready |
-| sigil | tpm, ima, secureboot, certpin | ✅ Ready |
-| ark | fuse, update | ✅ Ready |
-| argonaut | journald, bootloader | ✅ Ready |
-| daimon | seccomp, certpin | ✅ Ready |
-| nein | netns | ✅ Ready |
-| yukti | udev | ✅ Ready |
-| soorat | drm | ✅ Ready |
-| hoosh | certpin | ✅ Ready |
+| Consumer | Modules needed | Status |
+|----------|---------------|--------|
+| kavach | security (landlock, seccomp) | Ready |
+| aegis | mac | Ready |
+| shakti | pam | Ready |
+| libro | audit | Ready |
+| stiva | luks, dmverity | Ready |
+| sigil | tpm, ima, secureboot, certpin | Ready |
+| ark | fuse, update | Ready |
+| argonaut | journald, bootloader | Ready |
+| daimon | security (seccomp), certpin | Ready |
+| nein | netns | Ready |
+| yukti | udev | Ready |
+| soorat | drm | Ready |
+| hoosh | certpin | Ready |

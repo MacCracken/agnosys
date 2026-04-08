@@ -5,163 +5,142 @@ with different trust boundaries and privilege requirements.
 
 ## error
 
-- **No unsafe code.** Pure Rust error types.
-- `Cow<'static, str>` fields prevent accidental heap allocation on hot error paths.
-- `from_errno` maps known errnos to typed variants; unknown errnos include the OS error message via `io::Error::from_raw_os_error`, which calls into libc `strerror_r`.
+- Pure integer error types. No heap allocation on packed error path.
+- `syserr_pack(kind, errno)` encodes `kind << 16 | errno` — zero-alloc, ~6ns.
+- `syserr_new(kind, errno, message)` heap-allocates for diagnostics — cold path only.
+- `err_from_syscall_ret()` maps known errnos to typed variants.
 
 ## syscall
 
-- **Unsafe: minimal.** Direct `libc::` FFI calls (getpid, gettid, sysinfo, gethostname).
-- `checked_syscall` reads errno **before** tracing to prevent tracing-induced clobbering.
-- `hostname()` uses a 256-byte stack buffer — safe, but output is `from_utf8_lossy` (non-UTF8 hostnames are lossily converted).
-- `SysInfo` fields are read from a single `sysinfo(2)` snapshot — no TOCTOU between fields.
+- Direct `syscall()` for getpid, gettid, getuid, geteuid, sysinfo, uname.
+- `checked_syscall(ret)` wraps raw return with Result error handling.
+- `query_sysinfo()` uses a caller-provided stack buffer — no heap allocation.
+- `SysInfo` fields read from a single `sysinfo(2)` snapshot — no TOCTOU between fields.
+- Hostname read into stack buffer; null-terminated.
 
-## landlock
+## security (landlock)
 
-- **Unsafe: syscall wrappers.** Raw `libc::syscall()` for landlock_create_ruleset/add_rule/restrict_self.
+- Raw `syscall()` for landlock_create_ruleset/add_rule/restrict_self.
 - **Privilege: none required** — Landlock works without CAP_SYS_ADMIN (sets PR_SET_NO_NEW_PRIVS automatically).
-- **Irreversible:** `restrict_self()` consumes the Ruleset — the restriction is permanent for the calling thread.
-- Handled access rights are declared at construction time and sent to the kernel immediately — cannot be widened after creation.
-- `allow_path()` opens paths with `O_PATH | O_CLOEXEC` and closes them immediately after adding the rule.
+- **Irreversible:** `restrict_self` is permanent for the calling thread.
+- Handled access rights declared at construction time.
+- `apply_landlock()` opens paths with O_PATH | O_CLOEXEC and closes immediately after adding the rule.
 
-## seccomp
+## security (seccomp)
 
-- **Unsafe: BPF loading.** Raw `libc::syscall(SYS_seccomp)` to load BPF filters.
+- Raw `syscall()` for seccomp BPF filter loading.
 - **Privilege: PR_SET_NO_NEW_PRIVS** — set automatically before filter load.
-- **Irreversible:** Once loaded, seccomp filters cannot be removed (only made stricter).
-- Architecture validation: BPF program always checks `AUDIT_ARCH_NATIVE` first; mismatched architecture kills the process.
-- Rule limit: panics at build time if >254 rules (BPF u8 jump offset limit).
-- **Allowlist approach recommended** — default action should be KillProcess or Errno, with explicit Allow rules.
+- **Irreversible:** Once loaded, seccomp filters cannot be removed.
+- Architecture validation: BPF program checks AUDIT_ARCH first; mismatch kills process.
+- Unrolled BPF instruction writes — fixed 23-instruction filter, 184 bytes.
+- **Allowlist approach** — default action is KILL_PROCESS with explicit ALLOW rules.
 
 ## udev
 
-- **Unsafe: netlink socket.** Raw `libc::socket/bind/recv` for uevent monitoring.
-- **No privilege required** for sysfs enumeration.
-- **Privilege: may need CAP_NET_ADMIN** for uevent netlink socket in some configurations.
-- Device attributes read from sysfs are untrusted strings — consumers should validate.
-- Monitor socket is SOCK_NONBLOCK — `try_recv()` never blocks.
+- Shells out to `udevadm` for device enumeration.
+- Device attributes read from command output are untrusted strings — consumers should validate.
 
 ## drm
 
-- **Unsafe: ioctl calls.** Raw `libc::ioctl` for DRM_IOCTL_VERSION, GET_CAP, MODE_GETRESOURCES, MODE_GETCONNECTOR.
-- **Privilege: requires read access to /dev/dri/card*.** Usually `video` group.
-- **Buffer safety:** Kernel-reported sizes capped at `MAX_VERSION_STRING` (4096) and `MAX_RESOURCE_COUNT` (1024) to prevent malicious/buggy kernel responses from causing OOM.
-- Two-pass ioctl pattern (get sizes, then get data) matches standard DRM API usage.
+- Raw `syscall()` ioctl for DRM_IOCTL_VERSION, GET_CAP, MODE_GETRESOURCES.
+- **Privilege: read access to /dev/dri/card*.** Usually `video` group.
+- Buffer sizes from kernel capped to prevent malicious responses from causing OOM.
+- Two-pass ioctl pattern (get sizes, then get data).
 
 ## netns
 
-- **Unsafe: setns/unshare.** Raw `libc::setns()` and `libc::unshare()`.
-- **Privilege: CAP_SYS_ADMIN** required for `enter()` and `unshare_net()`.
-- **Irreversible (unshare):** `unshare_net()` creates a new namespace for the calling thread. Old namespace is lost unless saved via `current()` first.
-- Namespace fd is opened with `O_RDONLY | O_CLOEXEC`.
-- `current_ns_id()` parses `/proc/self/ns/net` symlink — TOCTOU-safe (reads inode from link target).
+- Raw `syscall()` for setns/unshare.
+- **Privilege: CAP_SYS_ADMIN** required for namespace operations.
+- **Irreversible (unshare):** creates new namespace for calling thread.
+- Per-PID nftables temp file instead of fixed path (avoids races).
+- nftables buffer increased to 16KB with bounds checking.
 
 ## certpin
 
-- **No unsafe code.** Pure Rust SHA-256 + base64 + DER parsing.
-- **Zero external crypto dependencies** — built-in SHA-256 implementation.
-- SHA-256 is verified against NIST test vectors (empty, "hello", "abc").
-- DER/SPKI extraction is best-effort — complex certificates may fail silently (returns false from `validate_der`).
-- `PinSet` uses linear scan — O(n) per validation. Fine for typical pin sets (1-10 pins).
-
-## agent
-
-- **Unsafe: prctl, env vars.** `prctl(PR_SET_NAME)`, `prctl(PR_CAPBSET_READ)`, env var access.
-- **Privilege: CAP_SYS_RESOURCE** needed for negative OOM score adjustments.
-- Process name truncated to 15 bytes (kernel limit).
-- OOM score validated to [-1000, 1000] range before writing to `/proc/self/oom_score_adj`.
-- Watchdog notify uses SOCK_DGRAM to `$NOTIFY_SOCKET` — abstract socket support included.
+- Pure Cyrius SHA-256 + base64 + DER parsing. Zero external crypto dependencies.
+- SHA-256 verified against NIST test vectors.
+- DER/SPKI extraction is best-effort — complex certificates may fail silently.
+- Path validation rejects single quotes/newlines before shell execution.
+- Pin validation uses linear scan — O(n), fine for typical 1-10 pin sets.
 
 ## luks
 
-- **No unsafe code.** Pure sysfs/procfs reads.
-- LUKS header parsing is read-only — no key material is handled.
-- Key slot status is inferred from the magic value `0x00AC71F3` (LUKS_KEY_ENABLED).
-- **No dm-crypt setup** — this module only inspects headers and queries dm status. Actual volume open/close requires privileged dm-ioctl operations not yet implemented.
+- Shells out to `cryptsetup`, `fallocate`, `losetup`, `mkfs.*`, `mount`, `umount`.
+- Per-PID keyfile path instead of predictable `/tmp/.agnos-luks-keyfile`.
+- Keyfile created with mode 0600.
 
 ## dmverity
 
-- **No unsafe code.** Pure file reads.
-- `validate_root_hash()` uses **constant-time comparison** to prevent timing side-channels.
-- Superblock salt_size capped at 256 bytes to prevent malicious superblock OOM.
-- Verity status read from `/sys/block/dm-*/dm/target_type` — requires read access to sysfs.
+- Shells out to `veritysetup` for format and verify operations.
+- Constant-time root hash comparison to prevent timing side-channels.
+- Salt size capped to prevent malicious superblock OOM.
 
 ## audit
 
-- **Unsafe: netlink socket + ptr::read_unaligned.** Raw netlink AUDIT protocol.
+- Raw netlink AUDIT protocol via `syscall()`.
 - **Privilege: CAP_AUDIT_READ or CAP_AUDIT_CONTROL** for socket operations.
-- `AuditStatus` is read via `ptr::read_unaligned` (response buffer may not be aligned).
-- Netlink header serialized via manual `to_ne_bytes()` — no transmute.
-- `parse_audit_line()` handles quoted values but does NOT decode hex-encoded fields (documented).
+- Netlink header serialized via manual byte writes — no struct casting.
+- Path traversal check rejects `..` components in file watch rules.
+- `parse_audit_line()` handles quoted values but does NOT decode hex-encoded fields.
 
 ## pam
 
-- **No unsafe code.** Pure file reads of /etc/pam.d/.
+- Pure file reads of /etc/pam.d/ and /etc/passwd.
 - PAM stack parsing is read-only — no authentication operations.
 - `@include` directives are skipped (not resolved).
-- Dash-prefixed entries (optional modules) are parsed correctly.
+- Username validation rejects control characters.
 
 ## mac
 
-- **Unsafe: getxattr.** `libc::getxattr` for reading security labels from files.
-- LSM detection reads `/sys/kernel/security/lsm` — requires securityfs mounted.
-- Security context reads from `/proc/self/attr/current` may contain null bytes — trimmed.
-- `file_context()` tries SELinux xattr first, then AppArmor.
+- Reads /sys/kernel/security/lsm for LSM detection — requires securityfs mounted.
+- Security context reads from /proc/self/attr/current.
+- Stack-allocated string buffers for profile building (2 heap allocs instead of 13).
 
 ## ima
 
-- **No unsafe code.** Pure sysfs reads.
-- IMA measurement list may be large — `read_all_measurements()` loads entire file into memory.
-- IMA policy reading requires appropriate privileges (typically root).
+- Reads /sys/kernel/security/ima for measurement list and policy.
+- Measurement list may be large — loaded into heap buffer.
+- IMA policy reading requires root privileges.
 
 ## fuse
 
-- **Unsafe: open/read/write on /dev/fuse.** Raw fd operations.
+- Raw fd operations on /dev/fuse.
 - **Privilege: access to /dev/fuse** (usually `fuse` group).
-- `read_request()` uses `ptr::read_unaligned` for FuseInHeader.
-- Request body is a raw byte buffer — consumers must parse per-opcode.
-- `write_reply()` combines header + data into a single write (kernel requires atomic writes).
+- Request body is raw bytes — consumers must parse per-opcode.
 - ENODEV from read indicates clean unmount.
 
 ## update
 
-- **Unsafe: libc::fsync, libc::access, libc::syscall(SYS_renameat2).** Low-level fs operations.
-- `atomic_write()` guarantees: temp file → fsync → rename → dir sync. Crash-safe.
-- `atomic_swap()` uses `renameat2(RENAME_EXCHANGE)` when available, falls back to three-way rename (not atomic but best-effort).
-- `same_filesystem()` compares device IDs — rename across filesystems will fail.
+- `atomic_write()`: temp file → fsync → rename → dir sync. Crash-safe.
+- `atomic_swap()` uses renameat2(RENAME_EXCHANGE) when available, three-way rename fallback.
 - Temp files use PID suffix for uniqueness.
+- Cross-filesystem rename will fail (checked via device ID comparison).
 
 ## tpm
 
-- **No unsafe code.** Pure sysfs reads.
-- TPM device info read from sysfs attributes — no TPM commands issued.
-- PCR values read from legacy `/sys/class/tpm/tpm0/pcr` interface (may not be available on modern systems).
-- Event log path points to `/sys/kernel/security/tpm0/binary_bios_measurements`.
+- Shells out to tpm2-tools (tpm2_pcrread, tpm2_unseal, tpm2_getrandom, etc).
+- No direct TPM device commands — all via standard tpm2-tools interface.
 
 ## secureboot
 
-- **No unsafe code.** Pure EFI variable reads from sysfs.
+- Reads EFI variables from /sys/firmware/efi/efivars/.
 - EFI variable format: 4-byte attributes header + data payload.
 - Boolean variables (SecureBoot, SetupMode) check byte at offset 4.
-- `list_efi_vars()` reads `/sys/firmware/efi/efivars/` — may be slow on systems with many variables.
-- Key database sizes can be large (db/dbx may be several KB).
 
 ## journald
 
-- **Unsafe: socket/sendto.** Raw Unix datagram socket to journal.
+- Unix datagram socket to /run/systemd/journal/socket.
 - Journal protocol: `KEY=VALUE\n` for single-line, binary length prefix for multi-line.
-- Socket path hardcoded to `/run/systemd/journal/socket`.
+- Fields with newline characters in keys are skipped (injection prevention).
 - No authentication — any process can write to the journal socket.
 
 ## bootloader
 
-- **No unsafe code.** Pure file reads.
-- Boot entry parsing reads `/boot/loader/entries/*.conf` — requires read access to /boot.
-- EFI LoaderInfo variable decoded as UTF-16LE.
-- GRUB detection checks `/boot/grub/grub.cfg` and `/boot/grub2/grub.cfg`.
+- Reads /boot/loader/entries/*.conf and /boot/grub/grub.cfg.
+- **Privilege: read access to /boot.**
+- Kernel cmdline validation uses single-pass tokenizer with hashmap danger lookup.
 
 ## logging
 
-- **No unsafe code.** Wraps tracing-subscriber.
-- `try_init()` is idempotent — safe to call multiple times.
-- `AGNOSYS_LOG` env var controls filter level.
+- Reads AGNOSYS_LOG env var for log level control.
+- Pure configuration — no kernel interface.

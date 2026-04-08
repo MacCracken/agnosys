@@ -10,6 +10,17 @@
 # All structs are bags of i64 fields accessed via store64/load64.
 # Strings are Str (fat pointer: data + length) from lib/str.cyr.
 
+#define LINUX
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "lib/process.cyr"
+include "lib/fs.cyr"
+include "src/error.cyr"
+
 # ================================================================
 # PAM service constants
 # ================================================================
