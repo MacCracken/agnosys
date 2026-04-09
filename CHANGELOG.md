@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.95.0] - 2026-04-09
+
+### Fixed — Audit Round
+
+- **`syscall.cyr`: SI_MEM_UNIT offset 112 → 104** — `sysinfo_total_memory()` was reading past the struct into zeroed buffer. Worked by accident when `mem_unit == 1` (common case) but returned wrong values on exotic configs
+- **`certpin.cyr`: buffer overflow in `certpin_compute_spki_pin`** — 1024-byte shell command buffer had no length check on `cert_path`. Added max 896 char validation
+- **`secureboot.cyr`: `run_capture(cmd, argv)` wrong signature** — called with 2 args but function takes 5. Replaced with `exec_capture(args, buf, buflen)` matching codebase pattern
+- **`luks.cyr`: missing write error check in `luks_open`** — `sys_write()` return value for key material was unchecked. Added error propagation
+- **`logging.cyr`: log level parse false positive** — `AGNOSYS_LOG=track` matched as "trace" (only first byte checked). Now checks first two bytes
+
+### Changed — Toolchain Upgrade
+
+- **Compiler upgraded Cyrius 1.9.2 → 2.4.0** — globals limit raised, `cyriusup` version manager, `cyrfmt`/`cyrlint` available
+- Build tool renamed `cyrb` → `cyrius` (build, check, test, bench, audit, fmt, lint)
+- Test files renamed `.cyr` → `.tcyr`, benchmark files `.cyr` → `.bcyr`
+- `scripts/bench-history.sh` updated for new toolchain and output format
+
+### Added — Testing & Quality
+
+- **197 integration assertions** (was 45) across all 20 modules in `tests/test_integration.tcyr`
+- New test coverage: logging (7), security (11), certpin (13), update (12), bootloader (10), audit (12), pam (15), mac (5), dmverity (8), luks (10), ima (10), tpm (9), secureboot (5), fuse (4), udev (7), drm (7), netns (13), journald (6)
+- `cyrius audit` clean pass (24/24): compile, test, lint, format
+- `cyrfmt` applied to all src/*.cyr files
+- `cyrlint` 0 warnings across all modules
+- Include-once module independence — each module includes its own deps for standalone `cyrius check`
+
+### Added — Documentation
+
+- `docs/architecture/overview.md` — module map, include model, data flow, dependency graph, consumer map
+- `docs/development/roadmap.md` — rewritten for Cyrius port reality, added Phase 5-6, updated metrics
+- `docs/SECURITY-NOTES.md` — rewritten for Cyrius (was Rust-centric)
+
+### Performance — No Regressions
+
+| Benchmark | Pre-audit | Post-audit |
+|-----------|-----------|------------|
+| getpid | 307ns | 311ns |
+| from_errno | 18ns | 21ns |
+| syscall_name_to_nr_hit | 107ns | 120ns |
+| validate_cmdline | 543ns | 529ns |
+| compare_versions | 141ns | 140ns |
+| mac_default_profile | 402ns | 416ns |
+
+### Metrics
+
+- **Source**: 8,752 lines across 21 files (20 modules + main)
+- **Binary**: 52,016 bytes
+- **Compile**: 31ms
+- **Dependencies**: 0
+- **Tests**: 197 integration assertions, 30 benchmarks
+- **Compiler**: Cyrius 2.4.0
+
+---
+
 ## [0.90.0] - 2026-04-07
 
 ### Changed — Cyrius 1.9.2 Upgrade

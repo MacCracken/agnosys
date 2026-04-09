@@ -56,36 +56,25 @@ Consumer validation: **stiva**, **sigil**, **ark**
 
 Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, **ark**
 
-## Phase 5 — Cyrius Port (V0.60.0)
+## Phase 5 — Cyrius Port (V0.60.0) ✅
 
-- [x] **Full port from Rust to Cyrius** — 29,257 lines Rust → ~8,500 lines Cyrius
-- [x] Zero dependencies, native ELF binary
-- [x] Dual-encoding errors: packed (hot path) + heap (diagnostics)
-- [x] Caller-provided stack buffers for syscall wrappers
-- [x] Security hardening across all modules
-- [x] Benchmark parity with Rust on syscall paths
+## Phase 6 — Compiler Upgrade & Optimization (V0.90.0) ✅
 
-## Phase 6 — Compiler Upgrade & Optimization (V0.90.0)
+## Phase 7 — Scaffold Hardening & Audit (V0.95.0) ✅
 
-- [x] Cyrius 1.6.1 → 1.9.2 upgrade across 13 compiler releases
-- [x] Return comparison simplification (~25 patterns across 16 files)
-- [x] `syscall_name_to_nr`: O(n) → O(1) hashmap (23x faster miss case)
-- [x] `bootloader_validate_kernel_cmdline`: single-pass tokenizer (1.8x faster)
-- [x] `mac_default_profile`: stack-alloc strings (13 → 2 heap allocs)
-- [x] `create_basic_seccomp_filter`: unrolled BPF writes
-- [x] Integration test suite (45 assertions, 12 modules)
-- [x] Batch-amortized benchmark suite (30 benchmarks, 11 groups)
-- [x] Include-once module independence (`cyrb check` on all src/*.cyr)
+- [x] `cyrius audit` clean pass (24/24: compile, test, lint, format)
+- [x] 197 integration assertions across all 20 modules
+- [x] 5 bugs fixed (2 critical, 1 high, 2 medium)
+- [x] Cyrius 2.4.0 upgrade with `cyrfmt`/`cyrlint`
+- [x] Architecture overview documentation
+- [x] Security notes rewritten for Cyrius
 
 ## V1.0 — Stable API (Next)
 
-- [x] All 20 modules implemented (agent/llm moved to agnosai/hoosh)
-- [x] All 13 consumers unblocked
-- [x] All modules pass `cyrius check` independently
-- [x] Expanded test coverage (197 integration assertions, 20 modules)
-- [x] `cyrius audit` clean pass (24/24)
-- [x] `cyrfmt` clean on all src/*.cyr files
-- [x] Architecture overview documentation
+- [ ] Consumer migration from monolith `agnos-sys`
+- [ ] `cyrius audit` gate in CI
+- [ ] Fuzz testing for parsers (certpin DER, audit netlink, PAM config)
+- [ ] Additional edge-case tests from audit observations
 
 ## Progress
 
@@ -93,7 +82,7 @@ Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, 
 |--------|-------|
 | Modules implemented | **20 / 20** (100%) |
 | Consumer crates unblocked | **13 / 13** (100%) |
-| Source lines (src/) | 8,672 |
+| Source lines (src/) | 8,752 |
 | Stdlib lines (lib/) | 3,562 |
 | Integration assertions | 197 |
 | Benchmarks | 30 |
@@ -101,7 +90,7 @@ Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, 
 | Compile time | 31ms |
 | Dependencies | 0 |
 | Compiler | Cyrius 2.4.0 |
-| Version | 0.90.0 |
+| Version | 0.95.0 |
 
 ## Consumer Map
 
