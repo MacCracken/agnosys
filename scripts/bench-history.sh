@@ -13,13 +13,13 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 
-# Find cyrb
+# Find cyrius
 CYRB="${CYRB:-}"
 if [ -z "$CYRB" ]; then
-    if command -v cyrb >/dev/null 2>&1; then CYRB=cyrb
-    elif [ -x "$HOME/.cyrius/bin/cyrb" ]; then CYRB="$HOME/.cyrius/bin/cyrb"
-    elif [ -x "./build/cyrb" ]; then CYRB="./build/cyrb"
-    else echo "ERROR: cyrb not found"; exit 1; fi
+    if command -v cyrius >/dev/null 2>&1; then CYRB=cyrius
+    elif [ -x "$HOME/.cyrius/bin/cyrius" ]; then CYRB="$HOME/.cyrius/bin/cyrius"
+    elif [ -x "./build/cyrius" ]; then CYRB="./build/cyrius"
+    else echo "ERROR: cyrius not found"; exit 1; fi
 fi
 
 # Create header if file doesn't exist
@@ -38,10 +38,12 @@ echo ""
 
 # Build benchmark binary
 mkdir -p build
-if [ -f tests/bench_compare.cyr ]; then
-    BENCH_SRC=tests/bench_compare.cyr
+if [ -f tests/bench_all.bcyr ]; then
+    BENCH_SRC=tests/bench_all.bcyr
+elif [ -f tests/bench_compare.bcyr ]; then
+    BENCH_SRC=tests/bench_compare.bcyr
 else
-    echo "No benchmark file found at tests/bench_compare.cyr"
+    echo "No benchmark file found"
     exit 1
 fi
 
@@ -53,16 +55,21 @@ BENCH_OUTPUT=$(./build/bench 2>&1)
 echo "$BENCH_OUTPUT"
 echo ""
 
-# Parse output lines like: "getpid (raw): 295 ns/op (1000000 iters)"
+# Parse output lines like: "  getpid: 307ns avg (min=303ns max=372ns) [1000000 iters]"
 while IFS= read -r line; do
-    if [[ "$line" == *"ns/op"* ]]; then
+    if [[ "$line" == *"ns avg"* ]]; then
         BENCH_NAME=$(echo "$line" | sed -E 's/:.*//' | xargs)
-        NS=$(echo "$line" | sed -E 's/.*: ([0-9]+) ns\/op.*/\1/')
+        NS=$(echo "$line" | sed -E 's/.*: ([0-9]+)ns avg.*/\1/')
+        echo "${TIMESTAMP},${COMMIT},${BRANCH},${BENCH_NAME},${NS}" >> "$HISTORY_FILE"
+    elif [[ "$line" == *"us avg"* ]]; then
+        BENCH_NAME=$(echo "$line" | sed -E 's/:.*//' | xargs)
+        US=$(echo "$line" | sed -E 's/.*: ([0-9]+)us avg.*/\1/')
+        NS=$((US * 1000))
         echo "${TIMESTAMP},${COMMIT},${BRANCH},${BENCH_NAME},${NS}" >> "$HISTORY_FILE"
     fi
 done <<< "$BENCH_OUTPUT"
 
-COUNT=$(echo "$BENCH_OUTPUT" | grep -c "ns/op" || echo 0)
+COUNT=$(echo "$BENCH_OUTPUT" | grep -c "avg" || echo 0)
 
 echo "════════════════════════════════════════════"
 echo "  ${COUNT} benchmarks recorded"

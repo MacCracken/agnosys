@@ -126,16 +126,15 @@ fn secureboot_detect_state() {
     }
 
     # Fallback: try mokutil --sb-state
-    var cmd = "mokutil";
-    var argv = alloc(16);
-    store64(argv, cmd);
-    var arg1 = "--sb-state";
-    store64(argv + 8, arg1);
-
-    var mok_res = run_capture(cmd, argv);
+    var mok_args = vec_new();
+    vec_push(mok_args, "mokutil");
+    vec_push(mok_args, "--sb-state");
+    var mokbuf[4096];
+    var mok_n = exec_capture(mok_args, &mokbuf, 4095);
+    var mok_res = wrap_syscall(mok_n);
     if (is_ok(mok_res) == 1) {
-        var output = payload(mok_res);
-        if (output != 0) {
+        var output = &mokbuf;
+        if (mok_n > 0) {
             # Simple substring search for known patterns
             # "SecureBoot enabled" / "SecureBoot disabled" / "setup mode"
             var outlen = strlen(output);

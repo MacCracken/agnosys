@@ -73,31 +73,36 @@ fn log_init_from_env() {
             if (vlen > 0) {
                 var val = buf + vstart;
                 # Parse level string
+                # tr(ace)
                 if (vlen == 5) {
-                    if (load8(val) == 116) {  # 't'
+                    if (load8(val) == 116 && load8(val + 1) == 114) {
                         store64(_log_level_cell, LOG_TRACE + 1);
                     }
                 }
+                # de(bug)
                 if (vlen == 5) {
-                    if (load8(val) == 100) {  # 'd'
+                    if (load8(val) == 100 && load8(val + 1) == 101) {
                         store64(_log_level_cell, LOG_DEBUG + 1);
                     }
                 }
+                # in(fo) / wa(rn)
                 if (vlen == 4) {
-                    if (load8(val) == 105) {  # 'i'
+                    if (load8(val) == 105 && load8(val + 1) == 110) {
                         store64(_log_level_cell, LOG_INFO + 1);
                     }
-                    if (load8(val) == 119) {  # 'w'
+                    if (load8(val) == 119 && load8(val + 1) == 97) {
                         store64(_log_level_cell, LOG_WARN + 1);
                     }
                 }
+                # er(ror)
                 if (vlen == 5) {
-                    if (load8(val) == 101) {  # 'e'
+                    if (load8(val) == 101 && load8(val + 1) == 114) {
                         store64(_log_level_cell, LOG_ERROR + 1);
                     }
                 }
+                # of(f)
                 if (vlen == 3) {
-                    if (load8(val) == 111) {  # 'o'
+                    if (load8(val) == 111 && load8(val + 1) == 102) {
                         store64(_log_level_cell, LOG_OFF + 1);
                     }
                 }

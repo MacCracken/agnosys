@@ -398,8 +398,11 @@ fn luks_open(config, key_ptr, key_len) {
     if (kfd < 0) {
         return err_syscall_failed(0 - kfd, "failed to create keyfile");
     }
-    sys_write(kfd, key_ptr, key_len);
+    var kf_wret2 = sys_write(kfd, key_ptr, key_len);
     sys_close(kfd);
+    if (kf_wret2 < 0) {
+        return err_syscall_failed(0 - kf_wret2, "write keyfile failed");
+    }
 
     # cryptsetup open --type luks2 --key-file <keyfile> <loop_dev> <name>
     var cs_args = vec_new();

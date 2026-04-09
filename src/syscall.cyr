@@ -93,7 +93,7 @@ enum SysInfoOffset {
     SI_TOTALRAM = 32;
     SI_FREERAM = 40;
     SI_PROCS = 80;
-    SI_MEM_UNIT = 112;
+    SI_MEM_UNIT = 104;
 }
 
 enum SysInfoConst {
