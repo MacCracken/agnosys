@@ -60,7 +60,8 @@ fn fs_rule_read_write(path) { return fs_rule_new(path, FS_READ_WRITE); }
 fn apply_landlock(rules, count) {
     if (count == 0) { return Ok(0); }
 
-    var handled_access = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_WRITE_FILE;
+    var handled_access = LANDLOCK_ACCESS_FS_READ_FILE
+    | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_WRITE_FILE;
 
     # LandlockRulesetAttr: { handled_access_fs: u64 } = 8 bytes
     var attr[1];
@@ -84,7 +85,8 @@ fn apply_landlock(rules, count) {
             allowed_access = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR;
         }
         elif (access == FS_READ_WRITE) {
-            allowed_access = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_WRITE_FILE;
+            allowed_access = LANDLOCK_ACCESS_FS_READ_FILE
+            | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_WRITE_FILE;
         }
 
         if (allowed_access != 0) {
@@ -102,7 +104,8 @@ fn apply_landlock(rules, count) {
             store64(&beneath, allowed_access);
             store32(&beneath + 8, path_fd);
 
-            var ret = syscall(SYS_LANDLOCK_ADD_RULE, ruleset_fd, LANDLOCK_RULE_PATH_BENEATH, &beneath, 0);
+            var ret = syscall(SYS_LANDLOCK_ADD_RULE,
+            ruleset_fd, LANDLOCK_RULE_PATH_BENEATH, &beneath, 0);
             syscall(SYS_CLOSE, path_fd);
 
             if (ret < 0) {

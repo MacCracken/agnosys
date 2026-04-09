@@ -232,7 +232,8 @@ fn certpin_compute_spki_pin(cert_path) {
     # We use sh -c to pipe the commands together
     var cmd = "sh";
     # Construct the pipeline string
-    # openssl x509 -in <path> -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl enc -base64 -A
+    # openssl x509 -in <path> -pubkey -noout | openssl pkey -pubin -outform DER
+    # | openssl dgst -sha256 -binary | openssl enc -base64 -A
     # We'll build this as a static command with the path inserted
 
     # For safety, use a fixed buffer for the shell command
@@ -248,7 +249,13 @@ fn certpin_compute_spki_pin(cert_path) {
     memcpy(buf + pos, cert_path, pathlen);
     pos = pos + pathlen;
 
-    var suffix = "' -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl enc -base64 -A";
+    var s1 = "' -pubkey -noout | openssl pkey -pubin -outform DER";
+    var s2 = " | openssl dgst -sha256 -binary | openssl enc -base64 -A";
+    # Build suffix by concatenating s1 + s2 into buf directly
+    var s1len = strlen(s1);
+    memcpy(buf + pos, s1, s1len);
+    pos = pos + s1len;
+    var suffix = s2;
     var suffixlen = strlen(suffix);
     memcpy(buf + pos, suffix, suffixlen);
     pos = pos + suffixlen;

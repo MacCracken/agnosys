@@ -490,102 +490,102 @@ fn netns_render_nftables_ruleset(policy) {
 
     pos = nft_append(buf, pos, "table inet kavach {\n");
 
-    # Input chain
-    pos = nft_append(buf, pos, "  chain input { type filter hook input priority 0; policy ");
-    pos = nft_append(buf, pos, nft_action_str(fw_policy_default_in(policy)));
-    pos = nft_append(buf, pos, ";\n");
-    pos = nft_append(buf, pos, "    ct state established,related accept\n");
-    pos = nft_append(buf, pos, "    iif lo accept\n");
+        # Input chain
+        pos = nft_append(buf, pos, "  chain input { type filter hook input priority 0; policy ");
+            pos = nft_append(buf, pos, nft_action_str(fw_policy_default_in(policy)));
+            pos = nft_append(buf, pos, ";\n");
+            pos = nft_append(buf, pos, "    ct state established,related accept\n");
+            pos = nft_append(buf, pos, "    iif lo accept\n");
 
-    var rules = fw_policy_rules(policy);
-    var count = fw_policy_rule_count(policy);
-    var i = 0;
-    while (i < count) {
-        var rule = load64(rules + i * 8);
-        if (fw_rule_direction(rule) == TRAFFIC_INBOUND) {
-            var action = nft_action_str(fw_rule_action(rule));
-            var proto = nft_proto_str(fw_rule_protocol(rule));
-            var port = fw_rule_port(rule);
-            if (proto != 0) {
-                if (port > 0) {
-                    pos = nft_append(buf, pos, "    ");
-                    pos = nft_append(buf, pos, proto);
-                    pos = nft_append(buf, pos, " dport ");
-                    var pbuf = alloc(8);
-                    var plen = fmt_int_buf(port, pbuf);
-                    store8(pbuf + plen, 0);
-                    pos = nft_append(buf, pos, pbuf);
-                    pos = nft_append(buf, pos, " ");
-                    pos = nft_append(buf, pos, action);
-                    pos = nft_append(buf, pos, " comment \"");
-                    pos = nft_append(buf, pos, fw_rule_comment(rule));
-                    pos = nft_append(buf, pos, "\"\n");
+            var rules = fw_policy_rules(policy);
+            var count = fw_policy_rule_count(policy);
+            var i = 0;
+            while (i < count) {
+                var rule = load64(rules + i * 8);
+                if (fw_rule_direction(rule) == TRAFFIC_INBOUND) {
+                    var action = nft_action_str(fw_rule_action(rule));
+                    var proto = nft_proto_str(fw_rule_protocol(rule));
+                    var port = fw_rule_port(rule);
+                    if (proto != 0) {
+                        if (port > 0) {
+                            pos = nft_append(buf, pos, "    ");
+                            pos = nft_append(buf, pos, proto);
+                            pos = nft_append(buf, pos, " dport ");
+                            var pbuf = alloc(8);
+                            var plen = fmt_int_buf(port, pbuf);
+                            store8(pbuf + plen, 0);
+                            pos = nft_append(buf, pos, pbuf);
+                            pos = nft_append(buf, pos, " ");
+                            pos = nft_append(buf, pos, action);
+                            pos = nft_append(buf, pos, " comment \"");
+                            pos = nft_append(buf, pos, fw_rule_comment(rule));
+                            pos = nft_append(buf, pos, "\"\n");
+                        }
+                    }
+                    var raddr = fw_rule_remote_addr(rule);
+                    if (raddr != 0) {
+                        if (strlen(raddr) > 0) {
+                            pos = nft_append(buf, pos, "    ip saddr ");
+                            pos = nft_append(buf, pos, raddr);
+                            pos = nft_append(buf, pos, " ");
+                            pos = nft_append(buf, pos, action);
+                            pos = nft_append(buf, pos, " comment \"");
+                            pos = nft_append(buf, pos, fw_rule_comment(rule));
+                            pos = nft_append(buf, pos, "\"\n");
+                        }
+                    }
                 }
+                i = i + 1;
             }
-            var raddr = fw_rule_remote_addr(rule);
-            if (raddr != 0) {
-                if (strlen(raddr) > 0) {
-                    pos = nft_append(buf, pos, "    ip saddr ");
-                    pos = nft_append(buf, pos, raddr);
-                    pos = nft_append(buf, pos, " ");
-                    pos = nft_append(buf, pos, action);
-                    pos = nft_append(buf, pos, " comment \"");
-                    pos = nft_append(buf, pos, fw_rule_comment(rule));
-                    pos = nft_append(buf, pos, "\"\n");
-                }
-            }
-        }
-        i = i + 1;
-    }
-    pos = nft_append(buf, pos, "  }\n");
+            pos = nft_append(buf, pos, "  }\n");
 
-    # Output chain
-    pos = nft_append(buf, pos, "  chain output { type filter hook output priority 0; policy ");
-    pos = nft_append(buf, pos, nft_action_str(fw_policy_default_out(policy)));
-    pos = nft_append(buf, pos, ";\n");
-    pos = nft_append(buf, pos, "    ct state established,related accept\n");
-    pos = nft_append(buf, pos, "    oif lo accept\n");
+        # Output chain
+        pos = nft_append(buf, pos, "  chain output { type filter hook output priority 0; policy ");
+            pos = nft_append(buf, pos, nft_action_str(fw_policy_default_out(policy)));
+            pos = nft_append(buf, pos, ";\n");
+            pos = nft_append(buf, pos, "    ct state established,related accept\n");
+            pos = nft_append(buf, pos, "    oif lo accept\n");
 
-    i = 0;
-    while (i < count) {
-        var rule = load64(rules + i * 8);
-        if (fw_rule_direction(rule) == TRAFFIC_OUTBOUND) {
-            var action = nft_action_str(fw_rule_action(rule));
-            var proto = nft_proto_str(fw_rule_protocol(rule));
-            var port = fw_rule_port(rule);
-            if (proto != 0) {
-                if (port > 0) {
-                    pos = nft_append(buf, pos, "    ");
-                    pos = nft_append(buf, pos, proto);
-                    pos = nft_append(buf, pos, " dport ");
-                    var pbuf = alloc(8);
-                    var plen = fmt_int_buf(port, pbuf);
-                    store8(pbuf + plen, 0);
-                    pos = nft_append(buf, pos, pbuf);
-                    pos = nft_append(buf, pos, " ");
-                    pos = nft_append(buf, pos, action);
-                    pos = nft_append(buf, pos, " comment \"");
-                    pos = nft_append(buf, pos, fw_rule_comment(rule));
-                    pos = nft_append(buf, pos, "\"\n");
+            i = 0;
+            while (i < count) {
+                var rule = load64(rules + i * 8);
+                if (fw_rule_direction(rule) == TRAFFIC_OUTBOUND) {
+                    var action = nft_action_str(fw_rule_action(rule));
+                    var proto = nft_proto_str(fw_rule_protocol(rule));
+                    var port = fw_rule_port(rule);
+                    if (proto != 0) {
+                        if (port > 0) {
+                            pos = nft_append(buf, pos, "    ");
+                            pos = nft_append(buf, pos, proto);
+                            pos = nft_append(buf, pos, " dport ");
+                            var pbuf = alloc(8);
+                            var plen = fmt_int_buf(port, pbuf);
+                            store8(pbuf + plen, 0);
+                            pos = nft_append(buf, pos, pbuf);
+                            pos = nft_append(buf, pos, " ");
+                            pos = nft_append(buf, pos, action);
+                            pos = nft_append(buf, pos, " comment \"");
+                            pos = nft_append(buf, pos, fw_rule_comment(rule));
+                            pos = nft_append(buf, pos, "\"\n");
+                        }
+                    }
+                    var raddr = fw_rule_remote_addr(rule);
+                    if (raddr != 0) {
+                        if (strlen(raddr) > 0) {
+                            pos = nft_append(buf, pos, "    ip daddr ");
+                            pos = nft_append(buf, pos, raddr);
+                            pos = nft_append(buf, pos, " ");
+                            pos = nft_append(buf, pos, action);
+                            pos = nft_append(buf, pos, " comment \"");
+                            pos = nft_append(buf, pos, fw_rule_comment(rule));
+                            pos = nft_append(buf, pos, "\"\n");
+                        }
+                    }
                 }
+                i = i + 1;
             }
-            var raddr = fw_rule_remote_addr(rule);
-            if (raddr != 0) {
-                if (strlen(raddr) > 0) {
-                    pos = nft_append(buf, pos, "    ip daddr ");
-                    pos = nft_append(buf, pos, raddr);
-                    pos = nft_append(buf, pos, " ");
-                    pos = nft_append(buf, pos, action);
-                    pos = nft_append(buf, pos, " comment \"");
-                    pos = nft_append(buf, pos, fw_rule_comment(rule));
-                    pos = nft_append(buf, pos, "\"\n");
-                }
-            }
-        }
-        i = i + 1;
-    }
-    pos = nft_append(buf, pos, "  }\n");
-    pos = nft_append(buf, pos, "}\n");
+            pos = nft_append(buf, pos, "  }\n");
+        pos = nft_append(buf, pos, "}\n");
     store8(buf + pos, 0);
 
     return buf;

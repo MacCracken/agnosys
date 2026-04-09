@@ -81,13 +81,11 @@ Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, 
 
 - [x] All 20 modules implemented (agent/llm moved to agnosai/hoosh)
 - [x] All 13 consumers unblocked
-- [x] All modules pass `cyrb check` independently
-- [ ] All consumers migrated from monolith `agnos-sys` to `include "src/module.cyr"`
-- [ ] Monolith `userland/agnos-sys/` deprecated
-- [ ] Expanded test coverage (target: 100+ integration assertions)
-- [ ] `cyrb audit` clean pass
-- [ ] `cyrb fmt --check` on all files
-- [ ] Architecture overview documentation
+- [x] All modules pass `cyrius check` independently
+- [x] Expanded test coverage (197 integration assertions, 20 modules)
+- [x] `cyrius audit` clean pass (24/24)
+- [x] `cyrfmt` clean on all src/*.cyr files
+- [x] Architecture overview documentation
 
 ## Progress
 
@@ -97,12 +95,12 @@ Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, 
 | Consumer crates unblocked | **13 / 13** (100%) |
 | Source lines (src/) | 8,672 |
 | Stdlib lines (lib/) | 3,562 |
-| Integration assertions | 45 |
+| Integration assertions | 197 |
 | Benchmarks | 30 |
 | Binary size | 52KB |
-| Compile time | 34ms |
+| Compile time | 31ms |
 | Dependencies | 0 |
-| Compiler | Cyrius 1.9.2 |
+| Compiler | Cyrius 2.4.0 |
 | Version | 0.90.0 |
 
 ## Consumer Map

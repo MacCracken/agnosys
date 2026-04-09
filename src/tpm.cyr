@@ -224,7 +224,9 @@ fn tpm_read_pcr(bank, indices) {
         while (spos < outlen && found == 0) {
             # Skip to non-whitespace after trimming
             var lstart = spos;
-            while (lstart < outlen && (load8(&outbuf + lstart) == 32 || load8(&outbuf + lstart) == 9)) {
+            while (lstart < outlen &&
+            (load8(&outbuf + lstart) == 32 ||
+            load8(&outbuf + lstart) == 9)) {
                 lstart = lstart + 1;
             }
 
@@ -233,23 +235,32 @@ fn tpm_read_pcr(bank, indices) {
                 var after = lstart + idx_len;
                 # Check for " :" or ":"
                 if (after < outlen && (load8(&outbuf + after) == 58 ||
-                    (load8(&outbuf + after) == 32 && after + 1 < outlen && load8(&outbuf + after + 1) == 58))) {
+                (load8(&outbuf + after) == 32 &&
+                after + 1 < outlen &&
+                load8(&outbuf + after + 1) == 58))) {
                     # Found the line — extract hex value after ':'
                     while (after < outlen && load8(&outbuf + after) != 58) {
                         after = after + 1;
                     }
                     after = after + 1;  # skip ':'
                     # Skip whitespace
-                    while (after < outlen && (load8(&outbuf + after) == 32 || load8(&outbuf + after) == 9)) {
+                    while (after < outlen &&
+                    (load8(&outbuf + after) == 32 ||
+                    load8(&outbuf + after) == 9)) {
                         after = after + 1;
                     }
                     # Skip "0x" prefix if present
-                    if (after + 1 < outlen && load8(&outbuf + after) == 48 && load8(&outbuf + after + 1) == 120) {
+                    if (after + 1 < outlen &&
+                    load8(&outbuf + after) == 48 &&
+                    load8(&outbuf + after + 1) == 120) {
                         after = after + 2;
                     }
                     # Read hex until end of line
                     var hstart = after;
-                    while (after < outlen && load8(&outbuf + after) != 10 && load8(&outbuf + after) != 0 && load8(&outbuf + after) != 32) {
+                    while (after < outlen &&
+                    load8(&outbuf + after) != 10 &&
+                    load8(&outbuf + after) != 0 &&
+                    load8(&outbuf + after) != 32) {
                         after = after + 1;
                     }
                     var hlen = after - hstart;

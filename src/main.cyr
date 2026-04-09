@@ -39,7 +39,7 @@ include "src/security.cyr"
 fn main() {
     alloc_init();
 
-    # ── error module ────────────────────────────────────────
+    # -- error module --
     var e = err_invalid_argument("test error");
     if (is_err_result(e) == 1) { println("error: ok"); }
 
@@ -48,7 +48,7 @@ fn main() {
         if (syserr_kind(payload(e2)) == ERR_PERMISSION_DENIED) { println("errno mapping: ok"); }
     }
 
-    # ── syscall module ──────────────────────────────────────
+    # -- syscall module --
     syscall(1, 1, "pid: ", 5);
     print_num(agnosys_getpid());
     syscall(1, 1, ", uid: ", 7);
@@ -86,7 +86,7 @@ fn main() {
         syscall(1, 1, "\n", 1);
     }
 
-    # ── security module ─────────────────────────────────────
+    # -- security module --
     if (syscall_name_to_nr("getpid") == 39) { println("syscall_name_to_nr: ok"); }
 
     var fres = create_basic_seccomp_filter();

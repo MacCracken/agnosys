@@ -123,7 +123,7 @@ fn pam_rule_args(r) { return load64(r + 24); }
 
 # ================================================================
 # UserInfo struct: { username (Str), uid, gid, home_dir (Str),
-#                    shell (Str), groups (vec of Str), is_system_user }
+    #                    shell (Str), groups (vec of Str), is_system_user }
 # Layout: +0 username, +8 uid, +16 gid, +24 home_dir,
 #         +32 shell, +40 groups, +48 is_system_user. Total: 56 bytes.
 # ================================================================
@@ -159,7 +159,7 @@ fn pam_user_is_system(u) { return load64(u + 48); }
 
 # ================================================================
 # SessionInfo struct: { session_id (Str), user (Str), login_time (Str),
-#                       tty (Str or 0), remote_host (Str or 0), pid }
+    #                       tty (Str or 0), remote_host (Str or 0), pid }
 # Layout: +0 session_id, +8 user, +16 login_time, +24 tty,
 #         +32 remote_host, +40 pid. Total: 48 bytes.
 # ================================================================
@@ -623,16 +623,36 @@ fn pam_validate_rule(rule) {
     var mi = 0;
     while (mi < mlen) {
         var ch = load8(md + mi);
-        if (ch == 124) { return err_invalid_argument("PAM module contains dangerous character '|'"); }
-        if (ch == 59) { return err_invalid_argument("PAM module contains dangerous character ';'"); }
-        if (ch == 38) { return err_invalid_argument("PAM module contains dangerous character '&'"); }
-        if (ch == 36) { return err_invalid_argument("PAM module contains dangerous character '$'"); }
-        if (ch == 96) { return err_invalid_argument("PAM module contains dangerous character '`'"); }
-        if (ch == 62) { return err_invalid_argument("PAM module contains dangerous character '>'"); }
-        if (ch == 60) { return err_invalid_argument("PAM module contains dangerous character '<'"); }
-        if (ch == 33) { return err_invalid_argument("PAM module contains dangerous character '!'"); }
-        if (ch == 123) { return err_invalid_argument("PAM module contains dangerous character '{'"); }
-        if (ch == 125) { return err_invalid_argument("PAM module contains dangerous character '}'"); }
+        if (ch == 124) {
+            return err_invalid_argument("PAM module: dangerous char '|'");
+        }
+        if (ch == 59) {
+            return err_invalid_argument("PAM module: dangerous char ';'");
+        }
+        if (ch == 38) {
+            return err_invalid_argument("PAM module: dangerous char '&'");
+        }
+        if (ch == 36) {
+            return err_invalid_argument("PAM module: dangerous char '$'");
+        }
+        if (ch == 96) {
+            return err_invalid_argument("PAM module: dangerous char '`'");
+        }
+        if (ch == 62) {
+            return err_invalid_argument("PAM module: dangerous char '>'");
+        }
+        if (ch == 60) {
+            return err_invalid_argument("PAM module: dangerous char '<'");
+        }
+        if (ch == 33) {
+            return err_invalid_argument("PAM module: dangerous char '!'");
+        }
+        if (ch == 123) {
+            return err_invalid_argument("PAM module: dangerous char '{'");
+            }
+            if (ch == 125) {
+                return err_invalid_argument("PAM module: dangerous char '}'");
+        }
         mi = mi + 1;
     }
 
@@ -646,16 +666,36 @@ fn pam_validate_rule(rule) {
         var aj = 0;
         while (aj < alen) {
             var ach = load8(ad + aj);
-            if (ach == 124) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 59) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 38) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 36) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 96) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 62) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 60) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 33) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 123) { return err_invalid_argument("PAM argument contains dangerous character"); }
-            if (ach == 125) { return err_invalid_argument("PAM argument contains dangerous character"); }
+            if (ach == 124) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 59) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 38) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 36) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 96) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 62) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 60) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 33) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 123) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
+            if (ach == 125) {
+                return err_invalid_argument("PAM arg: dangerous char");
+            }
             aj = aj + 1;
         }
         ai = ai + 1;

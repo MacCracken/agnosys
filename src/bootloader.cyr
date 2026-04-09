@@ -196,8 +196,8 @@ fn bootloader_parse_loader_conf(text) {
                 while (vi < vl) {
                     var ch = load8(val + vi);
                     if (ch >= 48) { if (ch <= 57) {
-                        t = t * 10 + (ch - 48);
-                    } }
+                            t = t * 10 + (ch - 48);
+                        } }
                     vi = vi + 1;
                 }
                 store64(result, t);

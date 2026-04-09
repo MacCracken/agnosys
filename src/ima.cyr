@@ -137,10 +137,11 @@ fn ima_rule_validate(rule) {
     var mask = ima_rule_mask(rule);
     if (mask != 0) {
         if (streq(mask, "MAY_READ") != 1 &&
-            streq(mask, "MAY_WRITE") != 1 &&
-            streq(mask, "MAY_EXEC") != 1 &&
-            streq(mask, "MAY_APPEND") != 1) {
-            return err_invalid_argument("Invalid mask (expected MAY_READ/MAY_WRITE/MAY_EXEC/MAY_APPEND)");
+        streq(mask, "MAY_WRITE") != 1 &&
+        streq(mask, "MAY_EXEC") != 1 &&
+        streq(mask, "MAY_APPEND") != 1) {
+            return err_invalid_argument(
+            "Invalid mask (expected MAY_READ/MAY_WRITE/MAY_EXEC/MAY_APPEND)");
         }
     }
 
@@ -418,7 +419,8 @@ fn ima_parse_measurements(content) {
 
             # Only add if we got all 5 fields
             if (th_len > 0 && tn_len > 0 && fh_len > 0 && fn_len > 0) {
-                var m = ima_measurement_new(pcr, template_hash, template_name, filedata_hash, filename);
+                var m = ima_measurement_new(
+                pcr, template_hash, template_name, filedata_hash, filename);
                 vec_push(measurements, m);
             }
         }
@@ -580,7 +582,9 @@ fn ima_verify_file_integrity(path) {
     # For simplicity, compare the stored value trimmed against computed hex
     var stored_len = strlen(&abuf);
     # Trim trailing whitespace from stored
-    while (stored_len > 0 && (load8(&abuf + stored_len - 1) == 10 || load8(&abuf + stored_len - 1) == 32)) {
+    while (stored_len > 0 &&
+    (load8(&abuf + stored_len - 1) == 10 ||
+    load8(&abuf + stored_len - 1) == 32)) {
         stored_len = stored_len - 1;
     }
 

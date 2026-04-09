@@ -75,8 +75,8 @@ fn journal_entry_add_field(e, key, val) {
 # ================================================================
 # JournalFilter struct
 # { unit (Str or 0), since (Str or 0), until (Str or 0),
-#   priority (-1 = unset), grep (Str or 0), lines (-1 = unset),
-#   boot (Str or 0) }
+    #   priority (-1 = unset), grep (Str or 0), lines (-1 = unset),
+    #   boot (Str or 0) }
 # Layout: +0 unit, +8 since, +16 until, +24 priority,
 #         +32 grep, +40 lines, +48 boot. Total: 56 bytes.
 # ================================================================
@@ -389,7 +389,7 @@ fn journal_parse_json(json_line) {
         return err_invalid_argument("empty journal JSON line");
     }
 
-    # Check it starts with '{'
+    # Check it starts with open brace (ASCII 123)
     if (load8(str_data(json_line)) != 123) {
         return err_invalid_argument("journal JSON is not an object");
     }

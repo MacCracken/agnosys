@@ -105,8 +105,8 @@ fn secureboot_detect_state() {
             var value = secureboot_efi_var_payload_byte(data, 0);
             if (value == 1) {
                 # Check SetupMode
-                var setup_path = "/sys/firmware/efi/efivars/SetupMode-8be4df61-93ca-11d2-aa0d-00e098032b8c";
-                var setup_res = secureboot_read_efi_variable(setup_path);
+                var sp = "/sys/firmware/efi/efivars/SetupMode-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+                var setup_res = secureboot_read_efi_variable(sp);
                 if (is_ok(setup_res) == 1) {
                     var setup_data = payload(setup_res);
                     var setup_size = secureboot_efi_var_size(setup_data);

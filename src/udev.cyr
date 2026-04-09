@@ -26,7 +26,8 @@ enum DeviceSubsystem {
 # DeviceInfo struct
 # ================================================================
 
-# DeviceInfo: { syspath, devpath, subsystem, devtype, driver, devnode, prop_keys, prop_vals, prop_count }
+# DeviceInfo: { syspath, devpath, subsystem, devtype, driver,
+    #   devnode, prop_keys, prop_vals, prop_count }
 # Layout: 9 * 8 = 72 bytes
 # prop_keys and prop_vals are arrays of string pointers
 
@@ -113,60 +114,60 @@ fn udev_parse_udevadm_info(text) {
 
         # P: devpath
         if (c0 == 80) { if (c1 == 58) { if (c2 == 32) {
-            var vlen = eff_len - 3;
-            var v = alloc(vlen + 1);
-            memcpy(v, text + ls + 3, vlen);
-            store8(v + vlen, 0);
-            devpath = v;
-            continue;
-        } } }
+                    var vlen = eff_len - 3;
+                    var v = alloc(vlen + 1);
+                    memcpy(v, text + ls + 3, vlen);
+                    store8(v + vlen, 0);
+                    devpath = v;
+                    continue;
+                } } }
 
         # N: devnode
         if (c0 == 78) { if (c1 == 58) { if (c2 == 32) {
-            var vlen = eff_len - 3;
-            # Prepend /dev/
-            var v = alloc(vlen + 6);
-            memcpy(v, "/dev/", 5);
-            memcpy(v + 5, text + ls + 3, vlen);
-            store8(v + 5 + vlen, 0);
-            devnode = v;
-            continue;
-        } } }
+                    var vlen = eff_len - 3;
+                    # Prepend /dev/
+                    var v = alloc(vlen + 6);
+                    memcpy(v, "/dev/", 5);
+                    memcpy(v + 5, text + ls + 3, vlen);
+                    store8(v + 5 + vlen, 0);
+                    devnode = v;
+                    continue;
+                } } }
 
         # E: key=value property
         if (c0 == 69) { if (c1 == 58) { if (c2 == 32) {
-            if (prop_count < max_props) {
-                var vstart = ls + 3;
-                var vlen = eff_len - 3;
-                # Find '=' separator
-                var eq_pos = 0;
-                var j = 0;
-                while (j < vlen) {
-                    if (load8(text + vstart + j) == 61) {  # '='
-                        eq_pos = j;
-                        break;
+                    if (prop_count < max_props) {
+                        var vstart = ls + 3;
+                        var vlen = eff_len - 3;
+                        # Find '=' separator
+                        var eq_pos = 0;
+                        var j = 0;
+                        while (j < vlen) {
+                            if (load8(text + vstart + j) == 61) {  # '='
+                                eq_pos = j;
+                                break;
+                            }
+                            j = j + 1;
+                        }
+                        if (eq_pos > 0) {
+                            var klen = eq_pos;
+                            var key = alloc(klen + 1);
+                            memcpy(key, text + vstart, klen);
+                            store8(key + klen, 0);
+
+                            var val_offset = eq_pos + 1;
+                            var val_len = vlen - val_offset;
+                            var val = alloc(val_len + 1);
+                            memcpy(val, text + vstart + val_offset, val_len);
+                            store8(val + val_len, 0);
+
+                            store64(prop_keys + prop_count * 8, key);
+                            store64(prop_vals + prop_count * 8, val);
+                            prop_count = prop_count + 1;
+                        }
                     }
-                    j = j + 1;
-                }
-                if (eq_pos > 0) {
-                    var klen = eq_pos;
-                    var key = alloc(klen + 1);
-                    memcpy(key, text + vstart, klen);
-                    store8(key + klen, 0);
-
-                    var val_offset = eq_pos + 1;
-                    var val_len = vlen - val_offset;
-                    var val = alloc(val_len + 1);
-                    memcpy(val, text + vstart + val_offset, val_len);
-                    store8(val + val_len, 0);
-
-                    store64(prop_keys + prop_count * 8, key);
-                    store64(prop_vals + prop_count * 8, val);
-                    prop_count = prop_count + 1;
-                }
-            }
-            continue;
-        } } }
+                    continue;
+                } } }
     }
 
     if (devpath == 0) {
