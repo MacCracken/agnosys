@@ -57,11 +57,11 @@ fn mac_read_file(path) {
     if (fd < 0) {
         return err_io(0 - fd, path);
     }
+    defer { sys_close(fd); }
     # Read up to 4096 bytes (plenty for sysfs/procfs files)
     var buf = alloc(4097);
     memset(buf, 0, 4097);
     var n = sys_read(fd, buf, 4096);
-    sys_close(fd);
     if (n < 0) {
         return err_io(0 - n, path);
     }
@@ -85,8 +85,8 @@ fn mac_write_file(path, data, data_len) {
         if (errno == EACCES) { return err_permission_denied(path); }
         return err_io(errno, path);
     }
+    defer { sys_close(fd); }
     var n = sys_write(fd, data, data_len);
-    sys_close(fd);
     if (n < 0) {
         var werrno = 0 - n;
         if (werrno == EPERM) { return err_permission_denied(path); }

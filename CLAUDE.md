@@ -27,9 +27,9 @@ rust-old/      — original Rust implementation (reference)
 ## Build
 
 ```sh
-cyrb build src/main.cyr build/agnosys    # compile
-cyrb run src/main.cyr                     # compile + run
-cyrb check src/main.cyr                   # syntax check
+cyrius build src/main.cyr build/agnosys   # compile
+cyrius run src/main.cyr                   # compile + run
+cyrius check src/main.cyr                 # syntax check
 ```
 
 ## Development Process

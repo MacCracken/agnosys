@@ -231,14 +231,13 @@ fn journal_send(message, priority, identifier) {
     if (fd < 0) {
         return err_syscall_failed(0 - fd, "failed to create unix socket");
     }
+    defer { sys_close(fd); }
 
     # Build sockaddr_un
     var sa = journal_make_sockaddr();
 
     # sendto(fd, buf, len, flags, dest_addr, addrlen)
     var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
-    sys_close(fd);
-
     if (ret < 0) {
         return err_syscall_failed(0 - ret, "sendto journal socket failed");
     }
@@ -308,11 +307,10 @@ fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) 
     if (fd < 0) {
         return err_syscall_failed(0 - fd, "failed to create unix socket");
     }
+    defer { sys_close(fd); }
 
     var sa = journal_make_sockaddr();
     var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
-    sys_close(fd);
-
     if (ret < 0) {
         return err_syscall_failed(0 - ret, "sendto journal socket failed");
     }

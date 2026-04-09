@@ -295,6 +295,7 @@ fn ima_get_status() {
     var mcount = 0;
     var mfd = sys_open(mpath, O_RDONLY, 0);
     if (mfd >= 0) {
+        defer { sys_close(mfd); }
         var rbuf[4096];
         var rgo = 1;
         while (rgo == 1) {
@@ -312,7 +313,6 @@ fn ima_get_status() {
                 }
             }
         }
-        sys_close(mfd);
     }
 
     # Check if policy file exists
@@ -440,6 +440,7 @@ fn ima_read_measurements() {
     if (fd < 0) {
         return err_io(0 - fd, "Failed to read IMA measurements");
     }
+    defer { sys_close(fd); }
 
     # Read entire file into buffer (max 64KB)
     var bufsize = 65536;
@@ -455,7 +456,6 @@ fn ima_read_measurements() {
             if (total >= bufsize - 1) { rgo = 0; }
         }
     }
-    sys_close(fd);
     store8(buf + total, 0);
 
     return ima_parse_measurements(buf);
@@ -519,10 +519,9 @@ fn ima_write_policy(rules) {
         }
         return err_io(errno, "Failed to write IMA policy");
     }
+    defer { sys_close(fd); }
 
     var wret = sys_write(fd, policy_buf, pos);
-    sys_close(fd);
-
     if (wret < 0) {
         return err_io(0 - wret, "Failed to write IMA policy");
     }

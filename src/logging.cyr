@@ -39,10 +39,10 @@ fn log_init_from_env() {
     # We'll check /proc/self/environ for the variable
     var fd = sys_open("/proc/self/environ", 0, 0);
     if (fd < 0) { return 0; }
+    defer { sys_close(fd); }
 
     var buf = alloc(4096);
     var nread = sys_read(fd, buf, 4096);
-    sys_close(fd);
 
     if (nread <= 0) { return 0; }
 

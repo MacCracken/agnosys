@@ -222,6 +222,40 @@ fn luks_cipher_str(config) {
 }
 
 # ================================================================
+# Keyfile helpers — per-PID temp file for key material
+# ================================================================
+
+# Build a per-PID keyfile path: /tmp/.agnos-luks-<pid>
+fn luks_keyfile_path() {
+    var pid = sys_getpid();
+    var pid_buf[24];
+    var pid_len = fmt_int_buf(pid, &pid_buf);
+    var prefix = "/tmp/.agnos-luks-";
+    var prefix_len = strlen(prefix);
+    var path = alloc(prefix_len + pid_len + 1);
+    memcpy(path, prefix, prefix_len);
+    memcpy(path + prefix_len, &pid_buf, pid_len);
+    store8(path + prefix_len + pid_len, 0);
+    return path;
+}
+
+# Write key material to a per-PID keyfile.
+# Returns Ok(keyfile_path) or Err.
+fn luks_write_keyfile(key_ptr, key_len) {
+    var keyfile = luks_keyfile_path();
+    var fd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);  # 0600
+    if (fd < 0) {
+        return err_syscall_failed(0 - fd, "failed to create keyfile");
+    }
+    defer { sys_close(fd); }
+    var wret = sys_write(fd, key_ptr, key_len);
+    if (wret < 0) {
+        return err_syscall_failed(0 - wret, "write keyfile failed");
+    }
+    return Ok(keyfile);
+}
+
+# ================================================================
 # LUKS operations — shells out to cryptsetup, losetup, etc.
 # ================================================================
 
@@ -299,25 +333,10 @@ fn luks_format(config, key_ptr, key_len) {
     var pbkdf = luks_pbkdf_as_str(luks_config_pbkdf(config));
 
     # Write key to a per-PID temp file for --key-file
-    var kf_pid = sys_getpid();
-    var kf_pid_buf[24];
-    var kf_pid_len = fmt_int_buf(kf_pid, &kf_pid_buf);
-    var kf_prefix = "/tmp/.agnos-luks-";
-    var kf_prefix_len = strlen(kf_prefix);
-    var keyfile = alloc(kf_prefix_len + kf_pid_len + 1);
-    memcpy(keyfile, kf_prefix, kf_prefix_len);
-    memcpy(keyfile + kf_prefix_len, &kf_pid_buf, kf_pid_len);
-    store8(keyfile + kf_prefix_len + kf_pid_len, 0);
-
-    var kfd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);  # 0600
-    if (kfd < 0) {
-        return err_syscall_failed(0 - kfd, "failed to create keyfile");
-    }
-    var kf_wret = sys_write(kfd, key_ptr, key_len);
-    sys_close(kfd);
-    if (kf_wret < 0) {
-        return err_syscall_failed(0 - kf_wret, "write failed");
-    }
+    var kf_res = luks_write_keyfile(key_ptr, key_len);
+    if (is_err_result(kf_res) == 1) { return kf_res; }
+    var keyfile = payload(kf_res);
+    defer { sys_unlink(keyfile); }
 
     var cs_args = vec_new();
     vec_push(cs_args, "/usr/sbin/cryptsetup");
@@ -336,10 +355,6 @@ fn luks_format(config, key_ptr, key_len) {
     vec_push(cs_args, loop_dev);
 
     var cs_res = luks_run_checked(cs_args);
-
-    # Clean up keyfile
-    sys_unlink(keyfile);
-
     if (is_err_result(cs_res) == 1) {
         # Detach loop on failure
         var det_args = vec_new();
@@ -384,25 +399,10 @@ fn luks_open(config, key_ptr, key_len) {
     memcpy(loop_dev, &lobuf, lolen + 1);
 
     # Write key to per-PID temp file
-    var kf_pid2 = sys_getpid();
-    var kf_pid_buf2[24];
-    var kf_pid_len2 = fmt_int_buf(kf_pid2, &kf_pid_buf2);
-    var kf_prefix2 = "/tmp/.agnos-luks-";
-    var kf_prefix_len2 = strlen(kf_prefix2);
-    var keyfile = alloc(kf_prefix_len2 + kf_pid_len2 + 1);
-    memcpy(keyfile, kf_prefix2, kf_prefix_len2);
-    memcpy(keyfile + kf_prefix_len2, &kf_pid_buf2, kf_pid_len2);
-    store8(keyfile + kf_prefix_len2 + kf_pid_len2, 0);
-
-    var kfd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);
-    if (kfd < 0) {
-        return err_syscall_failed(0 - kfd, "failed to create keyfile");
-    }
-    var kf_wret2 = sys_write(kfd, key_ptr, key_len);
-    sys_close(kfd);
-    if (kf_wret2 < 0) {
-        return err_syscall_failed(0 - kf_wret2, "write keyfile failed");
-    }
+    var kf_res = luks_write_keyfile(key_ptr, key_len);
+    if (is_err_result(kf_res) == 1) { return kf_res; }
+    var keyfile = payload(kf_res);
+    defer { sys_unlink(keyfile); }
 
     # cryptsetup open --type luks2 --key-file <keyfile> <loop_dev> <name>
     var cs_args = vec_new();
@@ -416,8 +416,6 @@ fn luks_open(config, key_ptr, key_len) {
     vec_push(cs_args, name);
 
     var cs_res = luks_run_checked(cs_args);
-    sys_unlink(keyfile);
-
     if (is_err_result(cs_res) == 1) { return cs_res; }
 
     # Build /dev/mapper/<name>

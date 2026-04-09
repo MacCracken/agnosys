@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-04-09
+
+### Changed — Cyrius 3.2.1 Upgrade
+
+- **Compiler upgraded Cyrius 2.4.0 → 3.2.1** — defer statement, multi-width types, sizeof, tail call optimization, constant folding
+- Adopted `defer` for guaranteed resource cleanup across 14 modules (30+ sites):
+  - **security.cyr**: `apply_landlock()` — ruleset fd auto-close on all 3 error paths (was manual close on each)
+  - **luks.cyr**: `luks_format()`, `luks_open()` — keyfile auto-unlink via defer
+  - **audit.cyr**: `audit_read_proc_events()` — fd auto-close
+  - **mac.cyr**: `mac_read_file()`, `mac_write_file()` — fd auto-close
+  - **journald.cyr**: `journal_send()`, `journal_send_fields()` — socket fd auto-close
+  - **fuse.cyr**: `fuse_parse_proc_mounts()` — fd auto-close
+  - **drm.cyr**: `drm_list_devices()` — fd auto-close
+  - **secureboot.cyr**: `secureboot_read_efi_variable()` — fd auto-close
+  - **ima.cyr**: `ima_get_status()`, `ima_read_measurements()`, `ima_write_policy()` — fd auto-close
+  - **pam.cyr**: `pam_read_service_config()`, `pam_list_users()`, `pam_get_user_info()` — fd auto-close
+  - **logging.cyr**: `log_init_from_env()` — fd auto-close
+  - **tpm.cyr**: `tpm_seal()` — fd auto-close
+  - **update.cyr**: `update_atomic_write()`, `update_atomic_copy()` — fd auto-close on all error paths
+  - **netns.cyr**: `netns_apply_nftables_ruleset()` — temp file auto-unlink
+
+### Refactored
+
+- **luks.cyr**: Extracted `luks_keyfile_path()` and `luks_write_keyfile()` helpers — eliminated duplicated 15-line keyfile creation pattern in `luks_format()` and `luks_open()`
+- **secureboot.cyr**: Replaced 45-line deeply-nested byte-by-byte string matching in mokutil fallback with 3 `memeq()` calls (7 lines)
+- **drm.cyr**: Replaced 4-deep nested `load8()` char checks with single `memeq(name_ptr, "card", 4)` call
+
+### Fixed
+
+- **pam.cyr**: Fixed misaligned brace indentation in `pam_validate_rule()` dangerous char check
+
+### Performance — No Regressions
+
+| Benchmark | Pre-refactor | Post-refactor |
+|-----------|-------------|---------------|
+| getpid | 311ns | 308ns |
+| from_errno | 21ns | 18ns |
+| syscall_name_to_nr_hit | 120ns | 107ns |
+| validate_cmdline | 529ns | 540ns |
+| compare_versions | 140ns | 140ns |
+| mac_default_profile | 416ns | 395ns |
+
+### Metrics
+
+- **Source**: 8,687 lines across 21 files (20 modules + main)
+- **Binary**: 51,976 bytes (was 52,040 — 64 bytes smaller)
+- **Compile**: 32ms
+- **Dependencies**: 0
+- **Tests**: 197 integration assertions, 30 benchmarks
+- **Compiler**: Cyrius 3.2.1
+
+---
+
 ## [0.95.0] - 2026-04-09
 
 ### Fixed — Audit Round

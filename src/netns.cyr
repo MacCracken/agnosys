@@ -631,6 +631,9 @@ fn netns_apply_nftables_ruleset(handle, ruleset) {
     sys_write(fd, ruleset, rlen);
     sys_close(fd);
 
+    # Clean up temp file on any return path
+    defer { syscall(87, tmp_path); }
+
     # ip netns exec <ns> nft -f <path>
     var argv = alloc(56);
     store64(argv, "ip");
@@ -641,11 +644,5 @@ fn netns_apply_nftables_ruleset(handle, ruleset) {
     store64(argv + 40, "-f");
     store64(argv + 48, tmp_path);
 
-    var res = netns_run_ip(argv);
-
-    # Clean up temp file (ignore errors)
-    # unlink
-    syscall(87, tmp_path);
-
-    return res;
+    return netns_run_ip(argv);
 }

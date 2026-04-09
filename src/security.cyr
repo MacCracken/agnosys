@@ -74,6 +74,7 @@ fn apply_landlock(rules, count) {
         if (errno == EOPNOTSUPP) { return Ok(0); }
         return err_syscall_failed(errno, "landlock_create_ruleset failed");
     }
+    defer { syscall(SYS_CLOSE, ruleset_fd); }
 
     var idx = 0;
     while (idx < count) {
@@ -94,7 +95,6 @@ fn apply_landlock(rules, count) {
             # O_PATH = 0x200000, O_CLOEXEC = 0x80000
             var path_fd = syscall(SYS_OPEN, path, 0x280000, 0);
             if (path_fd < 0) {
-                syscall(SYS_CLOSE, ruleset_fd);
                 return err_syscall_failed(0 - path_fd, "landlock open path failed");
             }
 
@@ -109,7 +109,6 @@ fn apply_landlock(rules, count) {
             syscall(SYS_CLOSE, path_fd);
 
             if (ret < 0) {
-                syscall(SYS_CLOSE, ruleset_fd);
                 return err_syscall_failed(0 - ret, "landlock_add_rule failed");
             }
         }
@@ -119,13 +118,10 @@ fn apply_landlock(rules, count) {
     # Set no_new_privs (required by Landlock)
     var ret = syscall(SYS_PRCTL, 38, 1, 0, 0, 0);
     if (ret < 0) {
-        syscall(SYS_CLOSE, ruleset_fd);
         return err_syscall_failed(0 - ret, "PR_SET_NO_NEW_PRIVS failed");
     }
 
     ret = syscall(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0);
-    syscall(SYS_CLOSE, ruleset_fd);
-
     if (ret < 0) {
         return err_syscall_failed(0 - ret, "landlock_restrict_self failed");
     }

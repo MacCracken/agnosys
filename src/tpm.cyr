@@ -377,8 +377,8 @@ fn tpm_seal(bank, pcr_indices, data_ptr, data_len, output_dir) {
     if (ifd < 0) {
         return err_syscall_failed(0 - ifd, "failed to write seal input");
     }
+    defer { sys_close(ifd); }
     var wret = sys_write(ifd, data_ptr, data_len);
-    sys_close(ifd);
     if (wret < 0) {
         return err_syscall_failed(0 - wret, "write failed");
     }

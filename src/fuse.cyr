@@ -98,6 +98,7 @@ fn fuse_parse_proc_mounts(result_arr, max_mounts, fuse_only) {
     if (fd < 0) {
         return err_io(0 - fd, "failed to open /proc/mounts");
     }
+    defer { sys_close(fd); }
 
     var buf = alloc(8192);
     var total_read = 0;
@@ -107,7 +108,6 @@ fn fuse_parse_proc_mounts(result_arr, max_mounts, fuse_only) {
         if (total_read >= 8192) { break; }
         nread = sys_read(fd, buf + total_read, 8192 - total_read);
     }
-    sys_close(fd);
     store8(buf + total_read, 0);
 
     # Parse line by line

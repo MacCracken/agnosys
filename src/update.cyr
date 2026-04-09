@@ -69,6 +69,7 @@ fn update_atomic_write(path, data, data_len) {
     if (fd < 0) {
         return err_io(0 - fd, "atomic_write: failed to create temp file");
     }
+    defer { sys_close(fd); }
 
     var written = 0;
     while (written < data_len) {
@@ -76,8 +77,6 @@ fn update_atomic_write(path, data, data_len) {
         if (chunk > 4096) { chunk = 4096; }
         var ret = sys_write(fd, data + written, chunk);
         if (ret < 0) {
-            sys_close(fd);
-            # Unlink temp file
             syscall(87, tmppath);
             return err_io(0 - ret, "atomic_write: write failed");
         }
@@ -86,8 +85,6 @@ fn update_atomic_write(path, data, data_len) {
 
     # fsync
     var ret = syscall(74, fd);  # SYS_FSYNC
-    sys_close(fd);
-
     if (ret < 0) {
         syscall(87, tmppath);
         return err_io(0 - ret, "atomic_write: fsync failed");
@@ -118,6 +115,7 @@ fn update_atomic_copy(src, dst) {
     if (src_fd < 0) {
         return err_io(0 - src_fd, "atomic_copy: failed to open source");
     }
+    defer { sys_close(src_fd); }
 
     # Create temp dest
     var dstlen = strlen(dst);
@@ -128,9 +126,9 @@ fn update_atomic_copy(src, dst) {
 
     var dst_fd = sys_open(tmppath, 0x241, 0x1A4);  # O_WRONLY|O_CREAT|O_TRUNC, 0644
     if (dst_fd < 0) {
-        sys_close(src_fd);
         return err_io(0 - dst_fd, "atomic_copy: failed to create temp dest");
     }
+    defer { sys_close(dst_fd); }
 
     # Copy loop
     var buf = alloc(4096);
@@ -141,8 +139,6 @@ fn update_atomic_copy(src, dst) {
         while (nwritten < nread) {
             var ret = sys_write(dst_fd, buf + nwritten, nread - nwritten);
             if (ret < 0) {
-                sys_close(src_fd);
-                sys_close(dst_fd);
                 syscall(87, tmppath);
                 return err_io(0 - ret, "atomic_copy: write failed");
             }
@@ -152,17 +148,13 @@ fn update_atomic_copy(src, dst) {
         nread = sys_read(src_fd, buf, 4096);
     }
 
-    sys_close(src_fd);
-
     if (nread < 0) {
-        sys_close(dst_fd);
         syscall(87, tmppath);
         return err_io(0 - nread, "atomic_copy: read failed");
     }
 
-    # fsync + close
+    # fsync (fd closed by defer)
     syscall(74, dst_fd);
-    sys_close(dst_fd);
 
     # Rename temp to target
     var ret = syscall(82, tmppath, dst);

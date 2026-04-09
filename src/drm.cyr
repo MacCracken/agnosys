@@ -164,6 +164,7 @@ fn drm_list_devices(result_arr, max_cards) {
     if (fd < 0) {
         return err_not_supported("DRM (/dev/dri not found)");
     }
+    defer { sys_close(fd); }
 
     # Read directory entries
     var buf = alloc(4096);
@@ -178,22 +179,15 @@ fn drm_list_devices(result_arr, max_cards) {
             var name_ptr = buf + pos + 19;
 
             # Check if name starts with "card"
-            if (load8(name_ptr) == 99) {       # 'c'
-                if (load8(name_ptr + 1) == 97) {   # 'a'
-                    if (load8(name_ptr + 2) == 114) {  # 'r'
-                        if (load8(name_ptr + 3) == 100) {  # 'd'
-                            if (count < max_cards) {
-                                # Build full path: /dev/dri/cardN
-                                var nlen = strlen(name_ptr);
-                                var path = alloc(10 + nlen);
-                                memcpy(path, "/dev/dri/", 9);
-                                memcpy(path + 9, name_ptr, nlen);
-                                store8(path + 9 + nlen, 0);
-                                store64(result_arr + count * 8, path);
-                                count = count + 1;
-                            }
-                        }
-                    }
+            if (memeq(name_ptr, "card", 4) == 1) {
+                if (count < max_cards) {
+                    var nlen = strlen(name_ptr);
+                    var path = alloc(10 + nlen);
+                    memcpy(path, "/dev/dri/", 9);
+                    memcpy(path + 9, name_ptr, nlen);
+                    store8(path + 9 + nlen, 0);
+                    store64(result_arr + count * 8, path);
+                    count = count + 1;
                 }
             }
             pos = pos + reclen;
@@ -201,7 +195,6 @@ fn drm_list_devices(result_arr, max_cards) {
         nread = syscall(SYS_GETDENTS64, fd, buf, 4096);
     }
 
-    sys_close(fd);
     return Ok(count);
 }
 

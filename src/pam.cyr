@@ -466,6 +466,7 @@ fn pam_read_service_config(service_name) {
     if (fd < 0) {
         return err_syscall_failed(0 - fd, "failed to open PAM config file");
     }
+    defer { sys_close(fd); }
 
     var buf = alloc(8192);
     var total = 0;
@@ -478,7 +479,6 @@ fn pam_read_service_config(service_name) {
             if (total >= 8192) { rgo = 0; }
         }
     }
-    sys_close(fd);
 
     # Null-terminate and wrap as Str
     store8(buf + total, 0);
@@ -498,6 +498,7 @@ fn pam_list_users() {
     if (fd < 0) {
         return err_syscall_failed(0 - fd, "failed to open /etc/passwd");
     }
+    defer { sys_close(fd); }
 
     var buf = alloc(65536);
     var total = 0;
@@ -510,7 +511,6 @@ fn pam_list_users() {
             if (total >= 65536) { rgo = 0; }
         }
     }
-    sys_close(fd);
 
     store8(buf + total, 0);
     var content = str_new(buf, total);
@@ -649,9 +649,9 @@ fn pam_validate_rule(rule) {
         }
         if (ch == 123) {
             return err_invalid_argument("PAM module: dangerous char '{'");
-            }
-            if (ch == 125) {
-                return err_invalid_argument("PAM module: dangerous char '}'");
+        }
+        if (ch == 125) {
+            return err_invalid_argument("PAM module: dangerous char '}'");
         }
         mi = mi + 1;
     }
@@ -718,6 +718,7 @@ fn pam_get_user_info(username) {
     if (fd < 0) {
         return err_syscall_failed(0 - fd, "failed to open /etc/passwd");
     }
+    defer { sys_close(fd); }
 
     var buf = alloc(65536);
     var total = 0;
@@ -730,7 +731,6 @@ fn pam_get_user_info(username) {
             if (total >= 65536) { rgo = 0; }
         }
     }
-    sys_close(fd);
 
     store8(buf + total, 0);
     var content = str_new(buf, total);

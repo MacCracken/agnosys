@@ -286,7 +286,7 @@ fn audit_open(config) {
         var sa = audit_sockaddr_nl(sys_getpid());
         var ret = syscall(SYS_BIND_NR, fd, sa, 12);
         if (ret < 0) {
-            syscall(SYS_CLOSE, fd);
+            sys_close(fd);
             return err_syscall_failed(0 - ret, "bind(NETLINK_AUDIT) failed");
         }
     }
@@ -571,6 +571,7 @@ fn audit_read_proc_events(proc_path) {
     if (fd < 0) {
         return err_io(0 - fd, proc_path);
     }
+    defer { sys_close(fd); }
 
     # Read entire file (up to 64KB)
     var buf_size = 65536;
@@ -583,7 +584,6 @@ fn audit_read_proc_events(proc_path) {
         if (n <= 0) { break; }
         total_read = total_read + n;
     }
-    sys_close(fd);
 
     if (total_read == 0) {
         return Ok(vec_new());
