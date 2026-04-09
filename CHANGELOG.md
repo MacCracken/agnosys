@@ -34,6 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **secureboot.cyr**: Replaced 45-line deeply-nested byte-by-byte string matching in mokutil fallback with 3 `memeq()` calls (7 lines)
 - **drm.cyr**: Replaced 4-deep nested `load8()` char checks with single `memeq(name_ptr, "card", 4)` call
 
+### Changed — CI/Release Modernization
+
+- **CI**: Upgraded toolchain `2.7.2` → `3.2.1`, replaced `cat | cc2` pipe with `cyrius build`
+- **CI**: Consolidated separate build/check/test/bench jobs into single `build-and-test` job
+- **CI**: Added `cyrius check` (syntax), `cyrius lint`, `cyrius test`, fuzz harness execution
+- **CI**: Added `cyrius.toml` to required docs check, added toml version consistency verification
+- **CI**: Added Cyrius script copy to toolchain install (`scripts/cyrius`)
+- **Release**: Replaced `cat | cc2` with `cyrius build`, added toml version gate
+- **Release**: Fixed changelog extraction (was in build job, read in release job on different runner)
+- **Release**: Aligned structure with majra release workflow (source archive only, no binary)
+
 ### Fixed
 
 - **pam.cyr**: Fixed misaligned brace indentation in `pam_validate_rule()` dangerous char check

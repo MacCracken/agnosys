@@ -12,12 +12,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CYRIUS_VERSION: "2.7.2"
+  CYRIUS_VERSION: "3.2.1"
 
 jobs:
-  # ── Build ──
-  build:
-    name: Build
+  build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,175 +28,90 @@ jobs:
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
           mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
           cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp "$CYRIUS_DIR/scripts/cyrius" "$HOME/.cyrius/bin/cyrius" 2>/dev/null || true
           cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
           chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+          echo "Cyrius $CYRIUS_VERSION installed"
 
-      - name: Build agnosys
+      - name: Syntax check
+        run: |
+          for f in src/*.cyr; do
+            cyrius check "$f"
+          done
+
+      - name: Build
         run: |
           mkdir -p build
-          cat src/main.cyr | cc2 > build/agnosys 2>/dev/null
-          chmod +x build/agnosys
+          cyrius build src/main.cyr build/agnosys
           echo "agnosys: $(wc -c < build/agnosys) bytes"
+
+      - name: Verify ELF
+        run: xxd -l 4 build/agnosys | grep -q "7f45 4c46"
 
       - name: Smoke test
         run: |
           ./build/agnosys | tee /tmp/smoke_output
           grep -q "agnosys ready" /tmp/smoke_output
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-x86_64
-          path: build/agnosys
-          retention-days: 5
+      - name: Integration tests
+        run: cyrius test
 
-  # ── Check & Format ──
-  check:
-    name: Check & Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
+      - name: Lint
         run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-
-      - name: Format check
-        run: |
-          FAIL=0
           for f in src/*.cyr; do
-            [ -f "$f" ] || continue
-            cyrfmt "$f" > /tmp/fmt_check
-            if ! diff -q "$f" /tmp/fmt_check >/dev/null 2>&1; then
-              echo "  NEEDS FORMAT: $f"
-              FAIL=1
-            fi
+            cyrius lint "$f"
           done
-          test $FAIL -eq 0 && echo "PASS: all files formatted"
 
-  # ── Security ──
+      - name: Fuzz
+        run: |
+          for f in fuzz/*.fcyr; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" .fcyr)
+            cyrius build "$f" "build/$name"
+            timeout 10 "build/$name" 500 || { echo "FUZZ CRASH: $name"; exit 1; }
+            echo "  $name: ok"
+          done
+
+      - name: Benchmarks
+        run: |
+          cyrius build tests/bench_all.bcyr build/bench_all
+          ./build/bench_all
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Scan for dangerous patterns
         run: |
           WARN=0
           # Check for raw execve outside process.cyr
           if grep -rn 'syscall(59' src/ 2>/dev/null | grep -v "# " | grep -v process; then
-            echo "WARN: raw execve in agnosys modules"
-            WARN=1
+            echo "WARN: raw execve in agnosys modules"; WARN=1
           fi
-          # Check for hardcoded paths that bypass validation
+          # Check for direct shadow file access
           if grep -rn '"/etc/shadow"' src/ 2>/dev/null; then
-            echo "WARN: direct shadow file access"
-            WARN=1
+            echo "WARN: direct shadow file access"; WARN=1
           fi
           echo "security scan complete (warnings: $WARN)"
 
-  # ── Tests ──
-  test:
-    name: Test
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
-        run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-
-      - name: Run test suite
-        run: |
-          if [ -f scripts/test.sh ]; then
-            sh scripts/test.sh
-          else
-            # Build and run main as integration test
-            mkdir -p build
-            cat src/main.cyr | cc2 > build/agnosys 2>/dev/null
-            chmod +x build/agnosys
-            OUTPUT=$(./build/agnosys 2>&1)
-            echo "$OUTPUT"
-            echo "$OUTPUT" | grep -q "agnosys ready"
-            echo "PASS: integration test"
-          fi
-
-  # ── Benchmarks ──
-  benchmarks:
-    name: Benchmarks
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
-        run: |
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-
-      - name: Run benchmarks
-        run: |
-          if [ -f scripts/bench-history.sh ]; then
-            sh scripts/bench-history.sh
-          fi
-        continue-on-error: true
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: benchmarks
-          path: |
-            bench-history.csv
-            BENCHMARKS.md
-          retention-days: 90
-
-  # ── Documentation ──
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check required docs exist
+      - name: Check required docs
         run: |
           MISSING=0
-          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE; do
-            if [ -f "$doc" ]; then
-              echo "  OK: $doc"
-            else
-              echo "  MISSING: $doc"
-              MISSING=1
-            fi
+          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE cyrius.toml; do
+            if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING
-
       - name: Verify version consistency
         run: |
-          VERSION=$(cat VERSION | tr -d '[:space:]')
-          echo "VERSION file: $VERSION"
-          grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in changelog"; exit 1; }
-          echo "Version consistent"
+          FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
+          TOML_VERSION=$(grep '^version = ' cyrius.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          [ "$FILE_VERSION" = "$TOML_VERSION" ] || { echo "VERSION ($FILE_VERSION) != cyrius.toml ($TOML_VERSION)"; exit 1; }
+          grep -q "$FILE_VERSION" CHANGELOG.md || { echo "version not in changelog"; exit 1; }
+          echo "Version consistent: $FILE_VERSION"
