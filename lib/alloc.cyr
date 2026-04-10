@@ -49,3 +49,55 @@ fn alloc_reset() {
 fn alloc_used() {
     return _heap_ptr - _heap_base;
 }
+
+# ================================================================
+# Arena allocator — independent memory pools
+# ================================================================
+# Unlike alloc_reset() which frees EVERYTHING, arenas are independent.
+# Each arena has its own bump pointer. Freeing one arena doesn't
+# affect allocations from other arenas or the global allocator.
+#
+# Usage:
+#   var a = arena_new(4096);          # 4KB arena
+#   var p1 = arena_alloc(a, 64);     # allocate from arena
+#   var p2 = arena_alloc(a, 128);    # still valid after arena_reset
+#   arena_reset(a);                   # frees p1 and p2, not global allocs
+#   (no arena_free — bump allocator, memory reclaimed on process exit)
+#
+# Layout: { base: i64, ptr: i64, end: i64 } = 24 bytes
+
+# Create a new arena with the given capacity (bytes)
+fn arena_new(capacity) {
+    var a = alloc(24);
+    var base = alloc(capacity);
+    store64(a, base);
+    store64(a + 8, base);
+    store64(a + 16, base + capacity);
+    return a;
+}
+
+# Allocate size bytes from the arena, 8-byte aligned. Returns 0 on overflow.
+fn arena_alloc(a, size) {
+    size = (size + 7) & (0 - 8);
+    var ptr = load64(a + 8);
+    var new_ptr = ptr + size;
+    if (new_ptr > load64(a + 16)) { return 0; }
+    store64(a + 8, new_ptr);
+    return ptr;
+}
+
+# Reset the arena — all allocations from this arena are freed
+fn arena_reset(a) {
+    store64(a + 8, load64(a));
+    return 0;
+}
+
+# Return bytes used in the arena
+fn arena_used(a) {
+    return load64(a + 8) - load64(a);
+}
+
+# Return bytes remaining in the arena
+fn arena_remaining(a) {
+    return load64(a + 16) - load64(a + 8);
+}

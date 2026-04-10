@@ -78,15 +78,16 @@ fn str_clone(s) {
     return str_new(buf, slen);
 }
 
-# Check if Str contains a C string needle
+# Check if Str contains needle Str
 fn str_contains(s, needle) {
     var slen = str_len(s);
-    var nlen = strlen(needle);
+    var nlen = str_len(needle);
     if (nlen > slen) { return 0; }
     var sd = str_data(s);
+    var nd = str_data(needle);
     var ci = 0;
     while (ci <= slen - nlen) {
-        if (memeq(sd + ci, needle, nlen) == 1) { return 1; }
+        if (memeq(sd + ci, nd, nlen) == 1) { return 1; }
         ci = ci + 1;
     }
     return 0;
@@ -94,17 +95,18 @@ fn str_contains(s, needle) {
 
 # Check if Str starts with a C string prefix
 fn str_starts_with(s, prefix) {
+    # s = Str, prefix = C string (null-terminated)
     var plen = strlen(prefix);
     if (plen > str_len(s)) { return 0; }
     return memeq(str_data(s), prefix, plen);
 }
 
-# Check if Str ends with a C string suffix
+# Check if Str ends with suffix Str (both are Str objects)
 fn str_ends_with(s, suffix) {
-    var xlen = strlen(suffix);
+    var xlen = str_len(suffix);
     var slen = str_len(s);
     if (xlen > slen) { return 0; }
-    return memeq(str_data(s) + slen - xlen, suffix, xlen);
+    return memeq(str_data(s) + slen - xlen, str_data(suffix), xlen);
 }
 
 # Find first occurrence of byte in Str, return index or -1
@@ -188,51 +190,75 @@ fn str_split(s, sep) {
     return parts;
 }
 
-# String builder — concatenate multiple items efficiently
-# Returns a new Str. Items are pushed to a vec, then joined.
+# String builder — direct buffer approach (no per-segment heap allocation)
+# Layout: { buf: ptr, len: i64, cap: i64 } = 24 bytes
+# Starts with 64-byte inline buffer, grows via alloc if needed.
 fn str_builder_new() {
-    return vec_new();
+    var sb = alloc(24 + 64);
+    store64(sb, sb + 24);
+    store64(sb + 8, 0);
+    store64(sb + 16, 64);
+    return sb;
+}
+
+# Ensure builder has room for n more bytes
+fn _sb_grow(sb, n) {
+    var len = load64(sb + 8);
+    var cap = load64(sb + 16);
+    if (len + n <= cap) { return 0; }
+    var new_cap = cap * 2;
+    if (new_cap < len + n) { new_cap = len + n + 64; }
+    var new_buf = alloc(new_cap);
+    memcpy(new_buf, load64(sb), len);
+    store64(sb, new_buf);
+    store64(sb + 16, new_cap);
+    return 0;
 }
 
 # Append a Str to the string builder
 fn str_builder_add(sb, s) {
-    vec_push(sb, s);
+    var slen = str_len(s);
+    _sb_grow(sb, slen);
+    var buf = load64(sb);
+    var len = load64(sb + 8);
+    memcpy(buf + len, str_data(s), slen);
+    store64(sb + 8, len + slen);
     return 0;
 }
 
 # Append a C string to the string builder
 fn str_builder_add_cstr(sb, cstr) {
-    vec_push(sb, str_from(cstr));
+    var slen = strlen(cstr);
+    _sb_grow(sb, slen);
+    var buf = load64(sb);
+    var len = load64(sb + 8);
+    memcpy(buf + len, cstr, slen);
+    store64(sb + 8, len + slen);
     return 0;
 }
 
-# Append an integer (as string) to the string builder
+# Append an integer (as decimal string) to the string builder
 fn str_builder_add_int(sb, n) {
-    vec_push(sb, str_from_int(n));
+    var tmp[24];
+    var tlen = fmt_int_buf(n, &tmp);
+    _sb_grow(sb, tlen);
+    var buf = load64(sb);
+    var len = load64(sb + 8);
+    memcpy(buf + len, &tmp, tlen);
+    store64(sb + 8, len + tlen);
     return 0;
 }
 
-# Concatenate all builder parts into a single Str
+# Build final Str from the builder's buffer
 fn str_builder_build(sb) {
-    var total = 0;
-    var blen = vec_len(sb);
-    var bi = 0;
-    while (bi < blen) {
-        total = total + str_len(vec_get(sb, bi));
-        bi = bi + 1;
-    }
-    var buf = alloc(total + 1);
-    var pos = 0;
-    bi = 0;
-    while (bi < blen) {
-        var part = vec_get(sb, bi);
-        var plen = str_len(part);
-        memcpy(buf + pos, str_data(part), plen);
-        pos = pos + plen;
-        bi = bi + 1;
-    }
-    store8(buf + total, 0);
-    return str_new(buf, total);
+    var buf = load64(sb);
+    var total = load64(sb + 8);
+    if (total == 0) { return str_from(""); }
+    # Copy to a permanent buffer (builder's inline buf may be reused)
+    var out = alloc(total + 1);
+    memcpy(out, buf, total);
+    store8(out + total, 0);
+    return str_new(out, total);
 }
 
 # Join a vec of Str with separator
@@ -242,7 +268,7 @@ fn str_join(parts, sep) {
     var sb = str_builder_new();
     var ji = 0;
     while (ji < plen) {
-        if (ji > 0) { str_builder_add_cstr(sb, sep); }
+        if (ji > 0) { str_builder_add(sb, sep); }
         str_builder_add(sb, vec_get(parts, ji));
         ji = ji + 1;
     }

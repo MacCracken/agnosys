@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.97.0] - 2026-04-09
+
+### Changed — Cyrius 3.2.4 Upgrade
+
+- **Compiler upgraded Cyrius 3.2.1 → 3.2.4** — `strstr()` substring search, hashmap `map_get_or`/`map_size`/`map_iter`, `#derive(Serialize)` fixes, function table 1024→2048, Known Gotcha #6 (nested while+load8) documented
+- **Vendored stdlib re-synced** (10 modules updated from upstream):
+  - **string.cyr**: Added `atoi()`, `strstr()` (memeq-based, avoids nested while loop codegen bug)
+  - **alloc.cyr**: Added arena allocator (`arena_new`, `arena_alloc`, `arena_reset`)
+  - **hashmap.cyr**: Internal refactor, added `map_get_or()`, `map_size()`, `map_iter()`, removed unused constants
+  - **io.cyr**: Added file locking (`file_lock/unlock/trylock/lock_shared`), `file_append_locked()`, `getenv()`
+  - **fmt.cyr**: Added `fmt_float_buf()`, `fmt_float()`
+  - **bench.cyr**: Added `bench_run_batch1` (single-arg variant)
+  - **str.cyr**: `str_contains`/`str_ends_with` now take Str needle (was C string)
+  - **tagged.cyr**: Comment fix
+- **CI**: Upgraded toolchain `3.2.1` → `3.2.4` in both ci.yml and release.yml
+
+### Fixed
+
+- **process.cyr**: Pipe fd read corrected — was `load64` at offset 8, now `load32` at offset 4 (pipe(2) returns 32-bit fds). Buffer `[2]` → `[16]`. Affects all `run_capture`/`exec_capture` callers across 14 modules.
+- **fs.cyr**: `is_dir` return fix — explicit `return 1`/`return 0` instead of `return n >= 0`
+
+### Changed — API Migration
+
+- **mac.cyr**: 7 `str_contains` call sites updated to wrap C string literals with `str_from()` (LSM detection, AppArmor mode parsing)
+- **pam.cyr**: 1 `str_contains` call site updated (`".."` path traversal check)
+
+### Metrics
+
+- **Compiler**: Cyrius 3.2.4
+
 ## [0.96.0] - 2026-04-09
 
 ### Changed — Cyrius 3.2.1 Upgrade

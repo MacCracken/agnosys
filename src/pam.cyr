@@ -612,7 +612,7 @@ fn pam_validate_rule(rule) {
     }
 
     # Module must not contain ".."
-    if (str_contains(module, "..") == 1) {
+    if (str_contains(module, str_from("..")) == 1) {
         return err_invalid_argument("PAM module path must not contain '..'");
     }
 

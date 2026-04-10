@@ -120,18 +120,18 @@ fn mac_detect_system() {
     var contents = payload(res);
 
     # Check SELinux first (higher priority if both are listed)
-    if (str_contains(contents, "selinux") == 1) {
+    if (str_contains(contents, str_from("selinux")) == 1) {
         return MAC_SELINUX;
     }
     # Also check uppercase variant
-    if (str_contains(contents, "SELinux") == 1) {
+    if (str_contains(contents, str_from("SELinux")) == 1) {
         return MAC_SELINUX;
     }
 
-    if (str_contains(contents, "apparmor") == 1) {
+    if (str_contains(contents, str_from("apparmor")) == 1) {
         return MAC_APPARMOR;
     }
-    if (str_contains(contents, "AppArmor") == 1) {
+    if (str_contains(contents, str_from("AppArmor")) == 1) {
         return MAC_APPARMOR;
     }
 
@@ -280,13 +280,13 @@ fn mac_get_apparmor_mode() {
     var trimmed = str_trim(raw);
 
     # AppArmor format: "profile_name (mode)" or "unconfined"
-    if (str_contains(trimmed, "unconfined") == 1) {
+    if (str_contains(trimmed, str_from("unconfined")) == 1) {
         return Ok(AA_UNCONFINED);
     }
-    if (str_contains(trimmed, "enforce") == 1) {
+    if (str_contains(trimmed, str_from("enforce")) == 1) {
         return Ok(AA_ENFORCE);
     }
-    if (str_contains(trimmed, "complain") == 1) {
+    if (str_contains(trimmed, str_from("complain")) == 1) {
         return Ok(AA_COMPLAIN);
     }
 
