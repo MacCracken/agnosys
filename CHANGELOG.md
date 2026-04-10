@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.97.2] - 2026-04-09
+
+### Changed
+
+- **Minimum Cyrius version raised to 3.2.6** — CI toolchain updated in ci.yml and release.yml (was 3.2.5)
+
 ## [0.97.1] - 2026-04-09
 
 ### Changed — Cyrius 3.2.5 Upgrade
