@@ -344,3 +344,679 @@ fn update_phase_str(phase) {
     if (phase == PHASE_FAILED) { return "Failed"; }
     return "Unknown";
 }
+
+# ================================================================
+# Update channel constants
+# ================================================================
+
+enum UpdateChannel {
+    CHAN_STABLE = 1;
+    CHAN_BETA = 2;
+    CHAN_NIGHTLY = 3;
+    CHAN_CUSTOM = 4;
+}
+
+fn update_channel_str(channel) {
+    if (channel == CHAN_STABLE) { return "stable"; }
+    if (channel == CHAN_BETA) { return "beta"; }
+    if (channel == CHAN_NIGHTLY) { return "nightly"; }
+    return "custom";
+}
+
+# ================================================================
+# UpdateState struct
+# ================================================================
+# Layout: { current_slot, current_version, pending_update, rollback_available,
+#            boot_count_since_update }
+# 5 fields * 8 = 40 bytes
+
+fn update_state_new(slot, version) {
+    var s = alloc(40);
+    store64(s, slot);
+    store64(s + 8, version);
+    store64(s + 16, 0);     # pending_update (0 = none)
+    store64(s + 24, 0);     # rollback_available
+    store64(s + 32, 0);     # boot_count_since_update
+    return s;
+}
+
+fn update_state_slot(s) { return load64(s); }
+fn update_state_version(s) { return load64(s + 8); }
+fn update_state_pending(s) { return load64(s + 16); }
+fn update_state_rollback_available(s) { return load64(s + 24); }
+fn update_state_boot_count(s) { return load64(s + 32); }
+
+fn update_state_set_slot(s, slot) { store64(s, slot); return 0; }
+fn update_state_set_pending(s, ver) { store64(s + 16, ver); return 0; }
+fn update_state_set_rollback(s, val) { store64(s + 24, val); return 0; }
+fn update_state_set_boot_count(s, n) { store64(s + 32, n); return 0; }
+
+# ================================================================
+# UpdateConfig struct
+# ================================================================
+# Layout: { update_url, slot_a_device, slot_b_device, state_file,
+#            backup_dir, max_retries, verify_after_apply }
+# 7 fields * 8 = 56 bytes
+
+fn update_config_new() {
+    var c = alloc(56);
+    store64(c, "https://updates.agnos.org");
+    store64(c + 8, "/dev/disk/by-partlabel/rootfs_a");
+    store64(c + 16, "/dev/disk/by-partlabel/rootfs_b");
+    store64(c + 24, "/var/lib/agnos/update-state.json");
+    store64(c + 32, "/var/lib/agnos/backups");
+    store64(c + 40, 3);    # max_retries
+    store64(c + 48, 1);    # verify_after_apply
+    return c;
+}
+
+fn update_config_url(c) { return load64(c); }
+fn update_config_slot_a(c) { return load64(c + 8); }
+fn update_config_slot_b(c) { return load64(c + 16); }
+fn update_config_state_file(c) { return load64(c + 24); }
+fn update_config_backup_dir(c) { return load64(c + 32); }
+fn update_config_max_retries(c) { return load64(c + 40); }
+fn update_config_verify(c) { return load64(c + 48); }
+
+fn update_config_device_for_slot(c, slot) {
+    if (slot == SLOT_A) { return load64(c + 8); }
+    return load64(c + 16);
+}
+
+# ================================================================
+# UpdateManifest struct
+# ================================================================
+# Layout: { version, channel, files_vec, release_date, min_version, changelog }
+# 6 fields * 8 = 48 bytes
+# Note: sha256_digest verification deferred — requires SHA-256 impl.
+# For now, manifest validation checks structural integrity only.
+
+fn update_manifest_new(version, channel, release_date) {
+    var m = alloc(48);
+    store64(m, version);
+    store64(m + 8, channel);
+    store64(m + 16, vec_new());   # files
+    store64(m + 24, release_date);
+    store64(m + 32, 0);           # min_version
+    store64(m + 40, 0);           # changelog
+    return m;
+}
+
+fn update_manifest_version(m) { return load64(m); }
+fn update_manifest_channel(m) { return load64(m + 8); }
+fn update_manifest_files(m) { return load64(m + 16); }
+fn update_manifest_release_date(m) { return load64(m + 24); }
+fn update_manifest_min_version(m) { return load64(m + 32); }
+fn update_manifest_changelog(m) { return load64(m + 40); }
+
+# ================================================================
+# UpdateFile struct
+# ================================================================
+# Layout: { path, sha256, size_bytes, delta_from, compressed }
+# 5 fields * 8 = 40 bytes
+
+fn update_file_new(path, sha256, size_bytes) {
+    var f = alloc(40);
+    store64(f, path);
+    store64(f + 8, sha256);
+    store64(f + 16, size_bytes);
+    store64(f + 24, 0);     # delta_from
+    store64(f + 32, 0);     # compressed
+    return f;
+}
+
+fn update_file_path(f) { return load64(f); }
+fn update_file_sha256(f) { return load64(f + 8); }
+fn update_file_size(f) { return load64(f + 16); }
+fn update_file_delta_from(f) { return load64(f + 24); }
+fn update_file_compressed(f) { return load64(f + 32); }
+
+# ================================================================
+# Slot detection
+# ================================================================
+
+# Detect current boot slot by reading /proc/cmdline for "agnos.slot=".
+# Falls back to reading the state file, then defaults to slot A.
+# Returns Result: Ok(slot) or Err.
+fn update_get_current_slot() {
+    # Read /proc/cmdline
+    var cmdfd = sys_open("/proc/cmdline", 0, 0);
+    if (cmdfd >= 0) {
+        var cmdbuf = alloc(1024);
+        var n = sys_read(cmdfd, cmdbuf, 1023);
+        sys_close(cmdfd);
+        if (n > 0) {
+            store8(cmdbuf + n, 0);
+            var pos = strstr(cmdbuf, "agnos.slot=");
+            if (pos >= 0) {
+                var val = load8(cmdbuf + pos + 11);
+                if (val == 97 || val == 65) { return Ok(SLOT_A); }
+                if (val == 98 || val == 66) { return Ok(SLOT_B); }
+                return err_invalid_argument("Unknown slot in cmdline");
+            }
+        }
+    }
+
+    # Fallback: read state file
+    var sfd = sys_open("/var/lib/agnos/update-state.json", 0, 0);
+    if (sfd >= 0) {
+        var sbuf = alloc(4096);
+        var sn = sys_read(sfd, sbuf, 4095);
+        sys_close(sfd);
+        if (sn > 0) {
+            store8(sbuf + sn, 0);
+            var idx = strstr(sbuf, "\"current_slot\"");
+            if (idx >= 0) {
+                var vi = idx + 14;
+                while (vi < sn && load8(sbuf + vi) != 49 && load8(sbuf + vi) != 50) { vi = vi + 1; }
+                if (vi < sn) {
+                    if (load8(sbuf + vi) == 49) { return Ok(SLOT_A); }
+                    if (load8(sbuf + vi) == 50) { return Ok(SLOT_B); }
+                }
+            }
+        }
+    }
+
+    # Default to slot A
+    return Ok(SLOT_A);
+}
+
+# ================================================================
+# State persistence
+# ================================================================
+
+# Save update state to a JSON file.
+# Returns Result: Ok(0) or Err.
+fn update_save_state(state, path) {
+    if (state == 0) { return err_invalid_argument("state is null"); }
+    if (path == 0) { return err_invalid_argument("path is null"); }
+
+    # Build JSON manually
+    var buf = alloc(512);
+    var pos = 0;
+
+    # JSON: current_slot, current_version, pending, rollback, boot_count
+    var hdr = "{\"current_slot\":";
+    memcpy(buf + pos, hdr, strlen(hdr));
+    pos = pos + strlen(hdr);
+
+    var slot = update_state_slot(state);
+    store8(buf + pos, 48 + slot);  # '0' + slot value (1 or 2)
+    pos = pos + 1;
+
+    var cvh = ",\"current_version\":\"";
+    memcpy(buf + pos, cvh, strlen(cvh));
+    pos = pos + strlen(cvh);
+
+    var ver = update_state_version(state);
+    if (ver != 0) {
+        var vlen = strlen(ver);
+        memcpy(buf + pos, ver, vlen);
+        pos = pos + vlen;
+    }
+    store8(buf + pos, 34); pos = pos + 1;  # '"'
+
+    # pending_update
+    var puh = ",\"pending_update\":";
+    memcpy(buf + pos, puh, strlen(puh));
+    pos = pos + strlen(puh);
+    var pending = update_state_pending(state);
+    if (pending == 0) {
+        memcpy(buf + pos, "null", 4);
+        pos = pos + 4;
+    } else {
+        store8(buf + pos, 34); pos = pos + 1;
+        var plen = strlen(pending);
+        memcpy(buf + pos, pending, plen);
+        pos = pos + plen;
+        store8(buf + pos, 34); pos = pos + 1;
+    }
+
+    # rollback_available
+    var rah = ",\"rollback_available\":";
+    memcpy(buf + pos, rah, strlen(rah));
+    pos = pos + strlen(rah);
+    if (update_state_rollback_available(state) == 1) {
+        memcpy(buf + pos, "true", 4); pos = pos + 4;
+    } else {
+        memcpy(buf + pos, "false", 5); pos = pos + 5;
+    }
+
+    # boot_count
+    var bch = ",\"boot_count\":";
+    memcpy(buf + pos, bch, strlen(bch));
+    pos = pos + strlen(bch);
+    var bc = update_state_boot_count(state);
+    var bc_buf[8];
+    var bc_len = fmt_int_buf(bc, &bc_buf);
+    memcpy(buf + pos, &bc_buf, bc_len);
+    pos = pos + bc_len;
+
+    store8(buf + pos, 125); pos = pos + 1;  # '}'
+    store8(buf + pos, 10); pos = pos + 1;   # '\n'
+    store8(buf + pos, 0);
+
+    return update_atomic_write(path, buf, pos);
+}
+
+# Load update state from a JSON file.
+# Returns Result: Ok(state_ptr) or Err.
+fn update_load_state(path) {
+    if (path == 0) { return err_invalid_argument("state path is null"); }
+
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) {
+        return err_io(0 - fd, "failed to open update state file");
+    }
+    defer { sys_close(fd); }
+
+    var buf = alloc(4096);
+    var n = sys_read(fd, buf, 4095);
+    if (n <= 0) {
+        return err_io(0, "failed to read update state file");
+    }
+    store8(buf + n, 0);
+
+    # Parse current_slot
+    var slot = SLOT_A;
+    var sidx = strstr(buf, "\"current_slot\"");
+    if (sidx >= 0) {
+        var si = sidx + 14;
+        while (si < n && load8(buf + si) != 49 && load8(buf + si) != 50) { si = si + 1; }
+        if (si < n && load8(buf + si) == 50) { slot = SLOT_B; }
+    }
+
+    # Parse current_version
+    var version = "";
+    var vidx = strstr(buf, "\"current_version\"");
+    if (vidx >= 0) {
+        var qi = vidx + 17;
+        while (qi < n && load8(buf + qi) != 34) { qi = qi + 1; }
+        qi = qi + 1;
+        var vstart = qi;
+        while (qi < n && load8(buf + qi) != 34) { qi = qi + 1; }
+        var vlen = qi - vstart;
+        if (vlen > 0) {
+            version = alloc(vlen + 1);
+            memcpy(version, buf + vstart, vlen);
+            store8(version + vlen, 0);
+        }
+    }
+
+    var state = update_state_new(slot, version);
+
+    # Parse pending_update
+    var pidx = strstr(buf, "\"pending_update\"");
+    if (pidx >= 0) {
+        var pi = pidx + 16;
+        # Check for null
+        while (pi < n && (load8(buf + pi) == 32 || load8(buf + pi) == 58)) { pi = pi + 1; }
+        if (pi + 3 < n && memeq(buf + pi, "null", 4) != 1) {
+            # Skip to opening quote
+            while (pi < n && load8(buf + pi) != 34) { pi = pi + 1; }
+            pi = pi + 1;
+            var pstart = pi;
+            while (pi < n && load8(buf + pi) != 34) { pi = pi + 1; }
+            var plen = pi - pstart;
+            if (plen > 0) {
+                var pv = alloc(plen + 1);
+                memcpy(pv, buf + pstart, plen);
+                store8(pv + plen, 0);
+                update_state_set_pending(state, pv);
+            }
+        }
+    }
+
+    # Parse rollback_available
+    var ridx = strstr(buf, "\"rollback_available\"");
+    if (ridx >= 0) {
+        var ri = ridx + 20;
+        # skip to 't' or 'f'
+        while (ri < n && load8(buf + ri) != 116 && load8(buf + ri) != 102) {
+            ri = ri + 1;
+        }
+        if (ri < n && load8(buf + ri) == 116) {
+            update_state_set_rollback(state, 1);
+        }
+    }
+
+    # Parse boot_count
+    var bidx = strstr(buf, "\"boot_count\"");
+    if (bidx >= 0) {
+        var bi = bidx + 12;
+        while (bi < n && (load8(buf + bi) < 48 || load8(buf + bi) > 57)) { bi = bi + 1; }
+        var bc = 0;
+        while (bi < n && load8(buf + bi) >= 48 && load8(buf + bi) <= 57) {
+            bc = bc * 10 + (load8(buf + bi) - 48);
+            bi = bi + 1;
+        }
+        update_state_set_boot_count(state, bc);
+    }
+
+    return Ok(state);
+}
+
+# ================================================================
+# Manifest validation
+# ================================================================
+
+# Validate structural integrity of an update manifest.
+# Returns Result: Ok(0) or Err.
+# Note: SHA-256 digest verification requires a SHA-256 implementation
+# which is not yet available in Cyrius stdlib. Structural checks only.
+fn update_verify_manifest(manifest) {
+    if (manifest == 0) { return err_invalid_argument("manifest is null"); }
+
+    var ver = update_manifest_version(manifest);
+    if (ver == 0 || strlen(ver) == 0) {
+        return err_invalid_argument("manifest version must not be empty");
+    }
+
+    var files = update_manifest_files(manifest);
+    if (files == 0 || vec_len(files) == 0) {
+        return err_invalid_argument("manifest must contain at least one file");
+    }
+
+    var rd = update_manifest_release_date(manifest);
+    if (rd == 0 || strlen(rd) == 0) {
+        return err_invalid_argument("manifest release_date must not be empty");
+    }
+
+    # Validate version format
+    var vres = update_validate_version(ver);
+    if (is_err_result(vres) == 1) { return vres; }
+
+    # Validate each file has a valid sha256 (64 hex chars)
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var f = vec_get(files, fi);
+        var hash = update_file_sha256(f);
+        if (hash == 0 || strlen(hash) != 64) {
+            return err_invalid_argument("file has invalid sha256 (expected 64 hex chars)");
+        }
+        # Verify all chars are hex
+        var hi = 0;
+        while (hi < 64) {
+            var c = load8(hash + hi);
+            var valid = 0;
+            if (c >= 48 && c <= 57) { valid = 1; }   # 0-9
+            if (c >= 97 && c <= 102) { valid = 1; }   # a-f
+            if (c >= 65 && c <= 70) { valid = 1; }     # A-F
+            if (valid == 0) {
+                return err_invalid_argument("file sha256 contains non-hex character");
+            }
+            hi = hi + 1;
+        }
+        fi = fi + 1;
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Update check
+# ================================================================
+
+# Check for available update by reading a local manifest file.
+# url_or_path: path to manifest JSON file (file:// prefix stripped).
+# current_version: installed version string.
+# Returns Result: Ok(manifest_ptr) if update available, Ok(0) if up-to-date, or Err.
+#
+# Note: Network fetch (curl) not yet implemented in Cyrius.
+# Supports local file paths and file:// URLs only.
+# Future: Mac/Windows will need platform-specific fetch (NSURLSession, WinHTTP).
+fn update_check(config, current_version) {
+    if (config == 0) { return err_invalid_argument("config is null"); }
+    if (current_version == 0) { return err_invalid_argument("current_version is null"); }
+
+    var url = update_config_url(config);
+    var path = url;
+
+    # Strip file:// prefix if present
+    if (strlen(url) > 7 && memeq(url, "file://", 7) == 1) {
+        path = url + 7;
+    }
+
+    # Only support local file paths for now
+    if (load8(path) != 47) {  # '/'
+        return err_not_supported("network update check not yet implemented");
+    }
+
+    # Read manifest file
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) {
+        return err_io(0 - fd, "failed to open manifest file");
+    }
+    defer { sys_close(fd); }
+
+    var buf = alloc(16384);
+    var total = 0;
+    var nread = sys_read(fd, buf + total, 16384 - total);
+    while (nread > 0) {
+        total = total + nread;
+        if (total >= 16384) { break; }
+        nread = sys_read(fd, buf + total, 16384 - total);
+    }
+    store8(buf + total, 0);
+
+    # Parse version from manifest JSON
+    # Look for "version":"X.Y.Z"
+    var vidx = strstr(buf, "\"version\"");
+    if (vidx < 0) {
+        return err_invalid_argument("manifest missing version field");
+    }
+    var qi = vidx + 9;
+    while (qi < total && load8(buf + qi) != 34) { qi = qi + 1; }
+    qi = qi + 1;  # skip opening quote
+    var vstart = qi;
+    while (qi < total && load8(buf + qi) != 34) { qi = qi + 1; }
+    var vlen = qi - vstart;
+    var manifest_version = alloc(vlen + 1);
+    memcpy(manifest_version, buf + vstart, vlen);
+    store8(manifest_version + vlen, 0);
+
+    # Compare versions
+    var cmp = update_compare_versions(manifest_version, current_version);
+    if (cmp == VER_GREATER) {
+        # Newer version available — build minimal manifest
+        var manifest = update_manifest_new(manifest_version, CHAN_STABLE, "");
+        return Ok(manifest);
+    }
+
+    # Up to date
+    return Ok(0);
+}
+
+# ================================================================
+# Apply update to inactive slot
+# ================================================================
+
+# Write update image to the inactive slot's block device.
+# Returns Result: Ok(0) or Err.
+fn update_apply(config, manifest) {
+    if (config == 0) { return err_invalid_argument("config is null"); }
+    if (manifest == 0) { return err_invalid_argument("manifest is null"); }
+
+    var files = update_manifest_files(manifest);
+    if (files == 0 || vec_len(files) == 0) {
+        return err_invalid_argument("manifest contains no files to apply");
+    }
+
+    var current_res = update_get_current_slot();
+    var current = SLOT_A;
+    if (is_ok(current_res) == 1) { current = payload(current_res); }
+
+    var target_slot = update_other_slot(current);
+    var target_dev = update_config_device_for_slot(config, target_slot);
+
+    var image = update_file_path(vec_get(files, 0));
+    if (image == 0 || strlen(image) == 0) {
+        return err_invalid_argument("update image path is empty");
+    }
+
+    # Validate image path: must be absolute, no traversal
+    if (load8(image) != 47) {
+        return err_invalid_argument("update image path must be absolute");
+    }
+    if (strstr(image, "..") >= 0) {
+        return err_invalid_argument("update image path must not contain '..'");
+    }
+
+    # Validate within staging directory
+    var staging = "/var/lib/agnos/updates/";
+    if (memeq(image, staging, strlen(staging)) != 1) {
+        return err_invalid_argument("update image must be within /var/lib/agnos/updates/");
+    }
+
+    # Write via dd
+    var args = vec_new();
+    vec_push(args, "dd");
+
+    # Build if=<image>
+    var if_arg = alloc(strlen(image) + 4);
+    memcpy(if_arg, "if=", 3);
+    memcpy(if_arg + 3, image, strlen(image) + 1);
+    vec_push(args, if_arg);
+
+    # Build of=<device>
+    var of_arg = alloc(strlen(target_dev) + 4);
+    memcpy(of_arg, "of=", 3);
+    memcpy(of_arg + 3, target_dev, strlen(target_dev) + 1);
+    vec_push(args, of_arg);
+
+    vec_push(args, "bs=4M");
+    vec_push(args, "conv=fsync");
+
+    var dd_res = run_capture("dd", args);
+    if (is_err_result(dd_res) == 1) { return dd_res; }
+
+    # Update persistent state
+    var state_file = update_config_state_file(config);
+    var load_res = update_load_state(state_file);
+    var state = 0;
+    if (is_ok(load_res) == 1) {
+        state = payload(load_res);
+    } else {
+        state = update_state_new(current, "");
+    }
+    update_state_set_pending(state, update_manifest_version(manifest));
+    update_state_set_rollback(state, 1);
+    update_save_state(state, state_file);
+
+    return Ok(0);
+}
+
+# ================================================================
+# Switch active slot
+# ================================================================
+
+# Mark a slot as active for the next boot.
+# Writes slot marker for argonaut and optionally sets EFI boot entry.
+# Returns Result: Ok(0) or Err.
+fn update_switch_slot(config, slot) {
+    if (config == 0) { return err_invalid_argument("config is null"); }
+
+    # Write slot marker file
+    var marker = "/var/lib/agnos/next-slot";
+    var suffix = update_slot_suffix(slot);
+    var slen = strlen(suffix);
+    var res = update_atomic_write(marker, suffix, slen);
+    if (is_err_result(res) == 1) { return res; }
+
+    # Try efibootmgr (best effort)
+    var efi_args = vec_new();
+    vec_push(efi_args, "efibootmgr");
+    vec_push(efi_args, "--bootnext");
+    var boot_label = alloc(8);
+    memcpy(boot_label, "AGNOS-", 6);
+    if (slot == SLOT_A) { store8(boot_label + 6, 65); }  # 'A'
+    else { store8(boot_label + 6, 66); }                   # 'B'
+    store8(boot_label + 7, 0);
+    vec_push(efi_args, boot_label);
+    run_capture("efibootmgr", efi_args);  # ignore failure
+
+    # Update persistent state
+    var state_file = update_config_state_file(config);
+    var load_res = update_load_state(state_file);
+    var state = 0;
+    if (is_ok(load_res) == 1) {
+        state = payload(load_res);
+    } else {
+        state = update_state_new(update_other_slot(slot), "");
+    }
+    update_state_set_slot(state, slot);
+    update_state_set_boot_count(state, 0);
+    update_save_state(state, state_file);
+
+    return Ok(0);
+}
+
+# ================================================================
+# Rollback
+# ================================================================
+
+# Roll back to the previous slot.
+# Returns Result: Ok(0) or Err.
+fn update_rollback(config) {
+    if (config == 0) { return err_invalid_argument("config is null"); }
+
+    var state_file = update_config_state_file(config);
+    var load_res = update_load_state(state_file);
+    if (is_err_result(load_res) == 1) { return load_res; }
+    var state = payload(load_res);
+
+    if (update_state_rollback_available(state) == 0) {
+        return err_invalid_argument("no rollback image available");
+    }
+
+    var previous = update_other_slot(update_state_slot(state));
+
+    # Stop services before switching (best effort)
+    var stop_args = vec_new();
+    vec_push(stop_args, "argonaut");
+    vec_push(stop_args, "stop");
+    vec_push(stop_args, "daimon");
+    run_capture("argonaut", stop_args);  # ignore failure
+
+    var switch_res = update_switch_slot(config, previous);
+    if (is_err_result(switch_res) == 1) { return switch_res; }
+
+    # Clear pending state
+    update_state_set_pending(state, 0);
+    update_state_set_rollback(state, 0);
+    update_save_state(state, state_file);
+
+    return Ok(0);
+}
+
+# ================================================================
+# Boot confirmation
+# ================================================================
+
+# Mark the current boot as successful.
+# Increments boot counter, clears pending update flag.
+# Returns Result: Ok(0) or Err.
+fn update_mark_boot_successful(config) {
+    if (config == 0) { return err_invalid_argument("config is null"); }
+
+    var state_file = update_config_state_file(config);
+    var load_res = update_load_state(state_file);
+    if (is_err_result(load_res) == 1) { return load_res; }
+    var state = payload(load_res);
+
+    var bc = update_state_boot_count(state) + 1;
+    update_state_set_boot_count(state, bc);
+
+    if (update_state_pending(state) != 0) {
+        update_state_set_pending(state, 0);
+    }
+
+    return update_save_state(state, state_file);
+}
+
+# Pure function: returns 1 if boot count exceeds max_attempts
+# and there is a pending update (indicating automatic rollback needed).
+fn update_needs_rollback(state, max_boot_attempts) {
+    if (update_state_pending(state) == 0) { return 0; }
+    return update_state_boot_count(state) >= max_boot_attempts;
+}

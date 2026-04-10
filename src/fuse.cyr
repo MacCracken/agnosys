@@ -233,3 +233,105 @@ fn fuse_unmount_lazy(mountpoint) {
     if (is_err_result(res) == 1) { return res; }
     return Ok(0);
 }
+
+# ================================================================
+# FUSE availability check
+# ================================================================
+
+# Check whether FUSE is available on this system (/dev/fuse exists).
+# Returns 1 if available, 0 otherwise.
+fn fuse_is_available() {
+    return sys_access("/dev/fuse", 0) == 0;
+}
+
+# ================================================================
+# Mountpoint validation
+# ================================================================
+
+# Validate that a path is suitable as a FUSE mountpoint.
+# Checks: not null, not root, exists, is a directory.
+# Returns Result: Ok(0) or Err.
+fn fuse_validate_mountpoint(path) {
+    if (path == 0 || strlen(path) == 0) {
+        return err_invalid_argument("mountpoint path is empty");
+    }
+
+    # Must not be filesystem root
+    if (strlen(path) == 1 && load8(path) == 47) {
+        return err_invalid_argument("cannot use filesystem root as mountpoint");
+    }
+
+    # Check path exists and is a directory
+    # stat64 struct: 144 bytes, mode at offset 24
+    var statbuf = alloc(144);
+    var ret = syscall(4, path, statbuf);  # SYS_STAT
+    if (ret < 0) {
+        return err_invalid_argument("mountpoint does not exist");
+    }
+
+    var mode = load32(statbuf + 24);
+    # S_IFDIR = 0x4000 = 16384
+    if ((mode & 0xF000) != 0x4000) {
+        return err_invalid_argument("mountpoint is not a directory");
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# List FUSE mounts (convenience wrapper)
+# ================================================================
+
+# List all currently mounted FUSE filesystems.
+# Returns Result: Ok(vec_of_mounts) or Err.
+fn fuse_list_mounts() {
+    var arr = alloc(1024);  # up to 128 mount pointers
+    var res = fuse_parse_proc_mounts(arr, 128, 1);
+    if (is_err_result(res) == 1) { return res; }
+    var count = payload(res);
+
+    var mounts = vec_new();
+    var i = 0;
+    while (i < count) {
+        vec_push(mounts, load64(arr + i * 8));
+        i = i + 1;
+    }
+    return Ok(mounts);
+}
+
+# ================================================================
+# FUSE mount status
+# ================================================================
+
+# FuseStatus constants
+enum FuseStatus {
+    FUSE_MOUNTED = 1;
+    FUSE_NOT_MOUNTED = 2;
+    FUSE_ERROR = 3;
+}
+
+# Get the status of a FUSE mount at the given mountpoint.
+# Returns Result: Ok(FuseStatus) or Err.
+fn fuse_get_status(mountpoint) {
+    if (mountpoint == 0 || strlen(mountpoint) == 0) {
+        return err_invalid_argument("mountpoint is empty");
+    }
+
+    var arr = alloc(1024);
+    var res = fuse_parse_proc_mounts(arr, 128, 1);
+    if (is_err_result(res) == 1) { return Ok(FUSE_ERROR); }
+    var count = payload(res);
+
+    var mplen = strlen(mountpoint);
+    var i = 0;
+    while (i < count) {
+        var m = load64(arr + i * 8);
+        var mp = fuse_mount_mountpoint(m);
+        if (mp != 0 && strlen(mp) == mplen && memeq(mp, mountpoint, mplen) == 1) {
+            return Ok(FUSE_MOUNTED);
+        }
+        i = i + 1;
+    }
+
+    return Ok(FUSE_NOT_MOUNTED);
+}

@@ -129,11 +129,11 @@ fn secureboot_detect_state() {
     var mok_args = vec_new();
     vec_push(mok_args, "mokutil");
     vec_push(mok_args, "--sb-state");
-    var mokbuf[4096];
-    var mok_n = exec_capture(mok_args, &mokbuf, 4095);
+    var mokbuf = alloc(4096);
+    var mok_n = exec_capture(mok_args, mokbuf, 4095);
     var mok_res = wrap_syscall(mok_n);
     if (is_ok(mok_res) == 1) {
-        var output = &mokbuf;
+        var output = mokbuf;
         if (mok_n > 0) {
             # Substring search for known patterns using memeq
             var outlen = strlen(output);
@@ -172,4 +172,432 @@ fn secureboot_state_str(state) {
     if (state == SB_DISABLED) { return "disabled"; }
     if (state == SB_SETUP_MODE) { return "setup_mode"; }
     return "not_supported";
+}
+
+# ================================================================
+# EnrolledKey struct
+# ================================================================
+# Layout: { subject, issuer, fingerprint, not_before, not_after }
+# 5 fields * 8 = 40 bytes
+
+fn secureboot_enrolled_key_new(subject, issuer, fingerprint, not_before, not_after) {
+    var k = alloc(40);
+    store64(k, subject);
+    store64(k + 8, issuer);
+    store64(k + 16, fingerprint);
+    store64(k + 24, not_before);
+    store64(k + 32, not_after);
+    return k;
+}
+
+fn secureboot_key_subject(k) { return load64(k); }
+fn secureboot_key_issuer(k) { return load64(k + 8); }
+fn secureboot_key_fingerprint(k) { return load64(k + 16); }
+fn secureboot_key_not_before(k) { return load64(k + 24); }
+fn secureboot_key_not_after(k) { return load64(k + 32); }
+
+# ================================================================
+# List enrolled MOK keys
+# ================================================================
+
+# Parse mokutil --list-enrolled output into a vec of EnrolledKey structs.
+# Returns vec of key pointers.
+fn secureboot_parse_mokutil_list(output, outlen) {
+    var keys = vec_new();
+    var pos = 0;
+
+    var cur_subject = "";
+    var cur_issuer = "";
+    var cur_fingerprint = "";
+    var cur_not_before = "";
+    var cur_not_after = "";
+    var in_key = 0;
+
+    while (pos < outlen) {
+        # Find line start and end
+        var linestart = pos;
+        while (pos < outlen && load8(output + pos) != 10) { pos = pos + 1; }
+        var linelen = pos - linestart;
+        if (pos < outlen) { pos = pos + 1; }
+        if (linelen == 0) { continue; }
+
+        # Skip leading whitespace
+        var lp = linestart;
+        while (lp < linestart + linelen && (load8(output + lp) == 32 || load8(output + lp) == 9)) {
+            lp = lp + 1;
+        }
+        var trimlen = (linestart + linelen) - lp;
+        if (trimlen == 0) { continue; }
+
+        # Check for "[key " marker
+        if (trimlen >= 5 && memeq(output + lp, "[key ", 5) == 1) {
+            # Save previous key if any
+            if (in_key == 1 && strlen(cur_fingerprint) > 0) {
+                vec_push(keys, secureboot_enrolled_key_new(
+                    cur_subject, cur_issuer, cur_fingerprint,
+                    cur_not_before, cur_not_after));
+            }
+            cur_subject = "";
+            cur_issuer = "";
+            cur_fingerprint = "";
+            cur_not_before = "";
+            cur_not_after = "";
+            in_key = 1;
+            continue;
+        }
+
+        if (in_key == 0) { continue; }
+
+        # Parse fields
+        var lend = linestart + linelen;
+        if (trimlen >= 18 && memeq(output + lp, "SHA1 Fingerprint:", 17) == 1) {
+            var fp_start = lp + 17;
+            while (fp_start < lend && load8(output + fp_start) == 32) {
+                fp_start = fp_start + 1;
+            }
+            var fp_len = lend - fp_start;
+            var fp = alloc(fp_len + 1);
+            var fi = 0;
+            var fo = 0;
+            while (fi < fp_len) {
+                var c = load8(output + fp_start + fi);
+                if (c != 58) {
+                    if (c >= 65 && c <= 90) { c = c + 32; }
+                    store8(fp + fo, c);
+                    fo = fo + 1;
+                }
+                fi = fi + 1;
+            }
+            store8(fp + fo, 0);
+            cur_fingerprint = fp;
+        }
+        elif (trimlen >= 8 && memeq(output + lp, "Subject:", 8) == 1) {
+            var s_start = lp + 8;
+            while (s_start < lend && load8(output + s_start) == 32) {
+                s_start = s_start + 1;
+            }
+            var s_len = lend - s_start;
+            cur_subject = alloc(s_len + 1);
+            memcpy(cur_subject, output + s_start, s_len);
+            store8(cur_subject + s_len, 0);
+        }
+        elif (trimlen >= 7 && memeq(output + lp, "Issuer:", 7) == 1) {
+            var i_start = lp + 7;
+            while (i_start < lend && load8(output + i_start) == 32) {
+                i_start = i_start + 1;
+            }
+            var i_len = lend - i_start;
+            cur_issuer = alloc(i_len + 1);
+            memcpy(cur_issuer, output + i_start, i_len);
+            store8(cur_issuer + i_len, 0);
+        }
+        elif (trimlen >= 11 && memeq(output + lp, "Valid from:", 11) == 1) {
+            var vf_start = lp + 11;
+            while (vf_start < lend && load8(output + vf_start) == 32) {
+                vf_start = vf_start + 1;
+            }
+            var vf_len = lend - vf_start;
+            cur_not_before = alloc(vf_len + 1);
+            memcpy(cur_not_before, output + vf_start, vf_len);
+            store8(cur_not_before + vf_len, 0);
+        }
+        elif (trimlen >= 12 && memeq(output + lp, "Valid until:", 12) == 1) {
+            var vu_start = lp + 12;
+            while (vu_start < lend && load8(output + vu_start) == 32) {
+                vu_start = vu_start + 1;
+            }
+            var vu_len = lend - vu_start;
+            cur_not_after = alloc(vu_len + 1);
+            memcpy(cur_not_after, output + vu_start, vu_len);
+            store8(cur_not_after + vu_len, 0);
+        }
+    }
+
+    # Save last key
+    if (in_key == 1 && strlen(cur_fingerprint) > 0) {
+        vec_push(keys, secureboot_enrolled_key_new(
+            cur_subject, cur_issuer, cur_fingerprint,
+            cur_not_before, cur_not_after));
+    }
+
+    return keys;
+}
+
+# List enrolled MOK (Machine Owner Key) certificates.
+# Returns Result: Ok(vec_of_keys) or Err.
+fn secureboot_list_enrolled_keys() {
+    var args = vec_new();
+    vec_push(args, "mokutil");
+    vec_push(args, "--list-enrolled");
+
+    var outbuf = alloc(8192);
+    var n = exec_capture(args, outbuf, 8191);
+    if (n < 0) {
+        return err_io(0 - n, "mokutil --list-enrolled failed");
+    }
+    store8(outbuf + n, 0);
+
+    var keys = secureboot_parse_mokutil_list(outbuf, n);
+    return Ok(keys);
+}
+
+# ================================================================
+# MOK key enrollment
+# ================================================================
+
+# Enroll a DER-encoded certificate into the MOK list.
+# A reboot is required to complete enrollment.
+# Returns Result: Ok(0) or Err.
+fn secureboot_enroll_key(der_path) {
+    if (der_path == 0 || strlen(der_path) == 0) {
+        return err_invalid_argument("certificate path is empty");
+    }
+
+    # Check file exists
+    if (sys_access(der_path, 0) != 0) {
+        return err_invalid_argument("certificate file not found");
+    }
+
+    # Validate extension (basic check: last chars should be .der, .cer, .crt, or .pem)
+    var plen = strlen(der_path);
+    if (plen < 5) {
+        return err_invalid_argument("certificate path too short");
+    }
+
+    var args = vec_new();
+    vec_push(args, "mokutil");
+    vec_push(args, "--import");
+    vec_push(args, der_path);
+
+    var outbuf[1024];
+    var n = exec_capture(args, &outbuf, 1023);
+    var res = wrap_syscall(n);
+    if (is_err_result(res) == 1) {
+        return err_io(0, "mokutil --import failed");
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Kernel module signing
+# ================================================================
+
+# Sign a kernel module with a private key and certificate.
+# Uses kmodsign, falls back to sign-file from kernel headers.
+# Returns Result: Ok(0) or Err.
+fn secureboot_sign_module(module_path, private_key, certificate) {
+    if (module_path == 0 || strlen(module_path) == 0) {
+        return err_invalid_argument("module path is empty");
+    }
+    if (private_key == 0 || strlen(private_key) == 0) {
+        return err_invalid_argument("private key path is empty");
+    }
+    if (certificate == 0 || strlen(certificate) == 0) {
+        return err_invalid_argument("certificate path is empty");
+    }
+
+    # Verify files exist
+    if (sys_access(module_path, 0) != 0) {
+        return err_invalid_argument("module file not found");
+    }
+    if (sys_access(private_key, 0) != 0) {
+        return err_invalid_argument("private key file not found");
+    }
+    if (sys_access(certificate, 0) != 0) {
+        return err_invalid_argument("certificate file not found");
+    }
+
+    # Try kmodsign first
+    var args = vec_new();
+    vec_push(args, "kmodsign");
+    vec_push(args, "sha256");
+    vec_push(args, private_key);
+    vec_push(args, certificate);
+    vec_push(args, module_path);
+
+    var outbuf[1024];
+    var n = exec_capture(args, &outbuf, 1023);
+    if (n >= 0) { return Ok(0); }
+
+    # Fallback: sign-file from kernel headers
+    var args2 = vec_new();
+    vec_push(args2, "/usr/lib/modules-load.d/../linux/scripts/sign-file");
+    vec_push(args2, "sha256");
+    vec_push(args2, private_key);
+    vec_push(args2, certificate);
+    vec_push(args2, module_path);
+
+    n = exec_capture(args2, &outbuf, 1023);
+    if (n < 0) {
+        return err_io(0, "kernel module signing failed (kmodsign and sign-file)");
+    }
+
+    return Ok(0);
+}
+
+# ================================================================
+# Module signature verification
+# ================================================================
+
+# ModuleSignatureInfo struct
+# Layout: { module_path, has_signature, signer, sig_algorithm }
+# 4 fields * 8 = 32 bytes
+
+fn secureboot_sig_info_new(module_path, has_sig, signer, algo) {
+    var s = alloc(32);
+    store64(s, module_path);
+    store64(s + 8, has_sig);
+    store64(s + 16, signer);
+    store64(s + 24, algo);
+    return s;
+}
+
+fn secureboot_sig_module(s) { return load64(s); }
+fn secureboot_sig_has_sig(s) { return load64(s + 8); }
+fn secureboot_sig_signer(s) { return load64(s + 16); }
+fn secureboot_sig_algorithm(s) { return load64(s + 24); }
+
+# Verify a kernel module's signature using modinfo.
+# Returns Result: Ok(sig_info) or Err.
+fn secureboot_verify_module(module_path) {
+    if (module_path == 0 || strlen(module_path) == 0) {
+        return err_invalid_argument("module path is empty");
+    }
+    if (sys_access(module_path, 0) != 0) {
+        return err_invalid_argument("module file not found");
+    }
+
+    var args = vec_new();
+    vec_push(args, "modinfo");
+    vec_push(args, module_path);
+
+    var outbuf = alloc(4096);
+    var n = exec_capture(args, outbuf, 4095);
+    if (n < 0) {
+        return err_io(0, "modinfo failed");
+    }
+    store8(outbuf + n, 0);
+
+    var has_sig = 0;
+    var signer = "";
+    var algo = "";
+
+    # Check for sig_id: or signature:
+    if (strstr(outbuf, "sig_id:") >= 0 || strstr(outbuf, "signature:") >= 0) {
+        has_sig = 1;
+    }
+
+    # Extract signer
+    var si = strstr(outbuf, "signer:");
+    if (si >= 0) {
+        var sp = si + 7;
+        while (sp < n && load8(outbuf + sp) == 32) { sp = sp + 1; }
+        var ss = sp;
+        while (sp < n && load8(outbuf + sp) != 10) { sp = sp + 1; }
+        var slen = sp - ss;
+        signer = alloc(slen + 1);
+        memcpy(signer, outbuf + ss, slen);
+        store8(signer + slen, 0);
+    }
+
+    # Extract hash algorithm
+    var ai = strstr(outbuf, "sig_hashalgo:");
+    if (ai >= 0) {
+        var ap = ai + 13;
+        while (ap < n && load8(outbuf + ap) == 32) { ap = ap + 1; }
+        var as = ap;
+        while (ap < n && load8(outbuf + ap) != 10) { ap = ap + 1; }
+        var alen = ap - as;
+        algo = alloc(alen + 1);
+        memcpy(algo, outbuf + as, alen);
+        store8(algo + alen, 0);
+    }
+
+    return Ok(secureboot_sig_info_new(module_path, has_sig, signer, algo));
+}
+
+# ================================================================
+# EFI variable listing
+# ================================================================
+
+# EfiVariable struct
+# Layout: { name, size }
+# 2 fields * 8 = 16 bytes
+
+fn secureboot_efi_var_new(name, size) {
+    var v = alloc(16);
+    store64(v, name);
+    store64(v + 8, size);
+    return v;
+}
+
+fn secureboot_efi_var_name(v) { return load64(v); }
+fn secureboot_efi_var_data_size(v) { return load64(v + 8); }
+
+# List security-relevant EFI variables from sysfs.
+# Returns Result: Ok(vec_of_efi_vars) or Err.
+fn secureboot_list_efi_variables() {
+    var efivars_dir = "/sys/firmware/efi/efivars";
+    var fd = sys_open(efivars_dir, 0, 0);
+    if (fd < 0) {
+        return err_io(0 - fd, "EFI variables directory not found; is this a UEFI system?");
+    }
+    sys_close(fd);
+
+    # Read directory listing via ls
+    var args = vec_new();
+    vec_push(args, "ls");
+    vec_push(args, efivars_dir);
+
+    var outbuf = alloc(16384);
+    var n = exec_capture(args, outbuf, 16383);
+    if (n < 0) {
+        return err_io(0 - n, "failed to list EFI variables");
+    }
+    store8(outbuf + n, 0);
+
+    var vars = vec_new();
+
+    # Filter for security-relevant prefixes
+    var pos = 0;
+    while (pos < n) {
+        var linestart = pos;
+        while (pos < n && load8(outbuf + pos) != 10) { pos = pos + 1; }
+        var linelen = pos - linestart;
+        if (pos < n) { pos = pos + 1; }
+        if (linelen == 0) { continue; }
+
+        # Check if line starts with a relevant prefix
+        var relevant = 0;
+        if (linelen >= 10 && memeq(outbuf + linestart, "SecureBoot", 10) == 1) { relevant = 1; }
+        if (linelen >= 9 && memeq(outbuf + linestart, "SetupMode", 9) == 1) { relevant = 1; }
+        if (linelen >= 3 && memeq(outbuf + linestart, "PK-", 3) == 1) { relevant = 1; }
+        if (linelen >= 4 && memeq(outbuf + linestart, "KEK-", 4) == 1) { relevant = 1; }
+        if (linelen >= 3 && memeq(outbuf + linestart, "db-", 3) == 1) { relevant = 1; }
+        if (linelen >= 4 && memeq(outbuf + linestart, "dbx-", 4) == 1) { relevant = 1; }
+        if (linelen >= 7 && memeq(outbuf + linestart, "MokList", 7) == 1) { relevant = 1; }
+
+        if (relevant == 1) {
+            var name = alloc(linelen + 1);
+            memcpy(name, outbuf + linestart, linelen);
+            store8(name + linelen, 0);
+
+            # Get file size via reading the variable
+            var full_path = alloc(strlen(efivars_dir) + 1 + linelen + 1);
+            memcpy(full_path, efivars_dir, strlen(efivars_dir));
+            store8(full_path + strlen(efivars_dir), 47);  # '/'
+            memcpy(full_path + strlen(efivars_dir) + 1, name, linelen + 1);
+
+            var vres = secureboot_read_efi_variable(full_path);
+            var size = 0;
+            if (is_ok(vres) == 1) {
+                size = secureboot_efi_var_size(payload(vres));
+            }
+
+            vec_push(vars, secureboot_efi_var_new(name, size));
+        }
+    }
+
+    return Ok(vars);
 }

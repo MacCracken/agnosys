@@ -194,26 +194,25 @@ fn tpm_read_pcr(bank, indices) {
     vec_push(args, "/usr/bin/tpm2_pcrread");
     vec_push(args, selection);
 
-    var outbuf[4096];
-    memset(&outbuf, 0, 4096);
-    var cap_res = tpm_run_capture(args, &outbuf, 4095);
+    var outbuf = alloc(4096);
+    memset(outbuf, 0, 4096);
+    var cap_res = tpm_run_capture(args, outbuf, 4095);
     if (is_err_result(cap_res) == 1) { return cap_res; }
 
-    store8(&outbuf + payload(cap_res), 0);
+    store8(outbuf + payload(cap_res), 0);
 
     # Parse output — YAML-like:
     #   sha256:
     #     0 : 0xABCDEF...
     #     7 : 0x123456...
     var values = vec_new();
-    var outlen = strlen(&outbuf);
+    var outlen = strlen(outbuf);
     var default_hex_len = tpm_bank_hex_len(bank);
 
     var pi = 0;
     while (pi < count) {
         var target_idx = vec_get(indices, pi);
 
-        # Build patterns: "<idx> :" and "<idx>:"
         var idx_buf[24];
         var idx_len = fmt_int_buf(target_idx, &idx_buf);
 
@@ -222,57 +221,49 @@ fn tpm_read_pcr(bank, indices) {
         var spos = 0;
 
         while (spos < outlen && found == 0) {
-            # Skip to non-whitespace after trimming
             var lstart = spos;
             while (lstart < outlen &&
-            (load8(&outbuf + lstart) == 32 ||
-            load8(&outbuf + lstart) == 9)) {
+            (load8(outbuf + lstart) == 32 ||
+            load8(outbuf + lstart) == 9)) {
                 lstart = lstart + 1;
             }
 
-            # Check if line starts with our index
-            if (lstart + idx_len <= outlen && memeq(&outbuf + lstart, &idx_buf, idx_len) == 1) {
+            if (lstart + idx_len <= outlen && memeq(outbuf + lstart, &idx_buf, idx_len) == 1) {
                 var after = lstart + idx_len;
-                # Check for " :" or ":"
-                if (after < outlen && (load8(&outbuf + after) == 58 ||
-                (load8(&outbuf + after) == 32 &&
+                if (after < outlen && (load8(outbuf + after) == 58 ||
+                (load8(outbuf + after) == 32 &&
                 after + 1 < outlen &&
-                load8(&outbuf + after + 1) == 58))) {
-                    # Found the line — extract hex value after ':'
-                    while (after < outlen && load8(&outbuf + after) != 58) {
+                load8(outbuf + after + 1) == 58))) {
+                    while (after < outlen && load8(outbuf + after) != 58) {
                         after = after + 1;
                     }
-                    after = after + 1;  # skip ':'
-                    # Skip whitespace
+                    after = after + 1;
                     while (after < outlen &&
-                    (load8(&outbuf + after) == 32 ||
-                    load8(&outbuf + after) == 9)) {
+                    (load8(outbuf + after) == 32 ||
+                    load8(outbuf + after) == 9)) {
                         after = after + 1;
                     }
-                    # Skip "0x" prefix if present
                     if (after + 1 < outlen &&
-                    load8(&outbuf + after) == 48 &&
-                    load8(&outbuf + after + 1) == 120) {
+                    load8(outbuf + after) == 48 &&
+                    load8(outbuf + after + 1) == 120) {
                         after = after + 2;
                     }
-                    # Read hex until end of line
                     var hstart = after;
                     while (after < outlen &&
-                    load8(&outbuf + after) != 10 &&
-                    load8(&outbuf + after) != 0 &&
-                    load8(&outbuf + after) != 32) {
+                    load8(outbuf + after) != 10 &&
+                    load8(outbuf + after) != 0 &&
+                    load8(outbuf + after) != 32) {
                         after = after + 1;
                     }
                     var hlen = after - hstart;
                     hex_value = alloc(hlen + 1);
-                    memcpy(hex_value, &outbuf + hstart, hlen);
+                    memcpy(hex_value, outbuf + hstart, hlen);
                     store8(hex_value + hlen, 0);
                     found = 1;
                 }
             }
 
-            # Advance to next line
-            while (spos < outlen && load8(&outbuf + spos) != 10) {
+            while (spos < outlen && load8(outbuf + spos) != 10) {
                 spos = spos + 1;
             }
             if (spos < outlen) { spos = spos + 1; }
@@ -497,14 +488,14 @@ fn tpm_get_random(buf, count) {
     vec_push(args, "--hex");
     vec_push(args, &cbuf);
 
-    var hexbuf[8200];
-    memset(&hexbuf, 0, 8200);
-    var cap_res = tpm_run_capture(args, &hexbuf, 8199);
+    var hexbuf = alloc(8200);
+    memset(hexbuf, 0, 8200);
+    var cap_res = tpm_run_capture(args, hexbuf, 8199);
     if (is_err_result(cap_res) == 1) { return cap_res; }
 
     var hexlen = payload(cap_res);
     # Trim trailing whitespace
-    while (hexlen > 0 && (load8(&hexbuf + hexlen - 1) == 10 || load8(&hexbuf + hexlen - 1) == 32)) {
+    while (hexlen > 0 && (load8(hexbuf + hexlen - 1) == 10 || load8(hexbuf + hexlen - 1) == 32)) {
         hexlen = hexlen - 1;
     }
 
@@ -512,8 +503,8 @@ fn tpm_get_random(buf, count) {
     var written = 0;
     var hi = 0;
     while (hi + 1 < hexlen && written < count) {
-        var h = load8(&hexbuf + hi);
-        var l = load8(&hexbuf + hi + 1);
+        var h = load8(hexbuf + hi);
+        var l = load8(hexbuf + hi + 1);
 
         # Convert hex chars to nibbles
         var hv = 0;

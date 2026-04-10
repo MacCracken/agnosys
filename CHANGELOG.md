@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.97.0] - 2026-04-09
+## [0.97.1] - 2026-04-09
 
-### Changed — Cyrius 3.2.4 Upgrade
+### Changed — Cyrius 3.2.5 Upgrade
 
-- **Compiler upgraded Cyrius 3.2.1 → 3.2.4** — `strstr()` substring search, hashmap `map_get_or`/`map_size`/`map_iter`, `#derive(Serialize)` fixes, function table 1024→2048, Known Gotcha #6 (nested while+load8) documented
+- **Compiler upgraded Cyrius 3.2.1 → 3.2.5** — `strstr()` substring search, hashmap `map_get_or`/`map_size`/`map_iter`, `#derive(Serialize)` fixes, function table 1024→2048, Known Gotcha #6 (nested while+load8) documented, Patra structured storage
 - **Vendored stdlib re-synced** (10 modules updated from upstream):
   - **string.cyr**: Added `atoi()`, `strstr()` (memeq-based, avoids nested while loop codegen bug)
   - **alloc.cyr**: Added arena allocator (`arena_new`, `arena_alloc`, `arena_reset`)
@@ -21,7 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **bench.cyr**: Added `bench_run_batch1` (single-arg variant)
   - **str.cyr**: `str_contains`/`str_ends_with` now take Str needle (was C string)
   - **tagged.cyr**: Comment fix
-- **CI**: Upgraded toolchain `3.2.1` → `3.2.4` in both ci.yml and release.yml
+- **CI**: Upgraded toolchain `3.2.1` → `3.2.5` in both ci.yml and release.yml
+
+### Added — Port Completion
+
+- **update.cyr**: Ported A/B update state machine from Rust — `UpdateState`, `UpdateConfig`, `UpdateManifest`, `UpdateFile` structs with full accessors. Added `update_get_current_slot()` (/proc/cmdline + state file fallback), `update_save_state()`/`update_load_state()` (JSON persistence via atomic write), `update_verify_manifest()` (structural validation + hex hash check), `update_check()` (local manifest comparison), `update_apply()` (dd to inactive slot with staging path validation), `update_switch_slot()` (slot marker + efibootmgr), `update_rollback()`, `update_mark_boot_successful()`, `update_needs_rollback()`. Network fetch deferred — local file paths only. SHA-256 digest verification deferred pending Cyrius SHA-256 stdlib.
+- **secureboot.cyr**: Added `EnrolledKey` struct with accessors, `secureboot_parse_mokutil_list()` (mokutil output parser), `secureboot_list_enrolled_keys()`, `secureboot_enroll_key()` (MOK import), `secureboot_sign_module()` (kmodsign with sign-file fallback), `ModuleSignatureInfo` struct, `secureboot_verify_module()` (modinfo parser), `EfiVariable` struct, `secureboot_list_efi_variables()` (filtered sysfs listing)
+- **fuse.cyr**: Added `fuse_is_available()` (/dev/fuse check), `fuse_validate_mountpoint()` (stat + directory check), `fuse_list_mounts()` (convenience wrapper returning vec), `FuseStatus` enum, `fuse_get_status()` (mountpoint lookup)
 
 ### Fixed
 
@@ -33,9 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **mac.cyr**: 7 `str_contains` call sites updated to wrap C string literals with `str_from()` (LSM detection, AppArmor mode parsing)
 - **pam.cyr**: 1 `str_contains` call site updated (`".."` path traversal check)
 
+### Changed — Heap Buffer Migration
+
+- Converted large stack `var buf[N]` arrays to heap `alloc(N)` in tpm.cyr (8200 + 4096), secureboot.cyr (16384 + 4096 + 4096), update.cyr (4096 + 1024) — frees ~30KB from data segment, keeps test binary under 262KB output limit
+
 ### Metrics
 
-- **Compiler**: Cyrius 3.2.4
+- **Source**: 9,884 lines across 21 files (20 modules + main) (was 8,687)
+- **Binary**: 55,688 bytes
+- **Compile**: 35ms
+- **Tests**: 197 integration assertions, 30 benchmarks
+- **Lint**: 0 warnings across 21 modules
+- **Compiler**: Cyrius 3.2.5
 
 ## [0.96.0] - 2026-04-09
 
