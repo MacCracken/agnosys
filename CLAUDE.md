@@ -10,7 +10,7 @@
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Recipes**: [zugot](https://github.com/MacCracken/zugot) — takumi build recipes
-- **Ported from**: `rust-old/` contains the original Rust implementation (29,257 lines → 8,460 lines Cyrius)
+- **Ported from**: Rust (29,257 lines → 9,884 lines Cyrius). Rust source removed at 0.97.1, preserved in git history. See `BENCHMARKS-RUST-VS-CYRIUS.md`.
 
 ## Architecture
 
@@ -21,7 +21,6 @@ src/           — agnosys modules (error, syscall, security, mac, audit, pam, .
 lib/           — vendored Cyrius stdlib (alloc, vec, str, tagged, syscalls, ...)
 tests/         — test and benchmark programs
 build/         — compiled binaries (gitignored)
-rust-old/      — original Rust implementation (reference)
 ```
 
 ## Build

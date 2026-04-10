@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Converted large stack `var buf[N]` arrays to heap `alloc(N)` in tpm.cyr (8200 + 4096), secureboot.cyr (16384 + 4096 + 4096), update.cyr (4096 + 1024) — frees ~30KB from data segment, keeps test binary under 262KB output limit
 
+### Removed
+
+- **`rust-old/` directory removed** (304MB, 29,257 lines Rust) — port complete, Rust source preserved in git history. Final Rust-vs-Cyrius benchmark comparison saved to `BENCHMARKS-RUST-VS-CYRIUS.md`.
+
 ### Metrics
 
 - **Source**: 9,884 lines across 21 files (20 modules + main) (was 8,687)
