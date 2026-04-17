@@ -33,7 +33,12 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          cyrius --version
+
+      - name: Verify toolchain
+        run: cc5 --version
+
+      - name: Resolve dependencies
+        run: cyrius deps
 
       - name: Build
         run: |
@@ -42,7 +47,15 @@ jobs:
           echo "agnosys: $(wc -c < build/agnosys) bytes"
 
       - name: Test
-        run: cyrius test
+        run: |
+          for t in tests/tcyr/*.tcyr; do
+            [ -f "$t" ] || continue
+            name=$(basename "$t" .tcyr)
+            echo "=== $name ==="
+            cyrius build "$t" "/tmp/ci_$name"
+            "/tmp/ci_$name"
+            rm -f "/tmp/ci_$name"
+          done
 
       - name: Archive
         run: |
