@@ -25,7 +25,8 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          cyrius --version
+      - name: Verify toolchain
+        run: cc5 --version
 
       - name: Syntax check
         run: |
