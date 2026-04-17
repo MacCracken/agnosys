@@ -52,7 +52,7 @@ jobs:
         run: cyrius deps
 
       - name: Integration tests
-        run: cyrius test
+        run: cyrius test tests/tcyr
 
       - name: Lint
         run: |
