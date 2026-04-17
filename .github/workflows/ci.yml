@@ -52,7 +52,15 @@ jobs:
         run: cyrius deps
 
       - name: Integration tests
-        run: cyrius test tests/tcyr
+        run: |
+          for t in tests/tcyr/*.tcyr; do
+            [ -f "$t" ] || continue
+            name=$(basename "$t" .tcyr)
+            echo "=== $name ==="
+            cyrius build "$t" "/tmp/ci_$name"
+            "/tmp/ci_$name"
+            rm -f "/tmp/ci_$name"
+          done
 
       - name: Lint
         run: |
