@@ -160,9 +160,9 @@ fn test_certpin() {
     assert_eq(certpin_entry_pin_count(e), 0, "ce_pc0");
     assert_eq(certpin_check_pin_expiry(e, 1600000000), 0, "not_exp");
     assert_eq(certpin_check_pin_expiry(e, 1800000000), 1, "exp");
-    var ci = certinfo_new();
-    certinfo_set_subject(ci, "CN=test");
-    assert(streq(certinfo_subject(ci), "CN=test") == 1, "ci_sub");
+    var ci = certpin_info_new();
+    certpin_info_set_subject(ci, "CN=test");
+    assert(streq(certpin_info_subject(ci), "CN=test") == 1, "ci_sub");
     return 0;
 }
 

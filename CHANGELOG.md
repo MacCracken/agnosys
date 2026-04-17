@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`certinfo_*` → `certpin_info_*`** (15 fns in `src/certpin.cyr`) — the CertInfo struct accessor family now carries the module prefix, matching its siblings `certpin_entry_*` and `certpin_set_*`. Affected: `certpin_info_new`, `certpin_info_{subject,issuer,serial,not_before,not_after,sha256_fp,spki_sha256}` and the matching setters. Callers (consumers: **sigil**, and any downstream using certpin via `dist/agnosys.cyr`) must update call sites. This is the one planned rename for 1.0 API consistency.
+
+### Added — 1.0 freeze prerequisites
+
+- **API surface snapshot** — `docs/development/api-surface-1.0.md` (722 lines) lists every public `fn` across the 20 modules with arity and a one-line summary. 555 public functions catalogued; 16 outliers flagged for pre-freeze review. Principal finding: the `certinfo_*` family (15 fns) in `certpin.cyr` breaks the module-prefix convention and should be renamed to `certpin_*` before 1.0.
+- **API surface regression check** — `scripts/check-api-surface.sh` diffs `src/*.cyr` against `docs/development/api-surface-1.0.snapshot` (`module::fn/arity` per line). Exits non-zero on any removal or arity change; additions are allowed. Wired as a new CI step.
+- **Capacity baseline** — `docs/development/capacity-baseline.md` records Cyrius compiler-table utilization for three representative builds (core demo, single-module consumer, full bundle). Highest today: fixup_table 32%, code_size 42% on the full bundle — well under the 85% gate.
+- **Capacity gate in CI** — `cyrius capacity --check src/main.cyr` runs on every build; fails if any compiler table crosses 85%.
+- **Consumer quickstart in README** — per-module (feature-gated) and full-bundle (`dist/agnosys.cyr`) patterns with measured footprints.
+
+### Changed
+
+- **CI install flow canonicalised** — replaced manual tarball curl + cp chain with `curl install.sh | sh` (honors `$CYRIUS_VERSION`). Same flow in `ci.yml` and `release.yml`.
+- **Roadmap V1.0 section** — freeze prerequisites added alongside the original four items; Progress table refreshed (9 884 LOC, 556 public fns, 220 assertions, Cyrius 5.2.0).
+
 ## [0.98.0] - 2026-04-16
 
 ### Added
@@ -22,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes — 5.2 adoption opportunities (tracked for follow-up, not in this release)
 
 - `#derive(accessors)` could replace ~661 hand-written `load64`/`store64` accessors across 20 modules — large audit-gated refactor.
-- `cyrius capacity --check` and `cyrius soak` worth wiring into `ci.yml` once a capacity budget is agreed.
+- `cyrius capacity --check` and `cyrius soak` worth wiring into `ci.yml` once a capacity budget is agreed. (`capacity --check` landed in Unreleased.)
 - `sakshi` 2.0.0 could back `src/logging.cyr` with structured tracing instead of the current `AGNOSYS_LOG`-gated `eprint` path.
 
 ## [0.97.2] - 2026-04-09

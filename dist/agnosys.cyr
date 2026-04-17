@@ -5963,27 +5963,27 @@ fn certpin_compute_spki_pin(cert_path) {
 # CertInfo struct: { subject, issuer, serial, not_before, not_after, sha256_fp, spki_sha256 }
 # Layout: 7 string pointers, 56 bytes total.
 
-fn certinfo_new() {
+fn certpin_info_new() {
     var c = alloc(56);
     memset(c, 0, 56);
     return c;
 }
 
-fn certinfo_subject(c)   { return load64(c); }
-fn certinfo_issuer(c)    { return load64(c + 8); }
-fn certinfo_serial(c)    { return load64(c + 16); }
-fn certinfo_not_before(c) { return load64(c + 24); }
-fn certinfo_not_after(c) { return load64(c + 32); }
-fn certinfo_sha256_fp(c) { return load64(c + 40); }
-fn certinfo_spki_sha256(c) { return load64(c + 48); }
+fn certpin_info_subject(c)   { return load64(c); }
+fn certpin_info_issuer(c)    { return load64(c + 8); }
+fn certpin_info_serial(c)    { return load64(c + 16); }
+fn certpin_info_not_before(c) { return load64(c + 24); }
+fn certpin_info_not_after(c) { return load64(c + 32); }
+fn certpin_info_sha256_fp(c) { return load64(c + 40); }
+fn certpin_info_spki_sha256(c) { return load64(c + 48); }
 
-fn certinfo_set_subject(c, v) { store64(c, v); return 0; }
-fn certinfo_set_issuer(c, v) { store64(c + 8, v); return 0; }
-fn certinfo_set_serial(c, v) { store64(c + 16, v); return 0; }
-fn certinfo_set_not_before(c, v) { store64(c + 24, v); return 0; }
-fn certinfo_set_not_after(c, v) { store64(c + 32, v); return 0; }
-fn certinfo_set_sha256_fp(c, v) { store64(c + 40, v); return 0; }
-fn certinfo_set_spki_sha256(c, v) { store64(c + 48, v); return 0; }
+fn certpin_info_set_subject(c, v) { store64(c, v); return 0; }
+fn certpin_info_set_issuer(c, v) { store64(c + 8, v); return 0; }
+fn certpin_info_set_serial(c, v) { store64(c + 16, v); return 0; }
+fn certpin_info_set_not_before(c, v) { store64(c + 24, v); return 0; }
+fn certpin_info_set_not_after(c, v) { store64(c + 32, v); return 0; }
+fn certpin_info_set_sha256_fp(c, v) { store64(c + 40, v); return 0; }
+fn certpin_info_set_spki_sha256(c, v) { store64(c + 48, v); return 0; }
 
 # Check pin expiry against current time.
 # Returns 1 if expired, 0 if not expired or no expiry set.

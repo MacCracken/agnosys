@@ -71,10 +71,20 @@ Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, 
 
 ## V1.0 — Stable API (Next)
 
+Original checklist:
+
 - [ ] Consumer migration from monolith `agnos-sys`
 - [ ] `cyrius audit` gate in CI
 - [ ] Fuzz testing for parsers (certpin DER, audit netlink, PAM config)
 - [ ] Additional edge-case tests from audit observations
+
+Freeze prerequisites added at 0.98.0:
+
+- [x] API surface snapshot — `docs/development/api-surface-1.0.md` (555 public fns, 20 modules, 16 outliers flagged)
+- [x] API surface regression check — `scripts/check-api-surface.sh`, wired into CI; fails on any public fn removed or arity-changed vs. `api-surface-1.0.snapshot`
+- [x] Capacity baseline — `docs/development/capacity-baseline.md`; CI runs `cyrius capacity --check src/main.cyr` on every build
+- [x] README consumer quickstart — per-module and full-bundle patterns documented
+- [ ] Address naming outliers from API audit before freeze (notably `certinfo_*` → `certpin_*` alignment, 15 fns)
 
 ## Progress
 
@@ -82,15 +92,16 @@ Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, 
 |--------|-------|
 | Modules implemented | **20 / 20** (100%) |
 | Consumer crates unblocked | **13 / 13** (100%) |
-| Source lines (src/) | 8,752 |
-| Stdlib lines (lib/) | 3,562 |
-| Integration assertions | 197 |
+| Source lines (src/) | 9 884 |
+| Stdlib lines (lib/) | ~4 000 |
+| Public functions | 556 |
+| Integration assertions | 220 |
 | Benchmarks | 30 |
-| Binary size | 52KB |
-| Compile time | 31ms |
+| Binary size | 291 KB (core demo) |
+| Compile time | ~460 ms |
 | Dependencies | 0 |
-| Compiler | Cyrius 2.4.0 |
-| Version | 0.95.0 |
+| Compiler | Cyrius 5.2.0 |
+| Version | 0.98.0 |
 
 ## Consumer Map
 

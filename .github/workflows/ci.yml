@@ -34,6 +34,12 @@ jobs:
             cyrius check "$f"
           done
 
+      - name: API surface check
+        run: scripts/check-api-surface.sh
+
+      - name: Capacity gate
+        run: cyrius capacity --check src/main.cyr
+
       - name: Build
         run: |
           mkdir -p build
