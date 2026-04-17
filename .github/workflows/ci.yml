@@ -48,6 +48,9 @@ jobs:
           ./build/agnosys | tee /tmp/smoke_output
           grep -q "agnosys ready" /tmp/smoke_output
 
+      - name: Resolve dependencies
+        run: cyrius deps
+
       - name: Integration tests
         run: cyrius test
 
