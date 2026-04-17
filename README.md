@@ -132,11 +132,12 @@ tests → lint → vet → fuzz → benchmarks
 
 ## Docs
 
+- [`docs/benchmarks-rust-vs-cyrius.md`](docs/benchmarks-rust-vs-cyrius.md) — **Rust-vs-Cyrius head-to-head** from the port (0.50.0 Rust, 147 criterion benchmarks → 0.97.1 Cyrius, 30 batch-amortized benchmarks)
 - [`docs/architecture/overview.md`](docs/architecture/overview.md) — module map, data flow, consumers
+- [`docs/SECURITY-NOTES.md`](docs/SECURITY-NOTES.md) — per-module security considerations
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — completed phases, V1.0 criteria
 - [`docs/development/api-surface-1.0.md`](docs/development/api-surface-1.0.md) — full public API snapshot (556 fns, 20 modules)
 - [`docs/development/capacity-baseline.md`](docs/development/capacity-baseline.md) — compiler-table utilization
-- [`docs/SECURITY-NOTES.md`](docs/SECURITY-NOTES.md) — per-module security considerations
 
 ## License
 

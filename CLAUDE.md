@@ -10,7 +10,7 @@
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **Standards**: [First-Party Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
 - **Recipes**: [zugot](https://github.com/MacCracken/zugot) — takumi build recipes
-- **Heritage**: Ported from Rust in 2026. Rust source deleted at 0.97.1, preserved in git history (see `docs/development/benchmarks-rust-vs-cyrius.md` for the head-to-head numbers).
+- **Heritage**: Ported from Rust in 2026. Rust source deleted at 0.97.1, preserved in git history. Head-to-head numbers in [`docs/benchmarks-rust-vs-cyrius.md`](docs/benchmarks-rust-vs-cyrius.md) — kept at `docs/` root rather than buried under `docs/development/` because it's a headliner.
 
 ## Architecture
 
@@ -135,12 +135,13 @@ Root files (required):
   SECURITY.md, CODE_OF_CONDUCT.md, LICENSE
 
 docs/ (required):
+  benchmarks-rust-vs-cyrius.md  — HEADLINER: Rust-vs-Cyrius port numbers
   architecture/overview.md      — module map, data flow, consumers
-  development/roadmap.md        — completed, backlog, v1.0 criteria
-  development/api-surface-1.0.md      — public API snapshot (human-readable)
-  development/api-surface-1.0.snapshot — machine-checkable (module::fn/arity)
-  development/capacity-baseline.md    — compiler-table utilization record
   SECURITY-NOTES.md             — per-module security considerations
+  development/roadmap.md        — completed, backlog, v1.0 criteria
+  development/api-surface-1.0.md       — public API snapshot (human-readable)
+  development/api-surface-1.0.snapshot — machine-checkable (module::fn/arity)
+  development/capacity-baseline.md     — compiler-table utilization record
 
 docs/ (when earned):
   adr/ — architectural decision records

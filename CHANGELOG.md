@@ -107,7 +107,7 @@ Renames by module group:
 
 ### Removed
 
-- **`rust-old/` directory removed** (304MB, 29,257 lines Rust) — port complete, Rust source preserved in git history. Final Rust-vs-Cyrius benchmark comparison saved to `docs/development/benchmarks-rust-vs-cyrius.md` (moved from repo root at Unreleased).
+- **`rust-old/` directory removed** (304MB, 29,257 lines Rust) — port complete, Rust source preserved in git history. Final Rust-vs-Cyrius benchmark comparison saved to `docs/benchmarks-rust-vs-cyrius.md` (originally at repo root; moved to `docs/` at Unreleased as a headliner historical record).
 
 ### Metrics
 
