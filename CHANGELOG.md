@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Minimum Cyrius version raised to 5.2.0** — picks up `cyrius distlib`, `[build] modules`, `${file:VERSION}` expansion, `cyrius capacity --check`, `cyrius soak`. (`cyrius.cyml` already aligned.)
 - **`src/main.cyr` header** — removed stale `cc2` and Rust line-count references; now describes the feature-gated vs. `dist/` bundled consumption model.
+- **Test layout → canonical `tests/tcyr/` + `tests/bcyr/`** — `cyrius test` auto-discovery in 5.2.0 reliably finds `.tcyr` only under `tests/tcyr/`. Moved `tests/test_integration.tcyr` → `tests/tcyr/`, `tests/bench_{all,compare}.bcyr` → `tests/bcyr/`. Matches sakshi/patra layout. `ci.yml` and `scripts/bench-history.sh` updated to the new paths.
 
 ### Notes — 5.2 adoption opportunities (tracked for follow-up, not in this release)
 

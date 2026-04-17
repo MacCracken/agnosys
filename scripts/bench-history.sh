@@ -38,10 +38,10 @@ echo ""
 
 # Build benchmark binary
 mkdir -p build
-if [ -f tests/bench_all.bcyr ]; then
-    BENCH_SRC=tests/bench_all.bcyr
-elif [ -f tests/bench_compare.bcyr ]; then
-    BENCH_SRC=tests/bench_compare.bcyr
+if [ -f tests/bcyr/bench_all.bcyr ]; then
+    BENCH_SRC=tests/bcyr/bench_all.bcyr
+elif [ -f tests/bcyr/bench_compare.bcyr ]; then
+    BENCH_SRC=tests/bcyr/bench_compare.bcyr
 else
     echo "No benchmark file found"
     exit 1

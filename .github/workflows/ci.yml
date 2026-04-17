@@ -75,7 +75,7 @@ jobs:
 
       - name: Benchmarks
         run: |
-          cyrius build tests/bench_all.bcyr build/bench_all
+          cyrius build tests/bcyr/bench_all.bcyr build/bench_all
           ./build/bench_all
 
   security:
