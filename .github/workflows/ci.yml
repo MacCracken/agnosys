@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CYRIUS_VERSION: "5.2.0"
+  CYRIUS_VERSION: "5.2.0"  # honored by install.sh; sets active toolchain
 
 jobs:
   build-and-test:
@@ -25,9 +25,7 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          "$HOME/.cyrius/bin/cyriusly" install "$CYRIUS_VERSION"
-          "$HOME/.cyrius/bin/cyriusly" use "$CYRIUS_VERSION"
-          "$HOME/.cyrius/bin/cyriusly" version
+          cyrius --version
 
       - name: Syntax check
         run: |
