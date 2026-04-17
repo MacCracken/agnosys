@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-17
+
+**API freeze.** Every public function carries its module prefix; the surface at `docs/development/api-surface-1.0.snapshot` is the stable contract. Future 1.x releases add functions; removing or changing signatures will bump to 2.0.
+
 ### Breaking — 1.0 naming sweep (all landed pre-freeze to avoid v2 churn)
 
 Every public function in `src/` now carries its module prefix. **139 renames across 7 module groups, 20 public fns still exactly matching the snapshot for the 11 modules that were already clean (`audit`, `certpin` entry/set families, `drm`, `error`, `fuse`, `ima`, `logging`, `luks`, `mac`, `pam`, `secureboot`, `tpm`, `udev`, `update`, syscall's `agnosys_*`/`sysinfo_*`/`uname_*` families).**

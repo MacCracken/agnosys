@@ -1,8 +1,8 @@
 # Capacity Baseline
 
 > Snapshot of Cyrius compiler table utilization across representative agnosys
-> builds. Captured at **0.98.0** with **Cyrius 5.2.0**. The 85% gate
-> (`cyrius capacity --check`) must stay clean through 1.0 and beyond.
+> builds. Captured at **1.0.0** with **Cyrius 5.2.0**. The 85% gate
+> (`cyrius capacity --check`) is enforced on every CI build.
 
 Numbers come from `CYRIUS_STATS=1 cyrius build <src> <out>`.
 

@@ -104,7 +104,7 @@ Remaining before cutting 1.0 tag: none on agnosys' side. All items above are liv
 | Compile time | ~460 ms |
 | Dependencies | 0 |
 | Compiler | Cyrius 5.2.0 |
-| Version | 0.98.0 |
+| Version | **1.0.0** |
 
 ## Consumer Map
 

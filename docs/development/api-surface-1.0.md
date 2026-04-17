@@ -1,6 +1,6 @@
 # Agnosys 1.0 API Surface
 
-> Snapshot at Unreleased (post-0.98.0). Every function listed here is a 1.0 freeze candidate.
+> Frozen at **1.0.0** (2026-04-17). Every function listed here is part of the stable 1.x API contract — removal or signature change requires a 2.0 bump.
 
 
 ## Summary

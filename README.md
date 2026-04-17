@@ -4,7 +4,7 @@
 
 Cyrius bindings for Linux kernel syscalls and security primitives. Consumers include only the modules they need, or include the single `dist/agnosys.cyr` bundle for the full surface area. The foundation layer that every AGNOS program depends on.
 
-**0.98.0 · Cyrius 5.2.0 · 20 modules · 9 884 lines · 291 KB binary · 460 ms compile · 0 runtime deps**
+**1.0.0 · Cyrius 5.2.0 · 20 modules · 556 public fns · 9 884 lines · 291 KB binary · 460 ms compile · 0 runtime deps**
 
 ## Architecture
 
@@ -81,7 +81,7 @@ fn main() {
 }
 ```
 
-Footprint (measured at 0.98.0): fn_table **236 / 4096**, code_size **50 KB**.
+Footprint (measured at 1.0.0): fn_table **236 / 4096**, code_size **50 KB**.
 
 ### Full bundle (single include, all 20 modules)
 
