@@ -408,8 +408,8 @@ secureboot::secureboot_efi_var_name/1
 secureboot::secureboot_efi_var_new/2
 secureboot::secureboot_efi_var_payload_byte/2
 secureboot::secureboot_efi_var_size/1
-secureboot::secureboot_enrolled_key_new/5
 secureboot::secureboot_enroll_key/1
+secureboot::secureboot_enrolled_key_new/5
 secureboot::secureboot_is_enforcing/1
 secureboot::secureboot_key_fingerprint/1
 secureboot::secureboot_key_issuer/1
@@ -424,8 +424,8 @@ secureboot::secureboot_sig_algorithm/1
 secureboot::secureboot_sig_has_sig/1
 secureboot::secureboot_sig_info_new/4
 secureboot::secureboot_sig_module/1
-secureboot::secureboot_sign_module/3
 secureboot::secureboot_sig_signer/1
+secureboot::secureboot_sign_module/3
 secureboot::secureboot_state_str/1
 secureboot::secureboot_verify_module/1
 security::security_apply_landlock/2

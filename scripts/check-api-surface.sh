@@ -10,6 +10,12 @@
 #     --update   regenerate the snapshot (use only when intentionally bumping API)
 set -euo pipefail
 
+# Lock collation to C so `sort` and `comm` agree on byte order regardless of
+# the user/CI locale. Mixed collations were flagging renamed-adjacent entries
+# (e.g. secureboot_enroll_key vs. secureboot_enrolled_key_new) as both
+# removed and added.
+export LC_ALL=C
+
 SNAPSHOT="docs/development/api-surface-1.0.snapshot"
 CURRENT=$(mktemp)
 trap 'rm -f "$CURRENT"' EXIT
