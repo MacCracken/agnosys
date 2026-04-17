@@ -1,0 +1,83 @@
+# Fuzz: PAM config parsers — rule types, control flags, passwd lines, full configs.
+# Must not crash on empty strings, malformed lines, truncated fields, huge inputs.
+
+#define LINUX
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+include "src/pam.cyr"
+
+alloc_init();
+
+# --- parse_rule_type: every valid keyword + rejects ---
+if (pam_parse_rule_type(str_from("auth")) != PAM_TYPE_AUTH) { syscall(60, 10); }
+if (pam_parse_rule_type(str_from("account")) != PAM_TYPE_ACCOUNT) { syscall(60, 11); }
+if (pam_parse_rule_type(str_from("session")) != PAM_TYPE_SESSION) { syscall(60, 12); }
+if (pam_parse_rule_type(str_from("password")) != PAM_TYPE_PASSWORD) { syscall(60, 13); }
+if (pam_parse_rule_type(str_from("")) != 0 - 1) { syscall(60, 14); }
+if (pam_parse_rule_type(str_from("xxx")) != 0 - 1) { syscall(60, 15); }
+if (pam_parse_rule_type(str_from("AUTH")) != 0 - 1) { syscall(60, 16); }  # case-sensitive
+if (pam_parse_rule_type(str_from("auth ")) != 0 - 1) { syscall(60, 17); }  # trailing space
+
+# --- parse_control ---
+if (pam_parse_control(str_from("required")) != PAM_CTL_REQUIRED) { syscall(60, 20); }
+if (pam_parse_control(str_from("requisite")) != PAM_CTL_REQUISITE) { syscall(60, 21); }
+if (pam_parse_control(str_from("sufficient")) != PAM_CTL_SUFFICIENT) { syscall(60, 22); }
+if (pam_parse_control(str_from("optional")) != PAM_CTL_OPTIONAL) { syscall(60, 23); }
+if (pam_parse_control(str_from("include")) != PAM_CTL_INCLUDE) { syscall(60, 24); }
+if (pam_parse_control(str_from("")) != 0 - 1) { syscall(60, 25); }
+if (pam_parse_control(str_from("bogus")) != 0 - 1) { syscall(60, 26); }
+
+# --- parse_passwd_line: Str input, valid + malformed ---
+# pam_parse_passwd_line expects Str (not cstring) — it's called from loops that
+# split a file by '\n' and feed each Str line.
+var uvalid = pam_parse_passwd_line(str_from("root:x:0:0:root:/root:/bin/bash"));
+if (is_ok(uvalid) != 1) { syscall(60, 30); }
+
+# Malformed: fewer than 7 fields — must return Err, never crash
+if (is_err_result(pam_parse_passwd_line(str_from(""))) != 1) { syscall(60, 40); }
+if (is_err_result(pam_parse_passwd_line(str_from("nocolons"))) != 1) { syscall(60, 41); }
+if (is_err_result(pam_parse_passwd_line(str_from("one:two:three"))) != 1) { syscall(60, 42); }
+
+# More colons than needed — fields vec has extras, parser reads first 7. No crash.
+var u_extra = pam_parse_passwd_line(str_from("a:b:c:d:e:f:g:h:i:j"));
+# Empty uid/gid — uid_str.len == 0 → Err
+if (is_err_result(pam_parse_passwd_line(str_from("u::x::gecos:/h:/s"))) != 1) { syscall(60, 43); }
+
+# --- parse_config with Str inputs ---
+var c1 = pam_parse_config(str_from(""));
+var c2 = pam_parse_config(str_from("#just a comment\n"));
+var c3 = pam_parse_config(str_from("\n\n\n"));
+var c4 = pam_parse_config(str_from("bogus line that isn't a rule\n"));
+var c5 = pam_parse_config(str_from("auth required pam_unix.so\n"));
+
+# --- large input stress (Str-wrapped) ---
+var big = alloc(8192);
+var bi = 0;
+while (bi < 8191) {
+    var c = 32 + (bi * 37) % 90;
+    if ((bi % 40) == 39) { c = 10; }
+    store8(big + bi, c);
+    bi = bi + 1;
+}
+store8(big + 8191, 0);
+var bigstr = str_new(big, 8191);
+var cbig = pam_parse_config(bigstr);
+# must not crash
+
+# --- iteration stress on parse_rule_type ---
+var x = 0;
+while (x < 500) {
+    if (pam_parse_rule_type(str_from("auth")) != PAM_TYPE_AUTH) { syscall(60, 50); }
+    if (pam_parse_rule_type(str_from("xxx")) != 0 - 1) { syscall(60, 51); }
+    x = x + 1;
+}
+
+syscall(1, 1, "pam_config: ok\n", 15);
+syscall(60, 0);

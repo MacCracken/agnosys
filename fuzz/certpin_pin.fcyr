@@ -1,0 +1,77 @@
+# Fuzz: certpin pin format validator + constant-time compare.
+# Must not crash on malformed, too-short, too-long, or non-base64 inputs.
+# CI invokes: build/certpin_pin 500
+
+#define LINUX
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+include "src/certpin.cyr"
+
+alloc_init();
+
+# Valid reference pin (44 base64 chars with trailing '=')
+var valid = "YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=";
+
+# --- boundary lengths ---
+if (certpin_validate_pin_format("") != 0) { syscall(60, 10); }
+if (certpin_validate_pin_format("A") != 0) { syscall(60, 11); }
+if (certpin_validate_pin_format("AAA") != 0) { syscall(60, 12); }
+if (certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") != 0) { syscall(60, 13); }  # 43 chars — too short
+if (certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") != 0) { syscall(60, 14); }  # 45 — too long
+if (certpin_validate_pin_format(valid) != 1) { syscall(60, 15); }
+
+# --- bad characters at every position of a well-formed pin ---
+var buf[64];
+var bi = 0;
+while (bi < 44) {
+    # copy valid into buf
+    var ci = 0;
+    while (ci < 44) { store8(&buf + ci, load8(valid + ci)); ci = ci + 1; }
+    store8(&buf + 44, 0);
+    # inject a non-base64 byte at position bi
+    store8(&buf + bi, 32);  # space — illegal in base64
+    # must reject (return 0), not crash
+    if (certpin_validate_pin_format(&buf) != 0) { syscall(60, 20); }
+    bi = bi + 1;
+}
+
+# --- embedded nulls / truncated ---
+var trunc[45];
+var ti = 0;
+while (ti < 44) { store8(&trunc + ti, load8(valid + ti)); ti = ti + 1; }
+store8(&trunc + 20, 0);  # null-terminate mid-pin
+if (certpin_validate_pin_format(&trunc) != 0) { syscall(60, 30); }
+
+# --- constant-time compare against random-ish inputs ---
+# ct_streq must never crash regardless of content.
+var r = 0;
+var i = 0;
+while (i < 500) {
+    # self-compare always 1
+    if (certpin_ct_streq(valid, valid) != 1) { syscall(60, 40); }
+    # compare against truncated should be 0 (content differs at some point)
+    # and must not read past nul
+    r = certpin_ct_streq(valid, &trunc);
+    if (r != 0) { syscall(60, 41); }
+    i = i + 1;
+}
+
+# --- iteration stress on validator ---
+var iters = 500;
+var x = 0;
+while (x < iters) {
+    # alternate valid/invalid; must be consistent
+    if (certpin_validate_pin_format(valid) != 1) { syscall(60, 50); }
+    if (certpin_validate_pin_format("bad") != 0) { syscall(60, 51); }
+    x = x + 1;
+}
+
+syscall(1, 1, "certpin_pin: ok\n", 16);
+syscall(60, 0);

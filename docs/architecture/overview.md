@@ -27,40 +27,53 @@ agnosys/
 │   ├── update.cyr  atomic file ops, version compare
 │   └── fuse.cyr   FUSE mount parsing, mount/unmount
 ├── lib/           vendored Cyrius stdlib (23 files)
-│   ├── alloc.cyr  heap allocator (brk syscall)
-│   ├── string.cyr  C string operations
-│   ├── str.cyr    fat pointer strings (data + length)
-│   ├── vec.cyr    dynamic array
-│   ├── tagged.cyr  tagged unions (Ok/Err Result type)
+│   ├── alloc.cyr  heap allocator (brk) + arena
+│   ├── string.cyr  C string operations (strlen, memcpy, strstr, atoi, ...)
+│   ├── str.cyr    fat pointer strings {data, len} + builder
+│   ├── vec.cyr    dynamic array of i64
+│   ├── tagged.cyr  tagged unions (Ok/Err Result, Option)
 │   ├── hashmap.cyr  hash table (string keys, i64 values)
-│   ├── fmt.cyr    integer/hex formatting
-│   ├── syscalls.cyr  platform-switchable syscall bindings
+│   ├── fmt.cyr    integer/hex/float formatting
+│   ├── syscalls.cyr  platform-switchable (Linux / AGNOS) syscall bindings
 │   ├── process.cyr  fork/exec/waitpid
-│   ├── fs.cyr     directory listing, file operations
-│   ├── io.cyr     file I/O wrappers
+│   ├── fs.cyr     directory listing, path helpers
+│   ├── io.cyr     file I/O + locking
 │   ├── net.cyr    TCP/UDP sockets
 │   ├── bench.cyr  benchmark timing utilities
 │   └── ...
-├── tests/         test and benchmark programs
-├── build/         compiled binaries (gitignored)
-└── rust-old/      original Rust implementation (reference)
+├── dist/          bundled single-file distribution (cyrius distlib output)
+│   └── agnosys.cyr  all 20 modules concatenated in declared order
+├── tests/
+│   ├── tcyr/      integration tests (.tcyr, discovered by `cyrius test`)
+│   └── bcyr/      benchmarks (.bcyr)
+├── fuzz/          parser fuzz harnesses (.fcyr)
+├── scripts/       version-bump.sh, bench-history.sh, audit.sh, check-api-surface.sh
+└── build/         compiled binaries (gitignored)
 ```
 
 ## Include Model
 
 Cyrius uses a flat include model. Each `.cyr` file is a module. Programs include
-the stdlib files they need from `lib/`, then the `src/` modules they need:
+the stdlib files they need from `lib/`, then either individual `src/` modules or
+the bundled `dist/agnosys.cyr`:
 
 ```
+# Per-module (feature-gated)
 include "lib/alloc.cyr"
 include "lib/syscalls.cyr"
 include "src/error.cyr"
-include "src/syscall.cyr"
+include "src/security.cyr"
+
+# Full bundle (single include, all 20 modules)
+include "dist/agnosys.cyr"
 ```
 
-Cyrius 1.8.0+ provides **include-once semantics** — a file included multiple
-times is only processed once. Each `src/` module includes its own dependencies,
-so modules can be checked independently with `cyrb check`.
+Cyrius provides **include-once semantics** — a file included multiple times is
+only processed once. Each `src/` module includes its own dependencies, so
+modules can be syntax-checked independently with `cyrius check`. The
+`dist/agnosys.cyr` bundle is regenerated via `cyrius distlib`, which reads the
+`[build] modules` list from `cyrius.cyml` and concatenates in declared order
+(strips `include` directives so the output is self-contained).
 
 ## Data Flow
 

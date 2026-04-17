@@ -13,7 +13,7 @@ with different trust boundaries and privilege requirements.
 ## syscall
 
 - Direct `syscall()` for getpid, gettid, getuid, geteuid, sysinfo, uname.
-- `checked_syscall(ret)` wraps raw return with Result error handling.
+- `agnosys_checked_syscall(ret)` wraps raw return with Result error handling.
 - `query_sysinfo()` uses a caller-provided stack buffer — no heap allocation.
 - `SysInfo` fields read from a single `sysinfo(2)` snapshot — no TOCTOU between fields.
 - Hostname read into stack buffer; null-terminated.
@@ -24,7 +24,7 @@ with different trust boundaries and privilege requirements.
 - **Privilege: none required** — Landlock works without CAP_SYS_ADMIN (sets PR_SET_NO_NEW_PRIVS automatically).
 - **Irreversible:** `restrict_self` is permanent for the calling thread.
 - Handled access rights declared at construction time.
-- `apply_landlock()` opens paths with O_PATH | O_CLOEXEC and closes immediately after adding the rule.
+- `security_apply_landlock()` opens paths with `O_PATH | O_CLOEXEC` and closes immediately after adding the rule.
 
 ## security (seccomp)
 

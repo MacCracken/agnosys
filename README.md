@@ -113,6 +113,31 @@ for the full table.
 cyrius distlib     # reads [build] modules from cyrius.cyml → dist/agnosys.cyr
 ```
 
+## Quality gates
+
+Every change must pass `scripts/audit.sh` — 10 gates, identical to CI:
+
+```
+syntax → API surface → capacity → build → smoke →
+tests → lint → vet → fuzz → benchmarks
+```
+
+| Gate | Command |
+|---|---|
+| API surface diff | [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh) |
+| Capacity (<85% all tables) | `cyrius capacity --check src/main.cyr` |
+| Tests (222 assertions) | `cyrius test` |
+| Fuzz (3 harnesses) | `fuzz/*.fcyr` under `timeout 10 ... 500` |
+| Benchmarks (30 across 11 groups) | `tests/bcyr/bench_all.bcyr` |
+
+## Docs
+
+- [`docs/architecture/overview.md`](docs/architecture/overview.md) — module map, data flow, consumers
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — completed phases, V1.0 criteria
+- [`docs/development/api-surface-1.0.md`](docs/development/api-surface-1.0.md) — full public API snapshot (556 fns, 20 modules)
+- [`docs/development/capacity-baseline.md`](docs/development/capacity-baseline.md) — compiler-table utilization
+- [`docs/SECURITY-NOTES.md`](docs/SECURITY-NOTES.md) — per-module security considerations
+
 ## License
 
 GPL-3.0-only

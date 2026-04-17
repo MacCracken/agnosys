@@ -1,0 +1,81 @@
+# Fuzz: audit netlink message builder + rule validator.
+# Must not crash on zero/huge payloads, malformed rules, empty keys, etc.
+
+#define LINUX
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+include "src/audit.cyr"
+
+alloc_init();
+
+# --- build_nlmsg at boundary payload sizes ---
+var payload = alloc(4096);
+memset(payload, 65, 4096);  # filled with 'A'
+
+# Inline size sweep; avoid local array indexing.
+var buf0 = audit_build_nlmsg(1001, payload, 0);
+if (audit_nlmsg_len(buf0) != 16) { syscall(60, 10); }
+var buf1 = audit_build_nlmsg(1001, payload, 1);
+if (audit_nlmsg_len(buf1) != 17) { syscall(60, 11); }
+var buf16 = audit_build_nlmsg(1001, payload, 16);
+if (audit_nlmsg_len(buf16) != 32) { syscall(60, 12); }
+var buf256 = audit_build_nlmsg(1001, payload, 256);
+if (audit_nlmsg_len(buf256) != 272) { syscall(60, 13); }
+var buf1024 = audit_build_nlmsg(1001, payload, 1024);
+if (audit_nlmsg_len(buf1024) != 1040) { syscall(60, 14); }
+var buf4096 = audit_build_nlmsg(1001, payload, 4096);
+if (audit_nlmsg_len(buf4096) != 4112) { syscall(60, 15); }
+
+# --- rule_validate rejects malformed rules without crashing ---
+# Empty key rule
+var r1 = audit_rule_new(AUDIT_RULE_FILE_WATCH, "/etc/passwd", 0, "");
+var v1 = audit_rule_validate(r1);
+if (is_err_result(v1) != 1) { syscall(60, 20); }
+
+# Null key (ptr 0) — rule_new assigns, so we overwrite post-hoc
+var r2 = audit_rule_new(AUDIT_RULE_FILE_WATCH, "/etc/passwd", 0, "key");
+# poke raw: set key slot (at offset 24) to 0
+store64(r2 + 24, 0);
+var v2 = audit_rule_validate(r2);
+if (is_err_result(v2) != 1) { syscall(60, 21); }
+
+# Key too long (257 bytes)
+var longkey = alloc(300);
+memset(longkey, 97, 257);  # 257 'a's
+store8(longkey + 257, 0);
+var r3 = audit_rule_new(AUDIT_RULE_FILE_WATCH, "/etc/passwd", 0, longkey);
+var v3 = audit_rule_validate(r3);
+if (is_err_result(v3) != 1) { syscall(60, 22); }
+
+# Relative path (not starting with /)
+var r4 = audit_rule_new(AUDIT_RULE_FILE_WATCH, "etc/passwd", 0, "k");
+var v4 = audit_rule_validate(r4);
+if (is_err_result(v4) != 1) { syscall(60, 23); }
+
+# Empty path
+var r5 = audit_rule_new(AUDIT_RULE_FILE_WATCH, "", 0, "k");
+var v5 = audit_rule_validate(r5);
+if (is_err_result(v5) != 1) { syscall(60, 24); }
+
+# Valid rule
+var r6 = audit_rule_new(AUDIT_RULE_FILE_WATCH, "/etc/passwd", 0, "k");
+var v6 = audit_rule_validate(r6);
+if (is_ok(v6) != 1) { syscall(60, 25); }
+
+# --- iteration stress on build_nlmsg ---
+var x = 0;
+while (x < 500) {
+    var b = audit_build_nlmsg(x, payload, 64);
+    if (audit_nlmsg_len(b) != 80) { syscall(60, 30); }
+    x = x + 1;
+}
+
+syscall(1, 1, "audit_nlmsg: ok\n", 16);
+syscall(60, 0);

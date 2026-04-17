@@ -25,6 +25,13 @@ Renames by module group:
 
 **Why this release, not spread across several:** the 1.0 API freeze is imminent. Shipping these renames in a single pre-1.0 version lets consumers migrate once, and avoids forcing a 2.0 purely for naming consistency.
 
+### Added — V1.0 checklist closeout (all agnosys-side items)
+
+- **Parser fuzz harnesses** — `fuzz/certpin_pin.fcyr`, `fuzz/audit_nlmsg.fcyr`, `fuzz/pam_config.fcyr`. Each runs under 10 s at 500 iters in the CI fuzz step; exercises boundary lengths, malformed inputs, and iteration stress.
+- **`test_edge_cases()` in integration suite** — 25 boundary assertions: `update_validate_version` year/month bounds, `update_compare_versions` lexicographic fallback, `pam_validate_username` length + first-char + body-char rules, `bootloader_validate_kernel_cmdline` danger tokens (`rd.break`, `single`), `certpin_validate_pin_format` length edges, `err_from_errno` errno→kind mapping. Total integration assertions: 220 → 245.
+- **`cyrius vet` CI gate** — new step in `ci.yml`; fails if include-graph introduces untrusted or missing deps.
+- **`scripts/audit.sh`** — local one-shot quality runner, 10 gates matching CI (syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks). Clean output suitable for pre-push verification.
+
 ### Added — 1.0 freeze prerequisites
 
 - **API surface snapshot** — `docs/development/api-surface-1.0.md` (722 lines) lists every public `fn` across the 20 modules with arity and a one-line summary. 555 public functions catalogued; 16 outliers flagged for pre-freeze review. Principal finding: the `certinfo_*` family (15 fns) in `certpin.cyr` breaks the module-prefix convention and should be renamed to `certpin_*` before 1.0.
@@ -100,7 +107,7 @@ Renames by module group:
 
 ### Removed
 
-- **`rust-old/` directory removed** (304MB, 29,257 lines Rust) — port complete, Rust source preserved in git history. Final Rust-vs-Cyrius benchmark comparison saved to `BENCHMARKS-RUST-VS-CYRIUS.md`.
+- **`rust-old/` directory removed** (304MB, 29,257 lines Rust) — port complete, Rust source preserved in git history. Final Rust-vs-Cyrius benchmark comparison saved to `docs/development/benchmarks-rust-vs-cyrius.md` (moved from repo root at Unreleased).
 
 ### Metrics
 

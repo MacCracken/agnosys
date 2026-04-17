@@ -74,6 +74,9 @@ jobs:
             cyrius lint "$f"
           done
 
+      - name: Vet (include-graph audit)
+        run: cyrius vet src/main.cyr
+
       - name: Fuzz
         run: |
           for f in fuzz/*.fcyr; do

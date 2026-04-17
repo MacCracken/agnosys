@@ -69,22 +69,25 @@ Consumer validation: **daimon**, **nein**, **yukti**, **soorat**, **argonaut**, 
 - [x] Architecture overview documentation
 - [x] Security notes rewritten for Cyrius
 
-## V1.0 — Stable API (Next)
+## V1.0 — Stable API
 
 Original checklist:
 
-- [ ] Consumer migration from monolith `agnos-sys`
-- [ ] `cyrius audit` gate in CI
-- [ ] Fuzz testing for parsers (certpin DER, audit netlink, PAM config)
-- [ ] Additional edge-case tests from audit observations
+- [ ] Consumer migration from monolith `agnos-sys` — **tracked on consumer crates (sigil, kavach, daimon, argonaut, stiva, nein, ...), not agnosys-side work**
+- [x] Quality gate in CI — `cyrius lint`, `cyrius vet`, `cyrius capacity --check`, API surface check, fuzz, integration tests. Bundled as `scripts/audit.sh` for local one-shot runs
+- [x] Fuzz testing for parsers — `fuzz/certpin_pin.fcyr`, `fuzz/audit_nlmsg.fcyr`, `fuzz/pam_config.fcyr`. All run under `cyrius build` + 10s timeout at 500 iters in CI
+- [x] Additional edge-case tests from audit observations — `test_edge_cases()` in `tests/tcyr/test_integration.tcyr` adds 25 boundary assertions (version year/month bounds, username length+charset, cmdline danger tokens, pin length boundaries, errno mapping)
 
-Freeze prerequisites added at 0.98.0:
+Freeze prerequisites added at 0.98.0 / Unreleased:
 
-- [x] API surface snapshot — `docs/development/api-surface-1.0.md` (556 public fns, 20 modules)
-- [x] API surface regression check — `scripts/check-api-surface.sh`, wired into CI; fails on any public fn removed or arity-changed vs. `api-surface-1.0.snapshot`
-- [x] Capacity baseline — `docs/development/capacity-baseline.md`; CI runs `cyrius capacity --check src/main.cyr` on every build
+- [x] API surface snapshot — `docs/development/api-surface-1.0.md` (556 public fns, 20 modules, 0 outliers)
+- [x] API surface regression check — `scripts/check-api-surface.sh`; fails on any public fn removed or arity-changed vs. `api-surface-1.0.snapshot`. Wired into CI
+- [x] Capacity baseline — `docs/development/capacity-baseline.md`
 - [x] README consumer quickstart — per-module and full-bundle patterns documented
-- [x] Full naming sweep — 139 public fns renamed so every module carries its prefix (see CHANGELOG `[Unreleased]`). Zero remaining prefix outliers.
+- [x] Full naming sweep — 139 public fns renamed so every module carries its prefix. Zero remaining prefix outliers. Breaking change landed once pre-1.0 to avoid v2 churn.
+- [x] Local audit runner — `scripts/audit.sh` (10 gates, mirrors CI)
+
+Remaining before cutting 1.0 tag: none on agnosys' side. All items above are live on `main` via `[Unreleased]`. Consumer migration proceeds on consumer repos; once enough consumers report green against Unreleased, the tag follows.
 
 ## Progress
 

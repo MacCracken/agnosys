@@ -473,6 +473,57 @@ fn test_journald() {
 }
 
 # ================================================================
+# edge cases (24 assertions) — boundary/error paths that the
+# per-module tests above don't reach, validated pre-1.0 freeze.
+# ================================================================
+
+fn test_edge_cases() {
+    println("-- edge cases --");
+
+    # update_validate_version — year/month boundaries
+    assert(is_ok(update_validate_version("2024.1.1")) == 1, "uvv_lo_y");
+    assert(is_ok(update_validate_version("2100.12.31")) == 1, "uvv_hi_y");
+    assert(is_err_result(update_validate_version("2023.6.1")) == 1, "uvv_u_y");
+    assert(is_err_result(update_validate_version("2101.6.1")) == 1, "uvv_o_y");
+    assert(is_err_result(update_validate_version("2025.0.1")) == 1, "uvv_u_m");
+    assert(is_err_result(update_validate_version("2025.13.1")) == 1, "uvv_o_m");
+
+    # update_compare_versions — both-malformed falls through to lex compare
+    assert_eq(update_compare_versions("abc", "abd"), VER_LESS, "ucv_lex_l");
+    assert_eq(update_compare_versions("abc", "abc"), VER_EQUAL, "ucv_lex_eq");
+    assert_eq(update_compare_versions("abcd", "abc"), VER_GREATER, "ucv_lex_g");
+
+    # pam_validate_username — length + first-char + body-char rules
+    assert(is_ok(pam_validate_username("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")) == 1, "usr_32");  # 32 chars
+    assert(is_err_result(pam_validate_username("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")) == 1, "usr_33");  # 33 chars
+    assert(is_err_result(pam_validate_username("1abc")) == 1, "usr_digit_first");
+    assert(is_err_result(pam_validate_username("Alice")) == 1, "usr_upper");
+    assert(is_err_result(pam_validate_username("bad name")) == 1, "usr_space");
+    assert(is_err_result(pam_validate_username("root$")) == 1, "usr_dollar");
+
+    # bootloader_validate_kernel_cmdline — known-dangerous tokens
+    assert(is_err_result(bootloader_validate_kernel_cmdline("root=/dev/sda1 rd.break")) == 1, "cmd_rdbrk");
+    assert(is_err_result(bootloader_validate_kernel_cmdline("root=/dev/sda1 single")) == 1, "cmd_single");
+    bootloader_danger_reset();
+
+    # certpin_validate_pin_format — length boundaries (44 exactly required)
+    assert_eq(certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), 0, "pin_43");    # 43
+    assert_eq(certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), 0, "pin_45"); # 45
+    assert_eq(certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), 1, "pin_44"); # 44 all A
+    assert_eq(certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#AAAA"), 0, "pin_bad_ch"); # bad byte
+
+    # err_from_errno — distinct errno values map to distinct error kinds
+    var e_perm = err_from_errno(EPERM);
+    var e_inval = err_from_errno(EINVAL);
+    assert(is_err_result(e_perm) == 1, "efe_perm");
+    assert(is_err_result(e_inval) == 1, "efe_inval");
+    assert(syserr_errno(payload(e_perm)) == EPERM, "efe_perm_e");
+    assert(syserr_errno(payload(e_inval)) == EINVAL, "efe_inval_e");
+
+    return 0;
+}
+
+# ================================================================
 # Main
 # ================================================================
 
@@ -520,6 +571,8 @@ fn main() {
     test_netns();
     alloc_reset(); alloc_init();
     test_journald();
+    bootloader_danger_reset(); alloc_reset(); alloc_init();
+    test_edge_cases();
     println("");
     var f = assert_summary();
     if (f > 0) { return 1; }
