@@ -159,7 +159,7 @@ fn bench_security() {
     while (ri < 100) {
         var start = now_ns();
         var k = 0;
-        while (k < 10000) { syscall_name_to_nr("read"); k = k + 1; }
+        while (k < 10000) { security_syscall_name_to_nr("read"); k = k + 1; }
         batch_record(b, now_ns() - start, 10000);
         ri = ri + 1;
     }
@@ -170,7 +170,7 @@ fn bench_security() {
     while (ri < 100) {
         var start = now_ns();
         var k = 0;
-        while (k < 10000) { syscall_name_to_nr("nonexistent"); k = k + 1; }
+        while (k < 10000) { security_syscall_name_to_nr("nonexistent"); k = k + 1; }
         batch_record(b, now_ns() - start, 10000);
         ri = ri + 1;
     }

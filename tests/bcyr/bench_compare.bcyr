@@ -185,11 +185,11 @@ fn bench_syscall_name_lookup() {
     var start = now_ns();
     var k = 0;
     while (k < iters) {
-        var n = syscall_name_to_nr("getpid");
+        var n = security_syscall_name_to_nr("getpid");
         k = k + 1;
     }
     var elapsed = now_ns() - start;
-    report("syscall_name_to_nr", elapsed, iters);
+    report("security_syscall_name_to_nr", elapsed, iters);
     return 0;
 }
 
@@ -198,7 +198,7 @@ fn bench_seccomp_filter() {
     var start = now_ns();
     var k = 0;
     while (k < iters) {
-        var r = create_basic_seccomp_filter();
+        var r = security_create_basic_seccomp_filter();
         k = k + 1;
     }
     var elapsed = now_ns() - start;

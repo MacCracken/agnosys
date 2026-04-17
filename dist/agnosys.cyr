@@ -304,7 +304,7 @@ enum SysNrExt {
 
 # Execute a syscall and return Result: Ok(ret) or Err(syserr).
 # name is a string label for diagnostics (not used in codegen).
-fn checked_syscall(ret) {
+fn agnosys_checked_syscall(ret) {
     if (ret < 0) {
         return err_from_syscall_ret(ret);
     }
@@ -733,18 +733,18 @@ enum FsAccess {
 
 # Filesystem rule: { path_ptr, access }
 # path_ptr is a null-terminated C string pointer
-fn fs_rule_new(path, access) {
+fn security_fs_rule_new(path, access) {
     var r = alloc(16);
     store64(r, path);
     store64(r + 8, access);
     return r;
 }
 
-fn fs_rule_path(r) { return load64(r); }
-fn fs_rule_access(r) { return load64(r + 8); }
+fn security_fs_rule_path(r) { return load64(r); }
+fn security_fs_rule_access(r) { return load64(r + 8); }
 
-fn fs_rule_read_only(path) { return fs_rule_new(path, FS_READ_ONLY); }
-fn fs_rule_read_write(path) { return fs_rule_new(path, FS_READ_WRITE); }
+fn security_fs_rule_read_only(path) { return security_fs_rule_new(path, FS_READ_ONLY); }
+fn security_fs_rule_read_write(path) { return security_fs_rule_new(path, FS_READ_WRITE); }
 
 # ================================================================
 # Apply Landlock filesystem restrictions
@@ -752,7 +752,7 @@ fn fs_rule_read_write(path) { return fs_rule_new(path, FS_READ_WRITE); }
 
 # rules: vec of fs_rule pointers, count: number of rules
 # Returns Result: Ok(0) on success, Err on failure.
-fn apply_landlock(rules, count) {
+fn security_apply_landlock(rules, count) {
     if (count == 0) { return Ok(0); }
 
     var handled_access = LANDLOCK_ACCESS_FS_READ_FILE
@@ -774,7 +774,7 @@ fn apply_landlock(rules, count) {
     var idx = 0;
     while (idx < count) {
         var rule = vec_get(rules, idx);
-        var access = fs_rule_access(rule);
+        var access = security_fs_rule_access(rule);
 
         var allowed_access = 0;
         if (access == FS_READ_ONLY) {
@@ -786,7 +786,7 @@ fn apply_landlock(rules, count) {
         }
 
         if (allowed_access != 0) {
-            var path = fs_rule_path(rule);
+            var path = security_fs_rule_path(rule);
             # O_PATH = 0x200000, O_CLOEXEC = 0x80000
             var path_fd = syscall(SYS_OPEN, path, 0x280000, 0);
             if (path_fd < 0) {
@@ -844,7 +844,7 @@ enum BpfConst {
 
 # Write a BPF sock_filter instruction (8 bytes) to buf at offset.
 # Layout: u16 code, u8 jt, u8 jf, u32 k (little-endian)
-fn bpf_write_insn(buf, offset, code, jt, jf, k) {
+fn security_bpf_write_insn(buf, offset, code, jt, jf, k) {
     store16(buf + offset, code);
     store8(buf + offset + 2, jt);
     store8(buf + offset + 3, jf);
@@ -855,7 +855,7 @@ fn bpf_write_insn(buf, offset, code, jt, jf, k) {
 # Load a seccomp-BPF filter into the calling process.
 # filter: pointer to BPF bytecode, filter_len: total bytes.
 # Returns Result.
-fn load_seccomp(filter, filter_len) {
+fn security_load_seccomp(filter, filter_len) {
     if (filter_len == 0) {
         return err_invalid_argument("empty seccomp filter");
     }
@@ -889,8 +889,8 @@ fn load_seccomp(filter, filter_len) {
 
 # Create a basic seccomp filter allowing safe syscalls.
 # Returns Result: Ok(filter_ptr) where payload is {ptr, len}.
-# The caller must use the returned pointer and length with load_seccomp.
-fn create_basic_seccomp_filter() {
+# The caller must use the returned pointer and length with security_load_seccomp.
+fn security_create_basic_seccomp_filter() {
     # Pre-computed BPF filter: 23 instructions x 8 bytes = 184 bytes.
     # Layout per insn: u16 code, u8 jt, u8 jf, u32 k (little-endian).
     # 20 allowlisted syscalls: read(0), write(1), close(3), fstat(5),
@@ -902,32 +902,32 @@ fn create_basic_seccomp_filter() {
     var filter = alloc(filter_size);
 
     # Insn 0: BPF_LD_W_ABS, k=0 (load syscall nr)
-    bpf_write_insn(filter, 0, 0x20, 0, 0, 0);
+    security_bpf_write_insn(filter, 0, 0x20, 0, 0, 0);
     # Insns 1-20: JEQ for each syscall, jt = skip to ALLOW
-    bpf_write_insn(filter, 8,   0x15, 20, 0, 0);     # read
-    bpf_write_insn(filter, 16,  0x15, 19, 0, 1);     # write
-    bpf_write_insn(filter, 24,  0x15, 18, 0, 3);     # close
-    bpf_write_insn(filter, 32,  0x15, 17, 0, 5);     # fstat
-    bpf_write_insn(filter, 40,  0x15, 16, 0, 9);     # mmap
-    bpf_write_insn(filter, 48,  0x15, 15, 0, 10);    # mprotect
-    bpf_write_insn(filter, 56,  0x15, 14, 0, 11);    # munmap
-    bpf_write_insn(filter, 64,  0x15, 13, 0, 12);    # brk
-    bpf_write_insn(filter, 72,  0x15, 12, 0, 15);    # rt_sigreturn
-    bpf_write_insn(filter, 80,  0x15, 11, 0, 60);    # exit
-    bpf_write_insn(filter, 88,  0x15, 10, 0, 131);   # sigaltstack
-    bpf_write_insn(filter, 96,  0x15, 9,  0, 158);   # arch_prctl
-    bpf_write_insn(filter, 104, 0x15, 8,  0, 186);   # gettid
-    bpf_write_insn(filter, 112, 0x15, 7,  0, 202);   # futex
-    bpf_write_insn(filter, 120, 0x15, 6,  0, 218);   # set_tid_address
-    bpf_write_insn(filter, 128, 0x15, 5,  0, 231);   # exit_group
-    bpf_write_insn(filter, 136, 0x15, 4,  0, 273);   # set_robust_list
-    bpf_write_insn(filter, 144, 0x15, 3,  0, 318);   # getrandom
-    bpf_write_insn(filter, 152, 0x15, 2,  0, 228);   # clock_gettime
-    bpf_write_insn(filter, 160, 0x15, 1,  0, 334);   # rseq
+    security_bpf_write_insn(filter, 8,   0x15, 20, 0, 0);     # read
+    security_bpf_write_insn(filter, 16,  0x15, 19, 0, 1);     # write
+    security_bpf_write_insn(filter, 24,  0x15, 18, 0, 3);     # close
+    security_bpf_write_insn(filter, 32,  0x15, 17, 0, 5);     # fstat
+    security_bpf_write_insn(filter, 40,  0x15, 16, 0, 9);     # mmap
+    security_bpf_write_insn(filter, 48,  0x15, 15, 0, 10);    # mprotect
+    security_bpf_write_insn(filter, 56,  0x15, 14, 0, 11);    # munmap
+    security_bpf_write_insn(filter, 64,  0x15, 13, 0, 12);    # brk
+    security_bpf_write_insn(filter, 72,  0x15, 12, 0, 15);    # rt_sigreturn
+    security_bpf_write_insn(filter, 80,  0x15, 11, 0, 60);    # exit
+    security_bpf_write_insn(filter, 88,  0x15, 10, 0, 131);   # sigaltstack
+    security_bpf_write_insn(filter, 96,  0x15, 9,  0, 158);   # arch_prctl
+    security_bpf_write_insn(filter, 104, 0x15, 8,  0, 186);   # gettid
+    security_bpf_write_insn(filter, 112, 0x15, 7,  0, 202);   # futex
+    security_bpf_write_insn(filter, 120, 0x15, 6,  0, 218);   # set_tid_address
+    security_bpf_write_insn(filter, 128, 0x15, 5,  0, 231);   # exit_group
+    security_bpf_write_insn(filter, 136, 0x15, 4,  0, 273);   # set_robust_list
+    security_bpf_write_insn(filter, 144, 0x15, 3,  0, 318);   # getrandom
+    security_bpf_write_insn(filter, 152, 0x15, 2,  0, 228);   # clock_gettime
+    security_bpf_write_insn(filter, 160, 0x15, 1,  0, 334);   # rseq
     # Insn 21: default KILL
-    bpf_write_insn(filter, 168, 0x06, 0, 0, 0x80000000);
+    security_bpf_write_insn(filter, 168, 0x06, 0, 0, 0x80000000);
     # Insn 22: ALLOW
-    bpf_write_insn(filter, 176, 0x06, 0, 0, 0x7FFF0000);
+    security_bpf_write_insn(filter, 176, 0x06, 0, 0, 0x7FFF0000);
 
     var info = alloc(16);
     store64(info, filter);
@@ -935,9 +935,9 @@ fn create_basic_seccomp_filter() {
     return Ok(info);
 }
 
-# Get filter pointer from create_basic_seccomp_filter result
-fn seccomp_filter_ptr(info) { return load64(info); }
-fn seccomp_filter_len(info) { return load64(info + 8); }
+# Get filter pointer from security_create_basic_seccomp_filter result
+fn security_seccomp_filter_ptr(info) { return load64(info); }
+fn security_seccomp_filter_len(info) { return load64(info + 8); }
 
 # ================================================================
 # Namespace creation
@@ -964,7 +964,7 @@ enum SysNrNs {
 # Create new namespace(s) with specified flags.
 # flags: bitwise OR of NS_NETWORK, NS_MOUNT, NS_PID, NS_USER
 # Returns Result.
-fn create_namespace(flags) {
+fn security_create_namespace(flags) {
     var sflags = 0;
     if ((flags & NS_NETWORK) != 0) { sflags = sflags | CLONE_NEWNET; }
     if ((flags & NS_MOUNT) != 0) { sflags = sflags | CLONE_NEWNS; }
@@ -974,8 +974,8 @@ fn create_namespace(flags) {
     var ret = syscall(SYS_UNSHARE, sflags);
     if (ret < 0) {
         var errno = 0 - ret;
-        if (errno == EPERM) { return err_permission_denied("create_namespace"); }
-        if (errno == EINVAL) { return err_invalid_argument("create_namespace: invalid flags"); }
+        if (errno == EPERM) { return err_permission_denied("security_create_namespace"); }
+        if (errno == EINVAL) { return err_invalid_argument("security_create_namespace: invalid flags"); }
         return err_syscall_failed(errno, "unshare failed");
     }
 
@@ -988,7 +988,7 @@ fn create_namespace(flags) {
 
 var _syscall_map = 0;
 
-fn syscall_map_reset() { _syscall_map = 0; return 0; }
+fn security_syscall_map_reset() { _syscall_map = 0; return 0; }
 
 fn _syscall_map_init() {
     if (_syscall_map != 0) { return 0; }
@@ -1056,7 +1056,7 @@ fn _syscall_map_init() {
 }
 
 # Map a syscall name to its x86_64 number. Returns -1 if not found.
-fn syscall_name_to_nr(name) {
+fn security_syscall_name_to_nr(name) {
     _syscall_map_init();
     if (map_has(_syscall_map, name) == 1) {
         return map_get(_syscall_map, name);
@@ -3022,7 +3022,7 @@ enum JournalPriority {
 # Total: 56 bytes.
 # ================================================================
 
-fn journal_entry_new(timestamp, unit, priority, message, pid) {
+fn journald_entry_new(timestamp, unit, priority, message, pid) {
     var e = alloc(56);
     store64(e, timestamp);
     store64(e + 8, unit);
@@ -3034,16 +3034,16 @@ fn journal_entry_new(timestamp, unit, priority, message, pid) {
     return e;
 }
 
-fn journal_entry_timestamp(e) { return load64(e); }
-fn journal_entry_unit(e) { return load64(e + 8); }
-fn journal_entry_priority(e) { return load64(e + 16); }
-fn journal_entry_message(e) { return load64(e + 24); }
-fn journal_entry_pid(e) { return load64(e + 32); }
-fn journal_entry_field_keys(e) { return load64(e + 40); }
-fn journal_entry_field_vals(e) { return load64(e + 48); }
+fn journald_entry_timestamp(e) { return load64(e); }
+fn journald_entry_unit(e) { return load64(e + 8); }
+fn journald_entry_priority(e) { return load64(e + 16); }
+fn journald_entry_message(e) { return load64(e + 24); }
+fn journald_entry_pid(e) { return load64(e + 32); }
+fn journald_entry_field_keys(e) { return load64(e + 40); }
+fn journald_entry_field_vals(e) { return load64(e + 48); }
 
 # Add an extra field (key-value pair) to a journal entry
-fn journal_entry_add_field(e, key, val) {
+fn journald_entry_add_field(e, key, val) {
     vec_push(load64(e + 40), key);
     vec_push(load64(e + 48), val);
     return 0;
@@ -3058,7 +3058,7 @@ fn journal_entry_add_field(e, key, val) {
 #         +32 grep, +40 lines, +48 boot. Total: 56 bytes.
 # ================================================================
 
-fn journal_filter_new() {
+fn journald_filter_new() {
     var f = alloc(56);
     store64(f, 0);          # unit
     store64(f + 8, 0);      # since
@@ -3070,21 +3070,21 @@ fn journal_filter_new() {
     return f;
 }
 
-fn journal_filter_set_unit(f, unit) { store64(f, unit); return 0; }
-fn journal_filter_set_since(f, since) { store64(f + 8, since); return 0; }
-fn journal_filter_set_until(f, until) { store64(f + 16, until); return 0; }
-fn journal_filter_set_priority(f, prio) { store64(f + 24, prio); return 0; }
-fn journal_filter_set_grep(f, grep) { store64(f + 32, grep); return 0; }
-fn journal_filter_set_lines(f, lines) { store64(f + 40, lines); return 0; }
-fn journal_filter_set_boot(f, boot) { store64(f + 48, boot); return 0; }
+fn journald_filter_set_unit(f, unit) { store64(f, unit); return 0; }
+fn journald_filter_set_since(f, since) { store64(f + 8, since); return 0; }
+fn journald_filter_set_until(f, until) { store64(f + 16, until); return 0; }
+fn journald_filter_set_priority(f, prio) { store64(f + 24, prio); return 0; }
+fn journald_filter_set_grep(f, grep) { store64(f + 32, grep); return 0; }
+fn journald_filter_set_lines(f, lines) { store64(f + 40, lines); return 0; }
+fn journald_filter_set_boot(f, boot) { store64(f + 48, boot); return 0; }
 
-fn journal_filter_unit(f) { return load64(f); }
-fn journal_filter_since(f) { return load64(f + 8); }
-fn journal_filter_until(f) { return load64(f + 16); }
-fn journal_filter_priority(f) { return load64(f + 24); }
-fn journal_filter_grep(f) { return load64(f + 32); }
-fn journal_filter_lines(f) { return load64(f + 40); }
-fn journal_filter_boot(f) { return load64(f + 48); }
+fn journald_filter_unit(f) { return load64(f); }
+fn journald_filter_since(f) { return load64(f + 8); }
+fn journald_filter_until(f) { return load64(f + 16); }
+fn journald_filter_priority(f) { return load64(f + 24); }
+fn journald_filter_grep(f) { return load64(f + 32); }
+fn journald_filter_lines(f) { return load64(f + 40); }
+fn journald_filter_boot(f) { return load64(f + 48); }
 
 # ================================================================
 # Build journalctl argument string
@@ -3094,7 +3094,7 @@ fn journal_filter_boot(f) { return load64(f + 48); }
 # Returns a Str with all arguments space-separated (for run_capture).
 # Note: since run_capture uses _exec3 with only 2 extra args, we build
 # a single combined argument string and use /bin/sh -c for complex queries.
-fn journal_build_args(filter) {
+fn journald_build_args(filter) {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "journalctl --output=json --no-pager");
 
@@ -3149,7 +3149,7 @@ fn journal_build_args(filter) {
 
 # Build a sockaddr_un pointing to /run/systemd/journal/socket.
 # Returns pointer to the struct (110 bytes).
-fn journal_make_sockaddr() {
+fn journald_make_sockaddr() {
     var sa = alloc(SOCKADDR_UN_SIZE);
     memset(sa, 0, SOCKADDR_UN_SIZE);
     store16(sa, AF_UNIX);  # sa_family = AF_UNIX
@@ -3169,7 +3169,7 @@ fn journal_make_sockaddr() {
 # sent as a single datagram to /run/systemd/journal/socket.
 #
 # Returns Result: Ok(0) on success, Err on failure.
-fn journal_send(message, priority, identifier) {
+fn journald_send(message, priority, identifier) {
     if (message == 0) {
         return err_invalid_argument("journal message cannot be null");
     }
@@ -3211,7 +3211,7 @@ fn journal_send(message, priority, identifier) {
     defer { sys_close(fd); }
 
     # Build sockaddr_un
-    var sa = journal_make_sockaddr();
+    var sa = journald_make_sockaddr();
 
     # sendto(fd, buf, len, flags, dest_addr, addrlen)
     var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
@@ -3226,7 +3226,7 @@ fn journal_send(message, priority, identifier) {
 # fields_keys: vec of C string pointers (field names).
 # fields_vals: vec of C string pointers (field values).
 # Returns Result: Ok(0) or Err.
-fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) {
+fn journald_send_fields(message, priority, identifier, fields_keys, fields_vals) {
     if (message == 0) {
         return err_invalid_argument("journal message cannot be null");
     }
@@ -3286,7 +3286,7 @@ fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) 
     }
     defer { sys_close(fd); }
 
-    var sa = journal_make_sockaddr();
+    var sa = journald_make_sockaddr();
     var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
     if (ret < 0) {
         return err_syscall_failed(0 - ret, "sendto journal socket failed");
@@ -3302,7 +3302,7 @@ fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) 
 # Minimal JSON field extraction: find a key in a JSON object string
 # and extract the string value. Returns Str or 0 if not found.
 # This is a lightweight parser — handles flat JSON objects only.
-fn journal_json_get_str(json, key) {
+fn journald_json_get_str(json, key) {
     # Search for "key" in the JSON
     var jlen = str_len(json);
     var jd = str_data(json);
@@ -3358,7 +3358,7 @@ fn journal_json_get_str(json, key) {
 
 # Parse a single JSON line from journalctl output into a JournalEntry.
 # Returns Result: Ok(entry_ptr) or Err.
-fn journal_parse_json(json_line) {
+fn journald_parse_json(json_line) {
     var jlen = str_len(json_line);
     if (jlen == 0) {
         return err_invalid_argument("empty journal JSON line");
@@ -3370,31 +3370,31 @@ fn journal_parse_json(json_line) {
     }
 
     # Extract known fields
-    var ts_str = journal_json_get_str(json_line, "__REALTIME_TIMESTAMP");
+    var ts_str = journald_json_get_str(json_line, "__REALTIME_TIMESTAMP");
     var timestamp = 0;
     if (ts_str != 0) {
         timestamp = str_to_int(ts_str);
     }
 
-    var unit = journal_json_get_str(json_line, "_SYSTEMD_UNIT");
+    var unit = journald_json_get_str(json_line, "_SYSTEMD_UNIT");
     if (unit == 0) { unit = str_from(""); }
 
-    var prio_str = journal_json_get_str(json_line, "PRIORITY");
+    var prio_str = journald_json_get_str(json_line, "PRIORITY");
     var priority = JOURNAL_INFO;  # default
     if (prio_str != 0) {
         priority = str_to_int(prio_str);
     }
 
-    var message = journal_json_get_str(json_line, "MESSAGE");
+    var message = journald_json_get_str(json_line, "MESSAGE");
     if (message == 0) { message = str_from(""); }
 
-    var pid_str = journal_json_get_str(json_line, "_PID");
+    var pid_str = journald_json_get_str(json_line, "_PID");
     var pid = 0;
     if (pid_str != 0) {
         pid = str_to_int(pid_str);
     }
 
-    var entry = journal_entry_new(timestamp, unit, priority, message, pid);
+    var entry = journald_entry_new(timestamp, unit, priority, message, pid);
     return Ok(entry);
 }
 
@@ -3403,10 +3403,10 @@ fn journal_parse_json(json_line) {
 # ================================================================
 
 # Query the systemd journal using journalctl and parse JSON output.
-# filter: JournalFilter pointer (from journal_filter_new).
+# filter: JournalFilter pointer (from journald_filter_new).
 # Returns Result: Ok(vec_of_entry_ptrs) or Err.
-fn journal_query(filter) {
-    var cmd_str = journal_build_args(filter);
+fn journald_query(filter) {
+    var cmd_str = journald_build_args(filter);
 
     # Use /bin/sh -c "<cmd>" to execute the full command
     var buf = alloc(131072);  # 128KB capture buffer
@@ -3431,7 +3431,7 @@ fn journal_query(filter) {
             continue;
         }
 
-        var parse_res = journal_parse_json(line);
+        var parse_res = journald_parse_json(line);
         if (is_ok(parse_res) == 1) {
             vec_push(entries, payload(parse_res));
         }
@@ -3451,7 +3451,7 @@ fn journal_query(filter) {
 # unit_name: C string (e.g. "sshd.service").
 # lines: number of entries to return.
 # Returns Result: Ok(vec_of_entry_ptrs) or Err.
-fn journal_get_unit_logs(unit_name, lines) {
+fn journald_get_unit_logs(unit_name, lines) {
     if (unit_name == 0) {
         return err_invalid_argument("unit name cannot be null");
     }
@@ -3459,11 +3459,11 @@ fn journal_get_unit_logs(unit_name, lines) {
         return err_invalid_argument("unit name cannot be empty");
     }
 
-    var filter = journal_filter_new();
-    journal_filter_set_unit(filter, str_from(unit_name));
-    journal_filter_set_lines(filter, lines);
+    var filter = journald_filter_new();
+    journald_filter_set_unit(filter, str_from(unit_name));
+    journald_filter_set_lines(filter, lines);
 
-    return journal_query(filter);
+    return journald_query(filter);
 }
 
 # ================================================================
@@ -3473,23 +3473,23 @@ fn journal_get_unit_logs(unit_name, lines) {
 # Send an info-level message to the journal.
 # message: C string.
 # Returns Result: Ok(0) or Err.
-fn journal_info(message) {
-    return journal_send(message, JOURNAL_INFO, "agnosys");
+fn journald_info(message) {
+    return journald_send(message, JOURNAL_INFO, "agnosys");
 }
 
 # Send a warning-level message to the journal.
-fn journal_warning(message) {
-    return journal_send(message, JOURNAL_WARNING, "agnosys");
+fn journald_warning(message) {
+    return journald_send(message, JOURNAL_WARNING, "agnosys");
 }
 
 # Send an error-level message to the journal.
-fn journal_error(message) {
-    return journal_send(message, JOURNAL_ERR, "agnosys");
+fn journald_error(message) {
+    return journald_send(message, JOURNAL_ERR, "agnosys");
 }
 
 # Send a debug-level message to the journal.
-fn journal_debug(message) {
-    return journal_send(message, JOURNAL_DEBUG, "agnosys");
+fn journald_debug(message) {
+    return journald_send(message, JOURNAL_DEBUG, "agnosys");
 }
 
 # --- luks.cyr ---
@@ -4036,13 +4036,13 @@ enum VerityConst {
 # Hash algorithm helpers
 # ================================================================
 
-fn verity_hash_algo_str(algo) {
+fn dmverity_hash_algo_str(algo) {
     if (algo == VERITY_SHA256) { return "sha256"; }
     if (algo == VERITY_SHA512) { return "sha512"; }
     return "sha256";
 }
 
-fn verity_hash_hex_len(algo) {
+fn dmverity_hash_hex_len(algo) {
     if (algo == VERITY_SHA256) { return VERITY_SHA256_HEX_LEN; }
     if (algo == VERITY_SHA512) { return VERITY_SHA512_HEX_LEN; }
     return VERITY_SHA256_HEX_LEN;
@@ -4056,20 +4056,20 @@ fn verity_hash_hex_len(algo) {
 # Total: 64 bytes. salt=0 means no salt.
 # ================================================================
 
-fn verity_config_alloc() {
+fn dmverity_config_alloc() {
     var c = alloc(64);
     memset(c, 0, 64);
     return c;
 }
 
-fn verity_config_set_devices(c, name, data_device, hash_device) {
+fn dmverity_config_set_devices(c, name, data_device, hash_device) {
     store64(c, name);
     store64(c + 8, data_device);
     store64(c + 16, hash_device);
     return c;
 }
 
-fn verity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
+fn dmverity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
     store64(c + 24, data_bs);
     store64(c + 32, hash_bs);
     store64(c + 40, algo);
@@ -4078,14 +4078,14 @@ fn verity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
     return c;
 }
 
-fn verity_config_name(c) { return load64(c); }
-fn verity_config_data_device(c) { return load64(c + 8); }
-fn verity_config_hash_device(c) { return load64(c + 16); }
-fn verity_config_data_block_size(c) { return load64(c + 24); }
-fn verity_config_hash_block_size(c) { return load64(c + 32); }
-fn verity_config_hash_algorithm(c) { return load64(c + 40); }
-fn verity_config_root_hash(c) { return load64(c + 48); }
-fn verity_config_salt(c) { return load64(c + 56); }
+fn dmverity_config_name(c) { return load64(c); }
+fn dmverity_config_data_device(c) { return load64(c + 8); }
+fn dmverity_config_hash_device(c) { return load64(c + 16); }
+fn dmverity_config_data_block_size(c) { return load64(c + 24); }
+fn dmverity_config_hash_block_size(c) { return load64(c + 32); }
+fn dmverity_config_hash_algorithm(c) { return load64(c + 40); }
+fn dmverity_config_root_hash(c) { return load64(c + 48); }
+fn dmverity_config_salt(c) { return load64(c + 56); }
 
 # ================================================================
 # VerityStatus struct
@@ -4094,7 +4094,7 @@ fn verity_config_salt(c) { return load64(c + 56); }
 # Total: 40 bytes
 # ================================================================
 
-fn verity_status_new(name, is_active, is_verified, corruption_detected, root_hash) {
+fn dmverity_status_new(name, is_active, is_verified, corruption_detected, root_hash) {
     var s = alloc(40);
     store64(s, name);
     store64(s + 8, is_active);
@@ -4104,18 +4104,18 @@ fn verity_status_new(name, is_active, is_verified, corruption_detected, root_has
     return s;
 }
 
-fn verity_status_name(s) { return load64(s); }
-fn verity_status_is_active(s) { return load64(s + 8); }
-fn verity_status_is_verified(s) { return load64(s + 16); }
-fn verity_status_corruption_detected(s) { return load64(s + 24); }
-fn verity_status_root_hash(s) { return load64(s + 32); }
+fn dmverity_status_name(s) { return load64(s); }
+fn dmverity_status_is_active(s) { return load64(s + 8); }
+fn dmverity_status_is_verified(s) { return load64(s + 16); }
+fn dmverity_status_corruption_detected(s) { return load64(s + 24); }
+fn dmverity_status_root_hash(s) { return load64(s + 32); }
 
 # ================================================================
 # Validation helpers
 # ================================================================
 
 # Check if a byte is a valid hex character
-fn verity_is_hex_char(ch) {
+fn dmverity_is_hex_char(ch) {
     if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
     if (ch >= 65 && ch <= 70) { return 1; }   # A-F
     if (ch >= 97 && ch <= 102) { return 1; }  # a-f
@@ -4123,11 +4123,11 @@ fn verity_is_hex_char(ch) {
 }
 
 # Validate a hex string. Returns Ok(0) or Err.
-fn verity_validate_hex(s, label) {
+fn dmverity_validate_hex(s, label) {
     var slen = strlen(s);
     var i = 0;
     while (i < slen) {
-        if (verity_is_hex_char(load8(s + i)) == 0) {
+        if (dmverity_is_hex_char(load8(s + i)) == 0) {
             return err_invalid_argument("hex string contains non-hex characters");
         }
         i = i + 1;
@@ -4136,7 +4136,7 @@ fn verity_validate_hex(s, label) {
 }
 
 # Check if a byte is valid for a dm name (alphanum, dash, underscore)
-fn verity_is_name_char(ch) {
+fn dmverity_is_name_char(ch) {
     if (ch >= 48 && ch <= 57) { return 1; }
     if (ch >= 65 && ch <= 90) { return 1; }
     if (ch >= 97 && ch <= 122) { return 1; }
@@ -4147,12 +4147,12 @@ fn verity_is_name_char(ch) {
 
 # Validate a root hash: correct length for algorithm, all hex.
 # Returns Ok(0) or Err.
-fn verity_validate_root_hash(hash, algorithm) {
+fn dmverity_validate_root_hash(hash, algorithm) {
     if (strlen(hash) == 0) {
         return err_invalid_argument("Root hash cannot be empty");
     }
 
-    var expected_len = verity_hash_hex_len(algorithm);
+    var expected_len = dmverity_hash_hex_len(algorithm);
     var actual_len = strlen(hash);
 
     if (actual_len != expected_len) {
@@ -4161,7 +4161,7 @@ fn verity_validate_root_hash(hash, algorithm) {
 
     var i = 0;
     while (i < actual_len) {
-        if (verity_is_hex_char(load8(hash + i)) == 0) {
+        if (dmverity_is_hex_char(load8(hash + i)) == 0) {
             return err_invalid_argument("Root hash contains non-hex characters");
         }
         i = i + 1;
@@ -4171,8 +4171,8 @@ fn verity_validate_root_hash(hash, algorithm) {
 }
 
 # Validate a VerityConfig. Returns Ok(0) or Err.
-fn verity_config_validate(config) {
-    var name = verity_config_name(config);
+fn dmverity_config_validate(config) {
+    var name = dmverity_config_name(config);
     var namelen = strlen(name);
 
     if (namelen == 0) {
@@ -4184,33 +4184,33 @@ fn verity_config_validate(config) {
 
     var i = 0;
     while (i < namelen) {
-        if (verity_is_name_char(load8(name + i)) == 0) {
+        if (dmverity_is_name_char(load8(name + i)) == 0) {
             return err_invalid_argument("Verity name contains invalid characters");
         }
         i = i + 1;
     }
 
     # Block sizes must be powers of 2
-    var dbs = verity_config_data_block_size(config);
+    var dbs = dmverity_config_data_block_size(config);
     if (dbs == 0 || (dbs & (dbs - 1)) != 0) {
         return err_invalid_argument("Data block size must be a power of 2");
     }
 
-    var hbs = verity_config_hash_block_size(config);
+    var hbs = dmverity_config_hash_block_size(config);
     if (hbs == 0 || (hbs & (hbs - 1)) != 0) {
         return err_invalid_argument("Hash block size must be a power of 2");
     }
 
     # Validate root hash
-    var rh = verity_config_root_hash(config);
-    var algo = verity_config_hash_algorithm(config);
-    var res = verity_validate_root_hash(rh, algo);
+    var rh = dmverity_config_root_hash(config);
+    var algo = dmverity_config_hash_algorithm(config);
+    var res = dmverity_validate_root_hash(rh, algo);
     if (is_err_result(res) == 1) { return res; }
 
     # Validate salt if present
-    var salt = verity_config_salt(config);
+    var salt = dmverity_config_salt(config);
     if (salt != 0) {
-        var salt_res = verity_validate_hex(salt, "salt");
+        var salt_res = dmverity_validate_hex(salt, "salt");
         if (is_err_result(salt_res) == 1) { return salt_res; }
     }
 
@@ -4221,7 +4221,7 @@ fn verity_config_validate(config) {
 # Helper: run veritysetup
 # ================================================================
 
-fn verity_run_capture(args, buf, buflen) {
+fn dmverity_run_capture(args, buf, buflen) {
     var n = exec_capture(args, buf, buflen);
     if (n < 0) {
         return err_unknown("veritysetup execution failed");
@@ -4229,7 +4229,7 @@ fn verity_run_capture(args, buf, buflen) {
     return Ok(n);
 }
 
-fn verity_run_checked(args) {
+fn dmverity_run_checked(args) {
     var rc = exec_vec(args);
     if (rc != 0) {
         return err_unknown("veritysetup command failed");
@@ -4243,7 +4243,7 @@ fn verity_run_checked(args) {
 
 # Format a data device for dm-verity, generating the hash tree.
 # Returns Ok(root_hash_ptr) — the computed root hash as a heap string.
-fn verity_format(data_device, hash_device, algorithm, salt) {
+fn dmverity_format(data_device, hash_device, algorithm, salt) {
     # Verify data device exists
     var acc = syscall(SYS_ACCESS, data_device, 0);
     if (acc < 0) {
@@ -4256,10 +4256,10 @@ fn verity_format(data_device, hash_device, algorithm, salt) {
     vec_push(args, data_device);
     vec_push(args, hash_device);
     vec_push(args, "--hash");
-    vec_push(args, verity_hash_algo_str(algorithm));
+    vec_push(args, dmverity_hash_algo_str(algorithm));
 
     if (salt != 0) {
-        var salt_res = verity_validate_hex(salt, "salt");
+        var salt_res = dmverity_validate_hex(salt, "salt");
         if (is_err_result(salt_res) == 1) { return salt_res; }
         vec_push(args, "--salt");
         vec_push(args, salt);
@@ -4267,7 +4267,7 @@ fn verity_format(data_device, hash_device, algorithm, salt) {
 
     var outbuf[4096];
     memset(&outbuf, 0, 4096);
-    var cap_res = verity_run_capture(args, &outbuf, 4095);
+    var cap_res = dmverity_run_capture(args, &outbuf, 4095);
     if (is_err_result(cap_res) == 1) { return cap_res; }
 
     # Parse root hash from output: look for "Root hash:" line
@@ -4318,33 +4318,33 @@ fn verity_format(data_device, hash_device, algorithm, salt) {
 # Open (activate) a dm-verity volume.
 # Creates a read-only device mapping at /dev/mapper/{name}.
 # Returns Ok(0) or Err.
-fn verity_open(config) {
-    var res = verity_config_validate(config);
+fn dmverity_open(config) {
+    var res = dmverity_config_validate(config);
     if (is_err_result(res) == 1) { return res; }
 
     var args = vec_new();
     vec_push(args, "/usr/sbin/veritysetup");
     vec_push(args, "open");
     vec_push(args, "--hash");
-    vec_push(args, verity_hash_algo_str(verity_config_hash_algorithm(config)));
-    vec_push(args, verity_config_data_device(config));
-    vec_push(args, verity_config_hash_device(config));
-    vec_push(args, verity_config_name(config));
-    vec_push(args, verity_config_root_hash(config));
+    vec_push(args, dmverity_hash_algo_str(dmverity_config_hash_algorithm(config)));
+    vec_push(args, dmverity_config_data_device(config));
+    vec_push(args, dmverity_config_hash_device(config));
+    vec_push(args, dmverity_config_name(config));
+    vec_push(args, dmverity_config_root_hash(config));
 
-    var salt = verity_config_salt(config);
+    var salt = dmverity_config_salt(config);
     if (salt != 0) {
         vec_push(args, "--salt");
         vec_push(args, salt);
     }
 
-    return verity_run_checked(args);
+    return dmverity_run_checked(args);
 }
 
 # Close (deactivate) a dm-verity volume.
 # name: volume mapping name.
 # Returns Ok(0) or Err.
-fn verity_close(name) {
+fn dmverity_close(name) {
     if (strlen(name) == 0) {
         return err_invalid_argument("Verity name cannot be empty");
     }
@@ -4354,12 +4354,12 @@ fn verity_close(name) {
     vec_push(args, "close");
     vec_push(args, name);
 
-    return verity_run_checked(args);
+    return dmverity_run_checked(args);
 }
 
 # Query the status of a dm-verity volume.
 # Returns Ok(verity_status_ptr) or Err.
-fn verity_status(name) {
+fn dmverity_status(name) {
     if (strlen(name) == 0) {
         return err_invalid_argument("Verity name cannot be empty");
     }
@@ -4375,7 +4375,7 @@ fn verity_status(name) {
 
     if (n <= 0) {
         # Not active
-        return Ok(verity_status_new(name, 0, 0, 0, ""));
+        return Ok(dmverity_status_new(name, 0, 0, 0, ""));
     }
 
     var outlen = strlen(&outbuf);
@@ -4432,12 +4432,12 @@ fn verity_status(name) {
         }
     }
 
-    return Ok(verity_status_new(name, is_active, is_verified, corruption, rhash));
+    return Ok(dmverity_status_new(name, is_active, is_verified, corruption, rhash));
 }
 
 # Verify a dm-verity volume without activating it.
 # Returns Ok(1) if valid, Ok(0) if failed.
-fn verity_verify(data_device, hash_device, root_hash) {
+fn dmverity_verify(data_device, hash_device, root_hash) {
     # Validate inputs
     var acc1 = syscall(SYS_ACCESS, data_device, 0);
     if (acc1 < 0) {
@@ -4453,7 +4453,7 @@ fn verity_verify(data_device, hash_device, root_hash) {
     var rhlen = strlen(root_hash);
     var vi = 0;
     while (vi < rhlen) {
-        if (verity_is_hex_char(load8(root_hash + vi)) == 0) {
+        if (dmverity_is_hex_char(load8(root_hash + vi)) == 0) {
             return err_invalid_argument("Invalid root hash");
         }
         vi = vi + 1;
@@ -4472,7 +4472,7 @@ fn verity_verify(data_device, hash_device, root_hash) {
 
 # Check if dm-verity is supported on this system.
 # Returns 1 if supported, 0 if not.
-fn verity_supported() {
+fn dmverity_supported() {
     # Check for kernel module
     if (syscall(SYS_ACCESS, "/sys/module/dm_verity", 0) == 0) { return 1; }
 
@@ -7390,7 +7390,7 @@ fn netns_handle_netns_path(h) { return load64(h + 24); }
 # Layout: { direction, protocol, port, remote_addr, action, comment }
 # 6 fields * 8 = 48 bytes
 
-fn fw_rule_new(direction, protocol, port, remote_addr, action, comment) {
+fn netns_fw_rule_new(direction, protocol, port, remote_addr, action, comment) {
     var r = alloc(48);
     store64(r, direction);
     store64(r + 8, protocol);
@@ -7401,12 +7401,12 @@ fn fw_rule_new(direction, protocol, port, remote_addr, action, comment) {
     return r;
 }
 
-fn fw_rule_direction(r) { return load64(r); }
-fn fw_rule_protocol(r) { return load64(r + 8); }
-fn fw_rule_port(r) { return load64(r + 16); }
-fn fw_rule_remote_addr(r) { return load64(r + 24); }
-fn fw_rule_action(r) { return load64(r + 32); }
-fn fw_rule_comment(r) { return load64(r + 40); }
+fn netns_fw_rule_direction(r) { return load64(r); }
+fn netns_fw_rule_protocol(r) { return load64(r + 8); }
+fn netns_fw_rule_port(r) { return load64(r + 16); }
+fn netns_fw_rule_remote_addr(r) { return load64(r + 24); }
+fn netns_fw_rule_action(r) { return load64(r + 32); }
+fn netns_fw_rule_comment(r) { return load64(r + 40); }
 
 # ================================================================
 # FirewallPolicy struct
@@ -7415,7 +7415,7 @@ fn fw_rule_comment(r) { return load64(r + 40); }
 # Layout: { default_inbound, default_outbound, rules_arr, rule_count }
 # 4 fields * 8 = 32 bytes
 
-fn fw_policy_new(default_in, default_out) {
+fn netns_fw_policy_new(default_in, default_out) {
     var p = alloc(32);
     store64(p, default_in);
     store64(p + 8, default_out);
@@ -7424,12 +7424,12 @@ fn fw_policy_new(default_in, default_out) {
     return p;
 }
 
-fn fw_policy_default_in(p) { return load64(p); }
-fn fw_policy_default_out(p) { return load64(p + 8); }
-fn fw_policy_rules(p) { return load64(p + 16); }
-fn fw_policy_rule_count(p) { return load64(p + 24); }
+fn netns_fw_policy_default_in(p) { return load64(p); }
+fn netns_fw_policy_default_out(p) { return load64(p + 8); }
+fn netns_fw_policy_rules(p) { return load64(p + 16); }
+fn netns_fw_policy_rule_count(p) { return load64(p + 24); }
 
-fn fw_policy_set_rules(p, rules_arr, count) {
+fn netns_fw_policy_set_rules(p, rules_arr, count) {
     store64(p + 16, rules_arr);
     store64(p + 24, count);
     return 0;
@@ -7767,19 +7767,19 @@ fn netns_destroy_agent_netns(handle) {
 
 # Helper to append a string to a buffer, return new position.
 # Checks bounds against buf_size; if exceeded, returns pos unchanged (truncation).
-fn nft_append(buf, pos, str) {
+fn netns_nft_append(buf, pos, str) {
     var len = strlen(str);
     if (pos + len >= 16384) { return pos; }
     memcpy(buf + pos, str, len);
     return pos + len;
 }
 
-fn nft_action_str(action) {
+fn netns_nft_action_str(action) {
     if (action == FW_ACCEPT) { return "accept"; }
     return "drop";
 }
 
-fn nft_proto_str(proto) {
+fn netns_nft_proto_str(proto) {
     if (proto == PROTO_TCP) { return "tcp"; }
     if (proto == PROTO_UDP) { return "udp"; }
     return 0;
@@ -7792,104 +7792,104 @@ fn netns_render_nftables_ruleset(policy) {
     var buf = alloc(buf_size);
     var pos = 0;
 
-    pos = nft_append(buf, pos, "table inet kavach {\n");
+    pos = netns_nft_append(buf, pos, "table inet kavach {\n");
 
         # Input chain
-        pos = nft_append(buf, pos, "  chain input { type filter hook input priority 0; policy ");
-            pos = nft_append(buf, pos, nft_action_str(fw_policy_default_in(policy)));
-            pos = nft_append(buf, pos, ";\n");
-            pos = nft_append(buf, pos, "    ct state established,related accept\n");
-            pos = nft_append(buf, pos, "    iif lo accept\n");
+        pos = netns_nft_append(buf, pos, "  chain input { type filter hook input priority 0; policy ");
+            pos = netns_nft_append(buf, pos, netns_nft_action_str(netns_fw_policy_default_in(policy)));
+            pos = netns_nft_append(buf, pos, ";\n");
+            pos = netns_nft_append(buf, pos, "    ct state established,related accept\n");
+            pos = netns_nft_append(buf, pos, "    iif lo accept\n");
 
-            var rules = fw_policy_rules(policy);
-            var count = fw_policy_rule_count(policy);
+            var rules = netns_fw_policy_rules(policy);
+            var count = netns_fw_policy_rule_count(policy);
             var i = 0;
             while (i < count) {
                 var rule = load64(rules + i * 8);
-                if (fw_rule_direction(rule) == TRAFFIC_INBOUND) {
-                    var action = nft_action_str(fw_rule_action(rule));
-                    var proto = nft_proto_str(fw_rule_protocol(rule));
-                    var port = fw_rule_port(rule);
+                if (netns_fw_rule_direction(rule) == TRAFFIC_INBOUND) {
+                    var action = netns_nft_action_str(netns_fw_rule_action(rule));
+                    var proto = netns_nft_proto_str(netns_fw_rule_protocol(rule));
+                    var port = netns_fw_rule_port(rule);
                     if (proto != 0) {
                         if (port > 0) {
-                            pos = nft_append(buf, pos, "    ");
-                            pos = nft_append(buf, pos, proto);
-                            pos = nft_append(buf, pos, " dport ");
+                            pos = netns_nft_append(buf, pos, "    ");
+                            pos = netns_nft_append(buf, pos, proto);
+                            pos = netns_nft_append(buf, pos, " dport ");
                             var pbuf = alloc(8);
                             var plen = fmt_int_buf(port, pbuf);
                             store8(pbuf + plen, 0);
-                            pos = nft_append(buf, pos, pbuf);
-                            pos = nft_append(buf, pos, " ");
-                            pos = nft_append(buf, pos, action);
-                            pos = nft_append(buf, pos, " comment \"");
-                            pos = nft_append(buf, pos, fw_rule_comment(rule));
-                            pos = nft_append(buf, pos, "\"\n");
+                            pos = netns_nft_append(buf, pos, pbuf);
+                            pos = netns_nft_append(buf, pos, " ");
+                            pos = netns_nft_append(buf, pos, action);
+                            pos = netns_nft_append(buf, pos, " comment \"");
+                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                            pos = netns_nft_append(buf, pos, "\"\n");
                         }
                     }
-                    var raddr = fw_rule_remote_addr(rule);
+                    var raddr = netns_fw_rule_remote_addr(rule);
                     if (raddr != 0) {
                         if (strlen(raddr) > 0) {
-                            pos = nft_append(buf, pos, "    ip saddr ");
-                            pos = nft_append(buf, pos, raddr);
-                            pos = nft_append(buf, pos, " ");
-                            pos = nft_append(buf, pos, action);
-                            pos = nft_append(buf, pos, " comment \"");
-                            pos = nft_append(buf, pos, fw_rule_comment(rule));
-                            pos = nft_append(buf, pos, "\"\n");
+                            pos = netns_nft_append(buf, pos, "    ip saddr ");
+                            pos = netns_nft_append(buf, pos, raddr);
+                            pos = netns_nft_append(buf, pos, " ");
+                            pos = netns_nft_append(buf, pos, action);
+                            pos = netns_nft_append(buf, pos, " comment \"");
+                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                            pos = netns_nft_append(buf, pos, "\"\n");
                         }
                     }
                 }
                 i = i + 1;
             }
-            pos = nft_append(buf, pos, "  }\n");
+            pos = netns_nft_append(buf, pos, "  }\n");
 
         # Output chain
-        pos = nft_append(buf, pos, "  chain output { type filter hook output priority 0; policy ");
-            pos = nft_append(buf, pos, nft_action_str(fw_policy_default_out(policy)));
-            pos = nft_append(buf, pos, ";\n");
-            pos = nft_append(buf, pos, "    ct state established,related accept\n");
-            pos = nft_append(buf, pos, "    oif lo accept\n");
+        pos = netns_nft_append(buf, pos, "  chain output { type filter hook output priority 0; policy ");
+            pos = netns_nft_append(buf, pos, netns_nft_action_str(netns_fw_policy_default_out(policy)));
+            pos = netns_nft_append(buf, pos, ";\n");
+            pos = netns_nft_append(buf, pos, "    ct state established,related accept\n");
+            pos = netns_nft_append(buf, pos, "    oif lo accept\n");
 
             i = 0;
             while (i < count) {
                 var rule = load64(rules + i * 8);
-                if (fw_rule_direction(rule) == TRAFFIC_OUTBOUND) {
-                    var action = nft_action_str(fw_rule_action(rule));
-                    var proto = nft_proto_str(fw_rule_protocol(rule));
-                    var port = fw_rule_port(rule);
+                if (netns_fw_rule_direction(rule) == TRAFFIC_OUTBOUND) {
+                    var action = netns_nft_action_str(netns_fw_rule_action(rule));
+                    var proto = netns_nft_proto_str(netns_fw_rule_protocol(rule));
+                    var port = netns_fw_rule_port(rule);
                     if (proto != 0) {
                         if (port > 0) {
-                            pos = nft_append(buf, pos, "    ");
-                            pos = nft_append(buf, pos, proto);
-                            pos = nft_append(buf, pos, " dport ");
+                            pos = netns_nft_append(buf, pos, "    ");
+                            pos = netns_nft_append(buf, pos, proto);
+                            pos = netns_nft_append(buf, pos, " dport ");
                             var pbuf = alloc(8);
                             var plen = fmt_int_buf(port, pbuf);
                             store8(pbuf + plen, 0);
-                            pos = nft_append(buf, pos, pbuf);
-                            pos = nft_append(buf, pos, " ");
-                            pos = nft_append(buf, pos, action);
-                            pos = nft_append(buf, pos, " comment \"");
-                            pos = nft_append(buf, pos, fw_rule_comment(rule));
-                            pos = nft_append(buf, pos, "\"\n");
+                            pos = netns_nft_append(buf, pos, pbuf);
+                            pos = netns_nft_append(buf, pos, " ");
+                            pos = netns_nft_append(buf, pos, action);
+                            pos = netns_nft_append(buf, pos, " comment \"");
+                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                            pos = netns_nft_append(buf, pos, "\"\n");
                         }
                     }
-                    var raddr = fw_rule_remote_addr(rule);
+                    var raddr = netns_fw_rule_remote_addr(rule);
                     if (raddr != 0) {
                         if (strlen(raddr) > 0) {
-                            pos = nft_append(buf, pos, "    ip daddr ");
-                            pos = nft_append(buf, pos, raddr);
-                            pos = nft_append(buf, pos, " ");
-                            pos = nft_append(buf, pos, action);
-                            pos = nft_append(buf, pos, " comment \"");
-                            pos = nft_append(buf, pos, fw_rule_comment(rule));
-                            pos = nft_append(buf, pos, "\"\n");
+                            pos = netns_nft_append(buf, pos, "    ip daddr ");
+                            pos = netns_nft_append(buf, pos, raddr);
+                            pos = netns_nft_append(buf, pos, " ");
+                            pos = netns_nft_append(buf, pos, action);
+                            pos = netns_nft_append(buf, pos, " comment \"");
+                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                            pos = netns_nft_append(buf, pos, "\"\n");
                         }
                     }
                 }
                 i = i + 1;
             }
-            pos = nft_append(buf, pos, "  }\n");
-        pos = nft_append(buf, pos, "}\n");
+            pos = netns_nft_append(buf, pos, "  }\n");
+        pos = netns_nft_append(buf, pos, "}\n");
     store8(buf + pos, 0);
 
     return buf;
@@ -7989,27 +7989,27 @@ enum BootloaderType {
 # Layout: { id, title, linux_path, initrd_path, options, is_default, version }
 # 7 fields * 8 = 56 bytes
 
-fn boot_entry_new() {
+fn bootloader_entry_new() {
     var e = alloc(56);
     memset(e, 0, 56);
     return e;
 }
 
-fn boot_entry_id(e) { return load64(e); }
-fn boot_entry_title(e) { return load64(e + 8); }
-fn boot_entry_linux(e) { return load64(e + 16); }
-fn boot_entry_initrd(e) { return load64(e + 24); }
-fn boot_entry_options(e) { return load64(e + 32); }
-fn boot_entry_is_default(e) { return load64(e + 40); }
-fn boot_entry_version(e) { return load64(e + 48); }
+fn bootloader_entry_id(e) { return load64(e); }
+fn bootloader_entry_title(e) { return load64(e + 8); }
+fn bootloader_entry_linux(e) { return load64(e + 16); }
+fn bootloader_entry_initrd(e) { return load64(e + 24); }
+fn bootloader_entry_options(e) { return load64(e + 32); }
+fn bootloader_entry_is_default(e) { return load64(e + 40); }
+fn bootloader_entry_version(e) { return load64(e + 48); }
 
-fn boot_entry_set_id(e, v) { store64(e, v); return 0; }
-fn boot_entry_set_title(e, v) { store64(e + 8, v); return 0; }
-fn boot_entry_set_linux(e, v) { store64(e + 16, v); return 0; }
-fn boot_entry_set_initrd(e, v) { store64(e + 24, v); return 0; }
-fn boot_entry_set_options(e, v) { store64(e + 32, v); return 0; }
-fn boot_entry_set_is_default(e, v) { store64(e + 40, v); return 0; }
-fn boot_entry_set_version(e, v) { store64(e + 48, v); return 0; }
+fn bootloader_entry_set_id(e, v) { store64(e, v); return 0; }
+fn bootloader_entry_set_title(e, v) { store64(e + 8, v); return 0; }
+fn bootloader_entry_set_linux(e, v) { store64(e + 16, v); return 0; }
+fn bootloader_entry_set_initrd(e, v) { store64(e + 24, v); return 0; }
+fn bootloader_entry_set_options(e, v) { store64(e + 32, v); return 0; }
+fn bootloader_entry_set_is_default(e, v) { store64(e + 40, v); return 0; }
+fn bootloader_entry_set_version(e, v) { store64(e + 48, v); return 0; }
 
 # ================================================================
 # BootConfig struct
@@ -8018,22 +8018,22 @@ fn boot_entry_set_version(e, v) { store64(e + 48, v); return 0; }
 # Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr, entry_count }
 # 5 fields * 8 = 40 bytes
 
-fn boot_config_new() {
+fn bootloader_config_new() {
     var c = alloc(40);
     memset(c, 0, 40);
     return c;
 }
 
-fn boot_config_type(c) { return load64(c); }
-fn boot_config_timeout(c) { return load64(c + 8); }
-fn boot_config_default_id(c) { return load64(c + 16); }
-fn boot_config_entries(c) { return load64(c + 24); }
-fn boot_config_entry_count(c) { return load64(c + 32); }
+fn bootloader_config_type(c) { return load64(c); }
+fn bootloader_config_timeout(c) { return load64(c + 8); }
+fn bootloader_config_default_id(c) { return load64(c + 16); }
+fn bootloader_config_entries(c) { return load64(c + 24); }
+fn bootloader_config_entry_count(c) { return load64(c + 32); }
 
-fn boot_config_set_type(c, v) { store64(c, v); return 0; }
-fn boot_config_set_timeout(c, v) { store64(c + 8, v); return 0; }
-fn boot_config_set_default_id(c, v) { store64(c + 16, v); return 0; }
-fn boot_config_set_entries(c, arr, count) {
+fn bootloader_config_set_type(c, v) { store64(c, v); return 0; }
+fn bootloader_config_set_timeout(c, v) { store64(c + 8, v); return 0; }
+fn bootloader_config_set_default_id(c, v) { store64(c + 16, v); return 0; }
+fn bootloader_config_set_entries(c, arr, count) {
     store64(c + 24, arr);
     store64(c + 32, count);
     return 0;
@@ -8242,9 +8242,9 @@ fn bootloader_parse_bootctl_list(text, result_arr, max_entries) {
                     count = count + 1;
                 }
             }
-            current = boot_entry_new();
+            current = bootloader_entry_new();
             var val = bootloader_extract_value(text + linestart, linelen, kp);
-            boot_entry_set_id(current, val);
+            bootloader_entry_set_id(current, val);
             continue;
         }
 
@@ -8252,28 +8252,28 @@ fn bootloader_parse_bootctl_list(text, result_arr, max_entries) {
             kp = bootloader_line_starts_with(text + linestart, linelen, "title:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_title(current, val);
+                bootloader_entry_set_title(current, val);
                 continue;
             }
 
             kp = bootloader_line_starts_with(text + linestart, linelen, "linux:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_linux(current, val);
+                bootloader_entry_set_linux(current, val);
                 continue;
             }
 
             kp = bootloader_line_starts_with(text + linestart, linelen, "initrd:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_initrd(current, val);
+                bootloader_entry_set_initrd(current, val);
                 continue;
             }
 
             kp = bootloader_line_starts_with(text + linestart, linelen, "options:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_options(current, val);
+                bootloader_entry_set_options(current, val);
                 continue;
             }
         }

@@ -7,8 +7,8 @@
 
 - Total public functions: 556
 - Modules: 20
-- Outliers resolved: 15 (`certinfo_*` → `certpin_info_*`)
-- Outliers open: 2 (`seccomp_filter_ptr`, `seccomp_filter_len`)
+- Outliers resolved: 139 (all modules now carry their module prefix — no remaining prefix violations)
+- Outliers open: 0
 
 
 ## By module
@@ -64,31 +64,31 @@ Structs: `AuditConst, SysNrAudit, AuditRuleType`.
 
 Structs: `BootloaderType`.
 
-- `boot_config_default_id(c)` → 5 fields * 8 = 40 bytes
-- `boot_config_entries(c)` → (no behavioral docs)
-- `boot_config_entry_count(c)` → (no behavioral docs)
-- `boot_config_new()` → BootConfig struct
-- `boot_config_set_default_id(c, v)` → (no behavioral docs)
-- `boot_config_set_entries(c, arr, count)` → (no behavioral docs)
-- `boot_config_set_timeout(c, v)` → (no behavioral docs)
-- `boot_config_set_type(c, v)` → (no behavioral docs)
-- `boot_config_timeout(c)` → Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr
-- `boot_config_type(c)` → Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr
-- `boot_entry_id(e)` → Layout: { id, title, linux_path, initrd_path, options, is_default, ver
-- `boot_entry_initrd(e)` → (no behavioral docs)
-- `boot_entry_is_default(e)` → (no behavioral docs)
-- `boot_entry_linux(e)` → 7 fields * 8 = 56 bytes
-- `boot_entry_new()` → /boot/loader/loader.conf  -> systemd-boot loader config
-- `boot_entry_options(e)` → (no behavioral docs)
-- `boot_entry_set_id(e, v)` → (no behavioral docs)
-- `boot_entry_set_initrd(e, v)` → (no behavioral docs)
-- `boot_entry_set_is_default(e, v)` → (no behavioral docs)
-- `boot_entry_set_linux(e, v)` → (no behavioral docs)
-- `boot_entry_set_options(e, v)` → (no behavioral docs)
-- `boot_entry_set_title(e, v)` → (no behavioral docs)
-- `boot_entry_set_version(e, v)` → (no behavioral docs)
-- `boot_entry_title(e)` → Layout: { id, title, linux_path, initrd_path, options, is_default, ver
-- `boot_entry_version(e)` → (no behavioral docs)
+- `bootloader_config_default_id(c)` → 5 fields * 8 = 40 bytes
+- `bootloader_config_entries(c)` → (no behavioral docs)
+- `bootloader_config_entry_count(c)` → (no behavioral docs)
+- `bootloader_config_new()` → BootConfig struct
+- `bootloader_config_set_default_id(c, v)` → (no behavioral docs)
+- `bootloader_config_set_entries(c, arr, count)` → (no behavioral docs)
+- `bootloader_config_set_timeout(c, v)` → (no behavioral docs)
+- `bootloader_config_set_type(c, v)` → (no behavioral docs)
+- `bootloader_config_timeout(c)` → Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr
+- `bootloader_config_type(c)` → Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr
+- `bootloader_entry_id(e)` → Layout: { id, title, linux_path, initrd_path, options, is_default, ver
+- `bootloader_entry_initrd(e)` → (no behavioral docs)
+- `bootloader_entry_is_default(e)` → (no behavioral docs)
+- `bootloader_entry_linux(e)` → 7 fields * 8 = 56 bytes
+- `bootloader_entry_new()` → /boot/loader/loader.conf  -> systemd-boot loader config
+- `bootloader_entry_options(e)` → (no behavioral docs)
+- `bootloader_entry_set_id(e, v)` → (no behavioral docs)
+- `bootloader_entry_set_initrd(e, v)` → (no behavioral docs)
+- `bootloader_entry_set_is_default(e, v)` → (no behavioral docs)
+- `bootloader_entry_set_linux(e, v)` → (no behavioral docs)
+- `bootloader_entry_set_options(e, v)` → (no behavioral docs)
+- `bootloader_entry_set_title(e, v)` → (no behavioral docs)
+- `bootloader_entry_set_version(e, v)` → (no behavioral docs)
+- `bootloader_entry_title(e)` → Layout: { id, title, linux_path, initrd_path, options, is_default, ver
+- `bootloader_entry_version(e)` → (no behavioral docs)
 - `bootloader_danger_reset()` → (no behavioral docs)
 - `bootloader_detect()` → Bootloader detection
 - `bootloader_extract_value(line, linelen, key_end_pos)` → Extract the value after a key in a line (trim whitespace).
@@ -146,38 +146,38 @@ Structs: `CertPinResult`.
 
 Structs: `VerityHashAlgo, VerityConst`.
 
-- `verity_close(name)` → Close (deactivate) a dm-verity volume.
-- `verity_config_alloc()` → VerityConfig struct
-- `verity_config_data_block_size(c)` → (no behavioral docs)
-- `verity_config_data_device(c)` → (no behavioral docs)
-- `verity_config_hash_algorithm(c)` → (no behavioral docs)
-- `verity_config_hash_block_size(c)` → (no behavioral docs)
-- `verity_config_hash_device(c)` → (no behavioral docs)
-- `verity_config_name(c)` → (no behavioral docs)
-- `verity_config_root_hash(c)` → (no behavioral docs)
-- `verity_config_salt(c)` → (no behavioral docs)
-- `verity_config_set_devices(c, name, data_device, hash_device)` → hash_algorithm(+40) root_hash(+48) salt(+56)
-- `verity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt)` → (no behavioral docs)
-- `verity_config_validate(config)` → Validate a VerityConfig. Returns Ok(0) or Err.
-- `verity_format(data_device, hash_device, algorithm, salt)` → dm-verity operations
-- `verity_hash_algo_str(algo)` → Hash algorithm helpers
-- `verity_hash_hex_len(algo)` → Hash algorithm helpers
-- `verity_is_hex_char(ch)` → Validation helpers
-- `verity_is_name_char(ch)` → Check if a byte is valid for a dm name (alphanum, dash, underscore)
-- `verity_open(config)` → Open (activate) a dm-verity volume.
-- `verity_run_capture(args, buf, buflen)` → Helper: run veritysetup
-- `verity_run_checked(args)` → (no behavioral docs)
-- `verity_status(name)` → Query the status of a dm-verity volume.
-- `verity_status_corruption_detected(s)` → (no behavioral docs)
-- `verity_status_is_active(s)` → (no behavioral docs)
-- `verity_status_is_verified(s)` → (no behavioral docs)
-- `verity_status_name(s)` → (no behavioral docs)
-- `verity_status_new(name, is_active, is_verified, corruption_detected, root_hash)` → VerityStatus struct
-- `verity_status_root_hash(s)` → (no behavioral docs)
-- `verity_supported()` → Check if dm-verity is supported on this system.
-- `verity_validate_hex(s, label)` → Check if a byte is a valid hex character
-- `verity_validate_root_hash(hash, algorithm)` → Validate a root hash: correct length for algorithm, all hex.
-- `verity_verify(data_device, hash_device, root_hash)` → Verify a dm-verity volume without activating it.
+- `dmverity_close(name)` → Close (deactivate) a dm-verity volume.
+- `dmverity_config_alloc()` → VerityConfig struct
+- `dmverity_config_data_block_size(c)` → (no behavioral docs)
+- `dmverity_config_data_device(c)` → (no behavioral docs)
+- `dmverity_config_hash_algorithm(c)` → (no behavioral docs)
+- `dmverity_config_hash_block_size(c)` → (no behavioral docs)
+- `dmverity_config_hash_device(c)` → (no behavioral docs)
+- `dmverity_config_name(c)` → (no behavioral docs)
+- `dmverity_config_root_hash(c)` → (no behavioral docs)
+- `dmverity_config_salt(c)` → (no behavioral docs)
+- `dmverity_config_set_devices(c, name, data_device, hash_device)` → hash_algorithm(+40) root_hash(+48) salt(+56)
+- `dmverity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt)` → (no behavioral docs)
+- `dmverity_config_validate(config)` → Validate a VerityConfig. Returns Ok(0) or Err.
+- `dmverity_format(data_device, hash_device, algorithm, salt)` → dm-verity operations
+- `dmverity_hash_algo_str(algo)` → Hash algorithm helpers
+- `dmverity_hash_hex_len(algo)` → Hash algorithm helpers
+- `dmverity_is_hex_char(ch)` → Validation helpers
+- `dmverity_is_name_char(ch)` → Check if a byte is valid for a dm name (alphanum, dash, underscore)
+- `dmverity_open(config)` → Open (activate) a dm-verity volume.
+- `dmverity_run_capture(args, buf, buflen)` → Helper: run veritysetup
+- `dmverity_run_checked(args)` → (no behavioral docs)
+- `dmverity_status(name)` → Query the status of a dm-verity volume.
+- `dmverity_status_corruption_detected(s)` → (no behavioral docs)
+- `dmverity_status_is_active(s)` → (no behavioral docs)
+- `dmverity_status_is_verified(s)` → (no behavioral docs)
+- `dmverity_status_name(s)` → (no behavioral docs)
+- `dmverity_status_new(name, is_active, is_verified, corruption_detected, root_hash)` → VerityStatus struct
+- `dmverity_status_root_hash(s)` → (no behavioral docs)
+- `dmverity_supported()` → Check if dm-verity is supported on this system.
+- `dmverity_validate_hex(s, label)` → Check if a byte is a valid hex character
+- `dmverity_validate_root_hash(hash, algorithm)` → Validate a root hash: correct length for algorithm, all hex.
+- `dmverity_verify(data_device, hash_device, root_hash)` → Verify a dm-verity volume without activating it.
 
 
 ### drm (src/drm.cyr)
@@ -292,42 +292,42 @@ Structs: `ImaAction, ImaTarget`.
 
 Structs: `JournalConst, JournalPriority`.
 
-- `journal_build_args(filter)` → Build journalctl argument string
-- `journal_debug(message)` → Send an error-level message to the journal.
-- `journal_entry_add_field(e, key, val)` → Add an extra field (key-value pair) to a journal entry
-- `journal_entry_field_keys(e)` → (no behavioral docs)
-- `journal_entry_field_vals(e)` → (no behavioral docs)
-- `journal_entry_message(e)` → (no behavioral docs)
-- `journal_entry_new(timestamp, unit, priority, message, pid)` → JournalEntry struct
-- `journal_entry_pid(e)` → (no behavioral docs)
-- `journal_entry_priority(e)` → (no behavioral docs)
-- `journal_entry_timestamp(e)` → (no behavioral docs)
-- `journal_entry_unit(e)` → (no behavioral docs)
-- `journal_error(message)` → Send a warning-level message to the journal.
-- `journal_filter_boot(f)` → (no behavioral docs)
-- `journal_filter_grep(f)` → (no behavioral docs)
-- `journal_filter_lines(f)` → (no behavioral docs)
-- `journal_filter_new()` → JournalFilter struct
-- `journal_filter_priority(f)` → (no behavioral docs)
-- `journal_filter_set_boot(f, boot)` → (no behavioral docs)
-- `journal_filter_set_grep(f, grep)` → (no behavioral docs)
-- `journal_filter_set_lines(f, lines)` → (no behavioral docs)
-- `journal_filter_set_priority(f, prio)` → (no behavioral docs)
-- `journal_filter_set_since(f, since)` → (no behavioral docs)
-- `journal_filter_set_unit(f, unit)` → (no behavioral docs)
-- `journal_filter_set_until(f, until)` → (no behavioral docs)
-- `journal_filter_since(f)` → (no behavioral docs)
-- `journal_filter_unit(f)` → (no behavioral docs)
-- `journal_filter_until(f)` → (no behavioral docs)
-- `journal_get_unit_logs(unit_name, lines)` → Convenience: get last N log entries for a unit
-- `journal_info(message)` → Convenience: send info-level log
-- `journal_json_get_str(json, key)` → Parse a single JSON line from journalctl --output=json
-- `journal_make_sockaddr()` → Send structured log message to journald via unix socket
-- `journal_parse_json(json_line)` → Parse a single JSON line from journalctl output into a JournalEntry.
-- `journal_query(filter)` → Query journal via journalctl subprocess
-- `journal_send(message, priority, identifier)` → Send a structured log message to the journald socket.
-- `journal_send_fields(message, priority, identifier, fields_keys, fields_vals)` → Send a structured log with extra key-value fields.
-- `journal_warning(message)` → Send an info-level message to the journal.
+- `journald_build_args(filter)` → Build journalctl argument string
+- `journald_debug(message)` → Send an error-level message to the journal.
+- `journald_entry_add_field(e, key, val)` → Add an extra field (key-value pair) to a journal entry
+- `journald_entry_field_keys(e)` → (no behavioral docs)
+- `journald_entry_field_vals(e)` → (no behavioral docs)
+- `journald_entry_message(e)` → (no behavioral docs)
+- `journald_entry_new(timestamp, unit, priority, message, pid)` → JournalEntry struct
+- `journald_entry_pid(e)` → (no behavioral docs)
+- `journald_entry_priority(e)` → (no behavioral docs)
+- `journald_entry_timestamp(e)` → (no behavioral docs)
+- `journald_entry_unit(e)` → (no behavioral docs)
+- `journald_error(message)` → Send a warning-level message to the journal.
+- `journald_filter_boot(f)` → (no behavioral docs)
+- `journald_filter_grep(f)` → (no behavioral docs)
+- `journald_filter_lines(f)` → (no behavioral docs)
+- `journald_filter_new()` → JournalFilter struct
+- `journald_filter_priority(f)` → (no behavioral docs)
+- `journald_filter_set_boot(f, boot)` → (no behavioral docs)
+- `journald_filter_set_grep(f, grep)` → (no behavioral docs)
+- `journald_filter_set_lines(f, lines)` → (no behavioral docs)
+- `journald_filter_set_priority(f, prio)` → (no behavioral docs)
+- `journald_filter_set_since(f, since)` → (no behavioral docs)
+- `journald_filter_set_unit(f, unit)` → (no behavioral docs)
+- `journald_filter_set_until(f, until)` → (no behavioral docs)
+- `journald_filter_since(f)` → (no behavioral docs)
+- `journald_filter_unit(f)` → (no behavioral docs)
+- `journald_filter_until(f)` → (no behavioral docs)
+- `journald_get_unit_logs(unit_name, lines)` → Convenience: get last N log entries for a unit
+- `journald_info(message)` → Convenience: send info-level log
+- `journald_json_get_str(json, key)` → Parse a single JSON line from journalctl --output=json
+- `journald_make_sockaddr()` → Send structured log message to journald via unix socket
+- `journald_parse_json(json_line)` → Parse a single JSON line from journalctl output into a JournalEntry.
+- `journald_query(filter)` → Query journal via journalctl subprocess
+- `journald_send(message, priority, identifier)` → Send a structured log message to the journald socket.
+- `journald_send_fields(message, priority, identifier, fields_keys, fields_vals)` → Send a structured log with extra key-value fields.
+- `journald_warning(message)` → Send an info-level message to the journal.
 
 
 ### logging (src/logging.cyr)
@@ -413,19 +413,19 @@ Structs: `MacSystem, SELinuxMode, AppArmorState`.
 
 Structs: `TrafficDir, NetProtocol, FwAction`.
 
-- `fw_policy_default_in(p)` → (no behavioral docs)
-- `fw_policy_default_out(p)` → (no behavioral docs)
-- `fw_policy_new(default_in, default_out)` → FirewallPolicy struct
-- `fw_policy_rule_count(p)` → (no behavioral docs)
-- `fw_policy_rules(p)` → (no behavioral docs)
-- `fw_policy_set_rules(p, rules_arr, count)` → (no behavioral docs)
-- `fw_rule_action(r)` → (no behavioral docs)
-- `fw_rule_comment(r)` → (no behavioral docs)
-- `fw_rule_direction(r)` → (no behavioral docs)
-- `fw_rule_new(direction, protocol, port, remote_addr, action, comment)` → FirewallRule struct
-- `fw_rule_port(r)` → (no behavioral docs)
-- `fw_rule_protocol(r)` → (no behavioral docs)
-- `fw_rule_remote_addr(r)` → (no behavioral docs)
+- `netns_fw_policy_default_in(p)` → (no behavioral docs)
+- `netns_fw_policy_default_out(p)` → (no behavioral docs)
+- `netns_fw_policy_new(default_in, default_out)` → FirewallPolicy struct
+- `netns_fw_policy_rule_count(p)` → (no behavioral docs)
+- `netns_fw_policy_rules(p)` → (no behavioral docs)
+- `netns_fw_policy_set_rules(p, rules_arr, count)` → (no behavioral docs)
+- `netns_fw_rule_action(r)` → (no behavioral docs)
+- `netns_fw_rule_comment(r)` → (no behavioral docs)
+- `netns_fw_rule_direction(r)` → (no behavioral docs)
+- `netns_fw_rule_new(direction, protocol, port, remote_addr, action, comment)` → FirewallRule struct
+- `netns_fw_rule_port(r)` → (no behavioral docs)
+- `netns_fw_rule_protocol(r)` → (no behavioral docs)
+- `netns_fw_rule_remote_addr(r)` → (no behavioral docs)
 - `netns_apply_nftables_ruleset(handle, ruleset)` → Apply nftables ruleset to a namespace
 - `netns_concat2(a, b)` → Build a string by concatenating parts
 - `netns_concat3(a, b, c)` → (no behavioral docs)
@@ -450,9 +450,9 @@ Structs: `TrafficDir, NetProtocol, FwAction`.
 - `netns_run_ip(argv)` → Helper: run ip command
 - `netns_truncate_veth(base)` → Truncate veth name to 15 chars (Linux max)
 - `netns_validate_config(config)` → Validate namespace config
-- `nft_action_str(action)` → Helper to append a string to a buffer, return new position.
-- `nft_append(buf, pos, str)` → Render nftables ruleset from FirewallPolicy
-- `nft_proto_str(proto)` → (no behavioral docs)
+- `netns_nft_action_str(action)` → Helper to append a string to a buffer, return new position.
+- `netns_nft_append(buf, pos, str)` → Render nftables ruleset from FirewallPolicy
+- `netns_nft_proto_str(proto)` → (no behavioral docs)
 
 
 ### pam (src/pam.cyr)
@@ -566,7 +566,7 @@ Structs: `SysNrExt, SysInfoOffset, SysInfoConst, UtsOffset, UtsConst`.
 - `agnosys_total_memory()` → Get system uptime in seconds. Returns Result.
 - `agnosys_uname(out)` → Query uname(2) into a caller-provided buffer.
 - `agnosys_uptime()` → Get number of running processes from a sysinfo pointer.
-- `checked_syscall(ret)` → Checked syscall — wraps raw syscall with Result error handling
+- `agnosys_checked_syscall(ret)` → Checked syscall — wraps raw syscall with Result error handling
 - `query_sysinfo(out)` → Query sysinfo(2) into a caller-provided buffer.
 - `sysinfo_free_memory(info)` → Saturating multiply: if either is 0 or result would overflow, cap it
 - `sysinfo_procs(info)` → Get number of running processes from a sysinfo pointer.
@@ -691,17 +691,25 @@ Structs: `UpdateSlot, UpdatePhase, UpdateChannel`.
 
 ## Outliers (review before freeze)
 
-### Resolved before 1.0
+All resolved before 1.0 — every public function now carries its module prefix.
 
-- **`certinfo_*` → `certpin_info_*`** (15 fns) — renamed to match sibling `certpin_entry_*` / `certpin_set_*` pattern. Landed in Unreleased.
+| Scope | Before | After | Fns |
+|-------|--------|-------|----:|
+| certpin cert-info accessors | `certinfo_*` | `certpin_info_*` | 15 |
+| security module (full sweep) | `fs_rule_*`, `apply_landlock`, `bpf_write_insn`, `load_seccomp`, `create_basic_seccomp_filter`, `seccomp_filter_*`, `create_namespace`, `syscall_map_reset`, `syscall_name_to_nr` | `security_*` | 14 |
+| journald entry/query accessors | `journal_*` | `journald_*` | 36 |
+| dmverity accessors | `verity_*` | `dmverity_*` | 32 |
+| bootloader entry/config accessors | `boot_entry_*`, `boot_config_*` | `bootloader_entry_*`, `bootloader_config_*` | 25 |
+| netns firewall + nftables helpers | `fw_*`, `nft_*` | `netns_fw_*`, `netns_nft_*` | 16 |
+| syscall module | `checked_syscall` | `agnosys_checked_syscall` | 1 |
+| **Total** | | | **139** |
 
-### Open
-
-- `src/security.cyr::seccomp_filter_ptr` / `seccomp_filter_len` — bare accessors for a seccomp filter metadata struct, no module prefix. Decide before freeze: rename to `security_seccomp_filter_*`, or refactor so callers never touch the raw accessors.
+All renames landed in `[Unreleased]`.
 
 ## Design notes
 
 - **No functions exceed the 7-parameter limit**, so no refactoring required on that front.
-- **All error/syscall modules follow documented conventions**: error.cyr uses packed `syserr_pack()` / heap `syserr_new()`, security.cyr and syscall.cyr use agnosys/sysinfo/uname/etc. prefixes.
+- **All modules follow the module-prefix convention**: `audit_`, `bootloader_`, `certpin_`, `dmverity_`, `drm_`, `fuse_`, `ima_`, `journald_`, `logging_`/`log_`, `luks_`, `mac_`, `netns_`, `pam_`, `secureboot_`, `security_`, `tpm_`, `udev_`, `update_`, plus `agnosys_`/`sysinfo_`/`uname_`/`query_` in syscall.cyr and `syserr_`/`err_`/`is_`/`result_`/`Ok`/`Err`/etc. in error.cyr.
+- **Error conventions**: packed `syserr_pack()` / heap `syserr_new()`, Result tagged union via `Ok(...)` / `Err(...)`.
 
 - **Result convention**: Syscall wrappers return Result via `Ok/Err`. Getters (e.g., `load64` accessors) return raw values; that's fine.

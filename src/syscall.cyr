@@ -30,7 +30,7 @@ enum SysNrExt {
 
 # Execute a syscall and return Result: Ok(ret) or Err(syserr).
 # name is a string label for diagnostics (not used in codegen).
-fn checked_syscall(ret) {
+fn agnosys_checked_syscall(ret) {
     if (ret < 0) {
         return err_from_syscall_ret(ret);
     }

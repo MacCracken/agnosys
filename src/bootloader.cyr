@@ -34,27 +34,27 @@ enum BootloaderType {
 # Layout: { id, title, linux_path, initrd_path, options, is_default, version }
 # 7 fields * 8 = 56 bytes
 
-fn boot_entry_new() {
+fn bootloader_entry_new() {
     var e = alloc(56);
     memset(e, 0, 56);
     return e;
 }
 
-fn boot_entry_id(e) { return load64(e); }
-fn boot_entry_title(e) { return load64(e + 8); }
-fn boot_entry_linux(e) { return load64(e + 16); }
-fn boot_entry_initrd(e) { return load64(e + 24); }
-fn boot_entry_options(e) { return load64(e + 32); }
-fn boot_entry_is_default(e) { return load64(e + 40); }
-fn boot_entry_version(e) { return load64(e + 48); }
+fn bootloader_entry_id(e) { return load64(e); }
+fn bootloader_entry_title(e) { return load64(e + 8); }
+fn bootloader_entry_linux(e) { return load64(e + 16); }
+fn bootloader_entry_initrd(e) { return load64(e + 24); }
+fn bootloader_entry_options(e) { return load64(e + 32); }
+fn bootloader_entry_is_default(e) { return load64(e + 40); }
+fn bootloader_entry_version(e) { return load64(e + 48); }
 
-fn boot_entry_set_id(e, v) { store64(e, v); return 0; }
-fn boot_entry_set_title(e, v) { store64(e + 8, v); return 0; }
-fn boot_entry_set_linux(e, v) { store64(e + 16, v); return 0; }
-fn boot_entry_set_initrd(e, v) { store64(e + 24, v); return 0; }
-fn boot_entry_set_options(e, v) { store64(e + 32, v); return 0; }
-fn boot_entry_set_is_default(e, v) { store64(e + 40, v); return 0; }
-fn boot_entry_set_version(e, v) { store64(e + 48, v); return 0; }
+fn bootloader_entry_set_id(e, v) { store64(e, v); return 0; }
+fn bootloader_entry_set_title(e, v) { store64(e + 8, v); return 0; }
+fn bootloader_entry_set_linux(e, v) { store64(e + 16, v); return 0; }
+fn bootloader_entry_set_initrd(e, v) { store64(e + 24, v); return 0; }
+fn bootloader_entry_set_options(e, v) { store64(e + 32, v); return 0; }
+fn bootloader_entry_set_is_default(e, v) { store64(e + 40, v); return 0; }
+fn bootloader_entry_set_version(e, v) { store64(e + 48, v); return 0; }
 
 # ================================================================
 # BootConfig struct
@@ -63,22 +63,22 @@ fn boot_entry_set_version(e, v) { store64(e + 48, v); return 0; }
 # Layout: { bootloader_type, timeout_secs, default_entry_id, entries_arr, entry_count }
 # 5 fields * 8 = 40 bytes
 
-fn boot_config_new() {
+fn bootloader_config_new() {
     var c = alloc(40);
     memset(c, 0, 40);
     return c;
 }
 
-fn boot_config_type(c) { return load64(c); }
-fn boot_config_timeout(c) { return load64(c + 8); }
-fn boot_config_default_id(c) { return load64(c + 16); }
-fn boot_config_entries(c) { return load64(c + 24); }
-fn boot_config_entry_count(c) { return load64(c + 32); }
+fn bootloader_config_type(c) { return load64(c); }
+fn bootloader_config_timeout(c) { return load64(c + 8); }
+fn bootloader_config_default_id(c) { return load64(c + 16); }
+fn bootloader_config_entries(c) { return load64(c + 24); }
+fn bootloader_config_entry_count(c) { return load64(c + 32); }
 
-fn boot_config_set_type(c, v) { store64(c, v); return 0; }
-fn boot_config_set_timeout(c, v) { store64(c + 8, v); return 0; }
-fn boot_config_set_default_id(c, v) { store64(c + 16, v); return 0; }
-fn boot_config_set_entries(c, arr, count) {
+fn bootloader_config_set_type(c, v) { store64(c, v); return 0; }
+fn bootloader_config_set_timeout(c, v) { store64(c + 8, v); return 0; }
+fn bootloader_config_set_default_id(c, v) { store64(c + 16, v); return 0; }
+fn bootloader_config_set_entries(c, arr, count) {
     store64(c + 24, arr);
     store64(c + 32, count);
     return 0;
@@ -287,9 +287,9 @@ fn bootloader_parse_bootctl_list(text, result_arr, max_entries) {
                     count = count + 1;
                 }
             }
-            current = boot_entry_new();
+            current = bootloader_entry_new();
             var val = bootloader_extract_value(text + linestart, linelen, kp);
-            boot_entry_set_id(current, val);
+            bootloader_entry_set_id(current, val);
             continue;
         }
 
@@ -297,28 +297,28 @@ fn bootloader_parse_bootctl_list(text, result_arr, max_entries) {
             kp = bootloader_line_starts_with(text + linestart, linelen, "title:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_title(current, val);
+                bootloader_entry_set_title(current, val);
                 continue;
             }
 
             kp = bootloader_line_starts_with(text + linestart, linelen, "linux:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_linux(current, val);
+                bootloader_entry_set_linux(current, val);
                 continue;
             }
 
             kp = bootloader_line_starts_with(text + linestart, linelen, "initrd:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_initrd(current, val);
+                bootloader_entry_set_initrd(current, val);
                 continue;
             }
 
             kp = bootloader_line_starts_with(text + linestart, linelen, "options:");
             if (kp > 0) {
                 var val = bootloader_extract_value(text + linestart, linelen, kp);
-                boot_entry_set_options(current, val);
+                bootloader_entry_set_options(current, val);
                 continue;
             }
         }

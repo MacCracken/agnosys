@@ -86,13 +86,13 @@ fn main() {
     }
 
     # -- security module --
-    if (syscall_name_to_nr("getpid") == 39) { println("syscall_name_to_nr: ok"); }
+    if (security_syscall_name_to_nr("getpid") == 39) { println("security_syscall_name_to_nr: ok"); }
 
-    var fres = create_basic_seccomp_filter();
+    var fres = security_create_basic_seccomp_filter();
     if (is_ok(fres) == 1) {
         var fi = payload(fres);
         syscall(1, 1, "seccomp filter: ", 16);
-        print_num(seccomp_filter_len(fi));
+        print_num(security_seccomp_filter_len(fi));
         syscall(1, 1, " bytes\n", 7);
     }
 

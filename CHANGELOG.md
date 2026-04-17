@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Breaking
+### Breaking — 1.0 naming sweep (all landed pre-freeze to avoid v2 churn)
 
-- **`certinfo_*` → `certpin_info_*`** (15 fns in `src/certpin.cyr`) — the CertInfo struct accessor family now carries the module prefix, matching its siblings `certpin_entry_*` and `certpin_set_*`. Affected: `certpin_info_new`, `certpin_info_{subject,issuer,serial,not_before,not_after,sha256_fp,spki_sha256}` and the matching setters. Callers (consumers: **sigil**, and any downstream using certpin via `dist/agnosys.cyr`) must update call sites. This is the one planned rename for 1.0 API consistency.
+Every public function in `src/` now carries its module prefix. **139 renames across 7 module groups, 20 public fns still exactly matching the snapshot for the 11 modules that were already clean (`audit`, `certpin` entry/set families, `drm`, `error`, `fuse`, `ima`, `logging`, `luks`, `mac`, `pam`, `secureboot`, `tpm`, `udev`, `update`, syscall's `agnosys_*`/`sysinfo_*`/`uname_*` families).**
+
+Renames by module group:
+
+- **certpin** (15 fns): `certinfo_*` → `certpin_info_*` (CertInfo struct accessors — sibling to `certpin_entry_*` / `certpin_set_*`)
+- **security** (14 fns): `fs_rule_*`, `apply_landlock`, `bpf_write_insn`, `load_seccomp`, `create_basic_seccomp_filter`, `seccomp_filter_{ptr,len}`, `create_namespace`, `syscall_map_reset`, `syscall_name_to_nr` — all now `security_*`. `create_namespace` was the highest collision-risk (very generic name in a global include).
+- **journald** (36 fns): `journal_*` → `journald_*`
+- **dmverity** (32 fns): `verity_*` → `dmverity_*`
+- **bootloader** (25 fns): `boot_entry_*` / `boot_config_*` → `bootloader_entry_*` / `bootloader_config_*`, plus `bootloader_*` for non-struct helpers
+- **netns** (16 fns): `fw_*` → `netns_fw_*`, `nft_*` → `netns_nft_*` (preserves the `fw` / `nft` sub-namespaces under the module prefix)
+- **syscall** (1 fn): `checked_syscall` → `agnosys_checked_syscall`
+
+**Consumer impact:** all 13 consumers listed in `docs/development/roadmap.md` must update call sites before upgrading to Unreleased/1.0. Principally: **sigil** (certpin), **kavach** + **daimon** (security), **argonaut** (journald, bootloader), **stiva** (dmverity), **nein** (netns firewall helpers). The `dist/agnosys.cyr` bundle was regenerated with the new names.
+
+**Why this release, not spread across several:** the 1.0 API freeze is imminent. Shipping these renames in a single pre-1.0 version lets consumers migrate once, and avoids forcing a 2.0 purely for naming consistency.
 
 ### Added — 1.0 freeze prerequisites
 

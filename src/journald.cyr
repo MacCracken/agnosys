@@ -45,7 +45,7 @@ enum JournalPriority {
 # Total: 56 bytes.
 # ================================================================
 
-fn journal_entry_new(timestamp, unit, priority, message, pid) {
+fn journald_entry_new(timestamp, unit, priority, message, pid) {
     var e = alloc(56);
     store64(e, timestamp);
     store64(e + 8, unit);
@@ -57,16 +57,16 @@ fn journal_entry_new(timestamp, unit, priority, message, pid) {
     return e;
 }
 
-fn journal_entry_timestamp(e) { return load64(e); }
-fn journal_entry_unit(e) { return load64(e + 8); }
-fn journal_entry_priority(e) { return load64(e + 16); }
-fn journal_entry_message(e) { return load64(e + 24); }
-fn journal_entry_pid(e) { return load64(e + 32); }
-fn journal_entry_field_keys(e) { return load64(e + 40); }
-fn journal_entry_field_vals(e) { return load64(e + 48); }
+fn journald_entry_timestamp(e) { return load64(e); }
+fn journald_entry_unit(e) { return load64(e + 8); }
+fn journald_entry_priority(e) { return load64(e + 16); }
+fn journald_entry_message(e) { return load64(e + 24); }
+fn journald_entry_pid(e) { return load64(e + 32); }
+fn journald_entry_field_keys(e) { return load64(e + 40); }
+fn journald_entry_field_vals(e) { return load64(e + 48); }
 
 # Add an extra field (key-value pair) to a journal entry
-fn journal_entry_add_field(e, key, val) {
+fn journald_entry_add_field(e, key, val) {
     vec_push(load64(e + 40), key);
     vec_push(load64(e + 48), val);
     return 0;
@@ -81,7 +81,7 @@ fn journal_entry_add_field(e, key, val) {
 #         +32 grep, +40 lines, +48 boot. Total: 56 bytes.
 # ================================================================
 
-fn journal_filter_new() {
+fn journald_filter_new() {
     var f = alloc(56);
     store64(f, 0);          # unit
     store64(f + 8, 0);      # since
@@ -93,21 +93,21 @@ fn journal_filter_new() {
     return f;
 }
 
-fn journal_filter_set_unit(f, unit) { store64(f, unit); return 0; }
-fn journal_filter_set_since(f, since) { store64(f + 8, since); return 0; }
-fn journal_filter_set_until(f, until) { store64(f + 16, until); return 0; }
-fn journal_filter_set_priority(f, prio) { store64(f + 24, prio); return 0; }
-fn journal_filter_set_grep(f, grep) { store64(f + 32, grep); return 0; }
-fn journal_filter_set_lines(f, lines) { store64(f + 40, lines); return 0; }
-fn journal_filter_set_boot(f, boot) { store64(f + 48, boot); return 0; }
+fn journald_filter_set_unit(f, unit) { store64(f, unit); return 0; }
+fn journald_filter_set_since(f, since) { store64(f + 8, since); return 0; }
+fn journald_filter_set_until(f, until) { store64(f + 16, until); return 0; }
+fn journald_filter_set_priority(f, prio) { store64(f + 24, prio); return 0; }
+fn journald_filter_set_grep(f, grep) { store64(f + 32, grep); return 0; }
+fn journald_filter_set_lines(f, lines) { store64(f + 40, lines); return 0; }
+fn journald_filter_set_boot(f, boot) { store64(f + 48, boot); return 0; }
 
-fn journal_filter_unit(f) { return load64(f); }
-fn journal_filter_since(f) { return load64(f + 8); }
-fn journal_filter_until(f) { return load64(f + 16); }
-fn journal_filter_priority(f) { return load64(f + 24); }
-fn journal_filter_grep(f) { return load64(f + 32); }
-fn journal_filter_lines(f) { return load64(f + 40); }
-fn journal_filter_boot(f) { return load64(f + 48); }
+fn journald_filter_unit(f) { return load64(f); }
+fn journald_filter_since(f) { return load64(f + 8); }
+fn journald_filter_until(f) { return load64(f + 16); }
+fn journald_filter_priority(f) { return load64(f + 24); }
+fn journald_filter_grep(f) { return load64(f + 32); }
+fn journald_filter_lines(f) { return load64(f + 40); }
+fn journald_filter_boot(f) { return load64(f + 48); }
 
 # ================================================================
 # Build journalctl argument string
@@ -117,7 +117,7 @@ fn journal_filter_boot(f) { return load64(f + 48); }
 # Returns a Str with all arguments space-separated (for run_capture).
 # Note: since run_capture uses _exec3 with only 2 extra args, we build
 # a single combined argument string and use /bin/sh -c for complex queries.
-fn journal_build_args(filter) {
+fn journald_build_args(filter) {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "journalctl --output=json --no-pager");
 
@@ -172,7 +172,7 @@ fn journal_build_args(filter) {
 
 # Build a sockaddr_un pointing to /run/systemd/journal/socket.
 # Returns pointer to the struct (110 bytes).
-fn journal_make_sockaddr() {
+fn journald_make_sockaddr() {
     var sa = alloc(SOCKADDR_UN_SIZE);
     memset(sa, 0, SOCKADDR_UN_SIZE);
     store16(sa, AF_UNIX);  # sa_family = AF_UNIX
@@ -192,7 +192,7 @@ fn journal_make_sockaddr() {
 # sent as a single datagram to /run/systemd/journal/socket.
 #
 # Returns Result: Ok(0) on success, Err on failure.
-fn journal_send(message, priority, identifier) {
+fn journald_send(message, priority, identifier) {
     if (message == 0) {
         return err_invalid_argument("journal message cannot be null");
     }
@@ -234,7 +234,7 @@ fn journal_send(message, priority, identifier) {
     defer { sys_close(fd); }
 
     # Build sockaddr_un
-    var sa = journal_make_sockaddr();
+    var sa = journald_make_sockaddr();
 
     # sendto(fd, buf, len, flags, dest_addr, addrlen)
     var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
@@ -249,7 +249,7 @@ fn journal_send(message, priority, identifier) {
 # fields_keys: vec of C string pointers (field names).
 # fields_vals: vec of C string pointers (field values).
 # Returns Result: Ok(0) or Err.
-fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) {
+fn journald_send_fields(message, priority, identifier, fields_keys, fields_vals) {
     if (message == 0) {
         return err_invalid_argument("journal message cannot be null");
     }
@@ -309,7 +309,7 @@ fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) 
     }
     defer { sys_close(fd); }
 
-    var sa = journal_make_sockaddr();
+    var sa = journald_make_sockaddr();
     var ret = syscall(SYS_SENDTO, fd, str_data(payload), str_len(payload), 0, sa, SOCKADDR_UN_SIZE);
     if (ret < 0) {
         return err_syscall_failed(0 - ret, "sendto journal socket failed");
@@ -325,7 +325,7 @@ fn journal_send_fields(message, priority, identifier, fields_keys, fields_vals) 
 # Minimal JSON field extraction: find a key in a JSON object string
 # and extract the string value. Returns Str or 0 if not found.
 # This is a lightweight parser — handles flat JSON objects only.
-fn journal_json_get_str(json, key) {
+fn journald_json_get_str(json, key) {
     # Search for "key" in the JSON
     var jlen = str_len(json);
     var jd = str_data(json);
@@ -381,7 +381,7 @@ fn journal_json_get_str(json, key) {
 
 # Parse a single JSON line from journalctl output into a JournalEntry.
 # Returns Result: Ok(entry_ptr) or Err.
-fn journal_parse_json(json_line) {
+fn journald_parse_json(json_line) {
     var jlen = str_len(json_line);
     if (jlen == 0) {
         return err_invalid_argument("empty journal JSON line");
@@ -393,31 +393,31 @@ fn journal_parse_json(json_line) {
     }
 
     # Extract known fields
-    var ts_str = journal_json_get_str(json_line, "__REALTIME_TIMESTAMP");
+    var ts_str = journald_json_get_str(json_line, "__REALTIME_TIMESTAMP");
     var timestamp = 0;
     if (ts_str != 0) {
         timestamp = str_to_int(ts_str);
     }
 
-    var unit = journal_json_get_str(json_line, "_SYSTEMD_UNIT");
+    var unit = journald_json_get_str(json_line, "_SYSTEMD_UNIT");
     if (unit == 0) { unit = str_from(""); }
 
-    var prio_str = journal_json_get_str(json_line, "PRIORITY");
+    var prio_str = journald_json_get_str(json_line, "PRIORITY");
     var priority = JOURNAL_INFO;  # default
     if (prio_str != 0) {
         priority = str_to_int(prio_str);
     }
 
-    var message = journal_json_get_str(json_line, "MESSAGE");
+    var message = journald_json_get_str(json_line, "MESSAGE");
     if (message == 0) { message = str_from(""); }
 
-    var pid_str = journal_json_get_str(json_line, "_PID");
+    var pid_str = journald_json_get_str(json_line, "_PID");
     var pid = 0;
     if (pid_str != 0) {
         pid = str_to_int(pid_str);
     }
 
-    var entry = journal_entry_new(timestamp, unit, priority, message, pid);
+    var entry = journald_entry_new(timestamp, unit, priority, message, pid);
     return Ok(entry);
 }
 
@@ -426,10 +426,10 @@ fn journal_parse_json(json_line) {
 # ================================================================
 
 # Query the systemd journal using journalctl and parse JSON output.
-# filter: JournalFilter pointer (from journal_filter_new).
+# filter: JournalFilter pointer (from journald_filter_new).
 # Returns Result: Ok(vec_of_entry_ptrs) or Err.
-fn journal_query(filter) {
-    var cmd_str = journal_build_args(filter);
+fn journald_query(filter) {
+    var cmd_str = journald_build_args(filter);
 
     # Use /bin/sh -c "<cmd>" to execute the full command
     var buf = alloc(131072);  # 128KB capture buffer
@@ -454,7 +454,7 @@ fn journal_query(filter) {
             continue;
         }
 
-        var parse_res = journal_parse_json(line);
+        var parse_res = journald_parse_json(line);
         if (is_ok(parse_res) == 1) {
             vec_push(entries, payload(parse_res));
         }
@@ -474,7 +474,7 @@ fn journal_query(filter) {
 # unit_name: C string (e.g. "sshd.service").
 # lines: number of entries to return.
 # Returns Result: Ok(vec_of_entry_ptrs) or Err.
-fn journal_get_unit_logs(unit_name, lines) {
+fn journald_get_unit_logs(unit_name, lines) {
     if (unit_name == 0) {
         return err_invalid_argument("unit name cannot be null");
     }
@@ -482,11 +482,11 @@ fn journal_get_unit_logs(unit_name, lines) {
         return err_invalid_argument("unit name cannot be empty");
     }
 
-    var filter = journal_filter_new();
-    journal_filter_set_unit(filter, str_from(unit_name));
-    journal_filter_set_lines(filter, lines);
+    var filter = journald_filter_new();
+    journald_filter_set_unit(filter, str_from(unit_name));
+    journald_filter_set_lines(filter, lines);
 
-    return journal_query(filter);
+    return journald_query(filter);
 }
 
 # ================================================================
@@ -496,21 +496,21 @@ fn journal_get_unit_logs(unit_name, lines) {
 # Send an info-level message to the journal.
 # message: C string.
 # Returns Result: Ok(0) or Err.
-fn journal_info(message) {
-    return journal_send(message, JOURNAL_INFO, "agnosys");
+fn journald_info(message) {
+    return journald_send(message, JOURNAL_INFO, "agnosys");
 }
 
 # Send a warning-level message to the journal.
-fn journal_warning(message) {
-    return journal_send(message, JOURNAL_WARNING, "agnosys");
+fn journald_warning(message) {
+    return journald_send(message, JOURNAL_WARNING, "agnosys");
 }
 
 # Send an error-level message to the journal.
-fn journal_error(message) {
-    return journal_send(message, JOURNAL_ERR, "agnosys");
+fn journald_error(message) {
+    return journald_send(message, JOURNAL_ERR, "agnosys");
 }
 
 # Send a debug-level message to the journal.
-fn journal_debug(message) {
-    return journal_send(message, JOURNAL_DEBUG, "agnosys");
+fn journald_debug(message) {
+    return journald_send(message, JOURNAL_DEBUG, "agnosys");
 }

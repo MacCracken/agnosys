@@ -38,18 +38,18 @@ enum FsAccess {
 
 # Filesystem rule: { path_ptr, access }
 # path_ptr is a null-terminated C string pointer
-fn fs_rule_new(path, access) {
+fn security_fs_rule_new(path, access) {
     var r = alloc(16);
     store64(r, path);
     store64(r + 8, access);
     return r;
 }
 
-fn fs_rule_path(r) { return load64(r); }
-fn fs_rule_access(r) { return load64(r + 8); }
+fn security_fs_rule_path(r) { return load64(r); }
+fn security_fs_rule_access(r) { return load64(r + 8); }
 
-fn fs_rule_read_only(path) { return fs_rule_new(path, FS_READ_ONLY); }
-fn fs_rule_read_write(path) { return fs_rule_new(path, FS_READ_WRITE); }
+fn security_fs_rule_read_only(path) { return security_fs_rule_new(path, FS_READ_ONLY); }
+fn security_fs_rule_read_write(path) { return security_fs_rule_new(path, FS_READ_WRITE); }
 
 # ================================================================
 # Apply Landlock filesystem restrictions
@@ -57,7 +57,7 @@ fn fs_rule_read_write(path) { return fs_rule_new(path, FS_READ_WRITE); }
 
 # rules: vec of fs_rule pointers, count: number of rules
 # Returns Result: Ok(0) on success, Err on failure.
-fn apply_landlock(rules, count) {
+fn security_apply_landlock(rules, count) {
     if (count == 0) { return Ok(0); }
 
     var handled_access = LANDLOCK_ACCESS_FS_READ_FILE
@@ -79,7 +79,7 @@ fn apply_landlock(rules, count) {
     var idx = 0;
     while (idx < count) {
         var rule = vec_get(rules, idx);
-        var access = fs_rule_access(rule);
+        var access = security_fs_rule_access(rule);
 
         var allowed_access = 0;
         if (access == FS_READ_ONLY) {
@@ -91,7 +91,7 @@ fn apply_landlock(rules, count) {
         }
 
         if (allowed_access != 0) {
-            var path = fs_rule_path(rule);
+            var path = security_fs_rule_path(rule);
             # O_PATH = 0x200000, O_CLOEXEC = 0x80000
             var path_fd = syscall(SYS_OPEN, path, 0x280000, 0);
             if (path_fd < 0) {
@@ -149,7 +149,7 @@ enum BpfConst {
 
 # Write a BPF sock_filter instruction (8 bytes) to buf at offset.
 # Layout: u16 code, u8 jt, u8 jf, u32 k (little-endian)
-fn bpf_write_insn(buf, offset, code, jt, jf, k) {
+fn security_bpf_write_insn(buf, offset, code, jt, jf, k) {
     store16(buf + offset, code);
     store8(buf + offset + 2, jt);
     store8(buf + offset + 3, jf);
@@ -160,7 +160,7 @@ fn bpf_write_insn(buf, offset, code, jt, jf, k) {
 # Load a seccomp-BPF filter into the calling process.
 # filter: pointer to BPF bytecode, filter_len: total bytes.
 # Returns Result.
-fn load_seccomp(filter, filter_len) {
+fn security_load_seccomp(filter, filter_len) {
     if (filter_len == 0) {
         return err_invalid_argument("empty seccomp filter");
     }
@@ -194,8 +194,8 @@ fn load_seccomp(filter, filter_len) {
 
 # Create a basic seccomp filter allowing safe syscalls.
 # Returns Result: Ok(filter_ptr) where payload is {ptr, len}.
-# The caller must use the returned pointer and length with load_seccomp.
-fn create_basic_seccomp_filter() {
+# The caller must use the returned pointer and length with security_load_seccomp.
+fn security_create_basic_seccomp_filter() {
     # Pre-computed BPF filter: 23 instructions x 8 bytes = 184 bytes.
     # Layout per insn: u16 code, u8 jt, u8 jf, u32 k (little-endian).
     # 20 allowlisted syscalls: read(0), write(1), close(3), fstat(5),
@@ -207,32 +207,32 @@ fn create_basic_seccomp_filter() {
     var filter = alloc(filter_size);
 
     # Insn 0: BPF_LD_W_ABS, k=0 (load syscall nr)
-    bpf_write_insn(filter, 0, 0x20, 0, 0, 0);
+    security_bpf_write_insn(filter, 0, 0x20, 0, 0, 0);
     # Insns 1-20: JEQ for each syscall, jt = skip to ALLOW
-    bpf_write_insn(filter, 8,   0x15, 20, 0, 0);     # read
-    bpf_write_insn(filter, 16,  0x15, 19, 0, 1);     # write
-    bpf_write_insn(filter, 24,  0x15, 18, 0, 3);     # close
-    bpf_write_insn(filter, 32,  0x15, 17, 0, 5);     # fstat
-    bpf_write_insn(filter, 40,  0x15, 16, 0, 9);     # mmap
-    bpf_write_insn(filter, 48,  0x15, 15, 0, 10);    # mprotect
-    bpf_write_insn(filter, 56,  0x15, 14, 0, 11);    # munmap
-    bpf_write_insn(filter, 64,  0x15, 13, 0, 12);    # brk
-    bpf_write_insn(filter, 72,  0x15, 12, 0, 15);    # rt_sigreturn
-    bpf_write_insn(filter, 80,  0x15, 11, 0, 60);    # exit
-    bpf_write_insn(filter, 88,  0x15, 10, 0, 131);   # sigaltstack
-    bpf_write_insn(filter, 96,  0x15, 9,  0, 158);   # arch_prctl
-    bpf_write_insn(filter, 104, 0x15, 8,  0, 186);   # gettid
-    bpf_write_insn(filter, 112, 0x15, 7,  0, 202);   # futex
-    bpf_write_insn(filter, 120, 0x15, 6,  0, 218);   # set_tid_address
-    bpf_write_insn(filter, 128, 0x15, 5,  0, 231);   # exit_group
-    bpf_write_insn(filter, 136, 0x15, 4,  0, 273);   # set_robust_list
-    bpf_write_insn(filter, 144, 0x15, 3,  0, 318);   # getrandom
-    bpf_write_insn(filter, 152, 0x15, 2,  0, 228);   # clock_gettime
-    bpf_write_insn(filter, 160, 0x15, 1,  0, 334);   # rseq
+    security_bpf_write_insn(filter, 8,   0x15, 20, 0, 0);     # read
+    security_bpf_write_insn(filter, 16,  0x15, 19, 0, 1);     # write
+    security_bpf_write_insn(filter, 24,  0x15, 18, 0, 3);     # close
+    security_bpf_write_insn(filter, 32,  0x15, 17, 0, 5);     # fstat
+    security_bpf_write_insn(filter, 40,  0x15, 16, 0, 9);     # mmap
+    security_bpf_write_insn(filter, 48,  0x15, 15, 0, 10);    # mprotect
+    security_bpf_write_insn(filter, 56,  0x15, 14, 0, 11);    # munmap
+    security_bpf_write_insn(filter, 64,  0x15, 13, 0, 12);    # brk
+    security_bpf_write_insn(filter, 72,  0x15, 12, 0, 15);    # rt_sigreturn
+    security_bpf_write_insn(filter, 80,  0x15, 11, 0, 60);    # exit
+    security_bpf_write_insn(filter, 88,  0x15, 10, 0, 131);   # sigaltstack
+    security_bpf_write_insn(filter, 96,  0x15, 9,  0, 158);   # arch_prctl
+    security_bpf_write_insn(filter, 104, 0x15, 8,  0, 186);   # gettid
+    security_bpf_write_insn(filter, 112, 0x15, 7,  0, 202);   # futex
+    security_bpf_write_insn(filter, 120, 0x15, 6,  0, 218);   # set_tid_address
+    security_bpf_write_insn(filter, 128, 0x15, 5,  0, 231);   # exit_group
+    security_bpf_write_insn(filter, 136, 0x15, 4,  0, 273);   # set_robust_list
+    security_bpf_write_insn(filter, 144, 0x15, 3,  0, 318);   # getrandom
+    security_bpf_write_insn(filter, 152, 0x15, 2,  0, 228);   # clock_gettime
+    security_bpf_write_insn(filter, 160, 0x15, 1,  0, 334);   # rseq
     # Insn 21: default KILL
-    bpf_write_insn(filter, 168, 0x06, 0, 0, 0x80000000);
+    security_bpf_write_insn(filter, 168, 0x06, 0, 0, 0x80000000);
     # Insn 22: ALLOW
-    bpf_write_insn(filter, 176, 0x06, 0, 0, 0x7FFF0000);
+    security_bpf_write_insn(filter, 176, 0x06, 0, 0, 0x7FFF0000);
 
     var info = alloc(16);
     store64(info, filter);
@@ -240,9 +240,9 @@ fn create_basic_seccomp_filter() {
     return Ok(info);
 }
 
-# Get filter pointer from create_basic_seccomp_filter result
-fn seccomp_filter_ptr(info) { return load64(info); }
-fn seccomp_filter_len(info) { return load64(info + 8); }
+# Get filter pointer from security_create_basic_seccomp_filter result
+fn security_seccomp_filter_ptr(info) { return load64(info); }
+fn security_seccomp_filter_len(info) { return load64(info + 8); }
 
 # ================================================================
 # Namespace creation
@@ -269,7 +269,7 @@ enum SysNrNs {
 # Create new namespace(s) with specified flags.
 # flags: bitwise OR of NS_NETWORK, NS_MOUNT, NS_PID, NS_USER
 # Returns Result.
-fn create_namespace(flags) {
+fn security_create_namespace(flags) {
     var sflags = 0;
     if ((flags & NS_NETWORK) != 0) { sflags = sflags | CLONE_NEWNET; }
     if ((flags & NS_MOUNT) != 0) { sflags = sflags | CLONE_NEWNS; }
@@ -279,8 +279,8 @@ fn create_namespace(flags) {
     var ret = syscall(SYS_UNSHARE, sflags);
     if (ret < 0) {
         var errno = 0 - ret;
-        if (errno == EPERM) { return err_permission_denied("create_namespace"); }
-        if (errno == EINVAL) { return err_invalid_argument("create_namespace: invalid flags"); }
+        if (errno == EPERM) { return err_permission_denied("security_create_namespace"); }
+        if (errno == EINVAL) { return err_invalid_argument("security_create_namespace: invalid flags"); }
         return err_syscall_failed(errno, "unshare failed");
     }
 
@@ -293,7 +293,7 @@ fn create_namespace(flags) {
 
 var _syscall_map = 0;
 
-fn syscall_map_reset() { _syscall_map = 0; return 0; }
+fn security_syscall_map_reset() { _syscall_map = 0; return 0; }
 
 fn _syscall_map_init() {
     if (_syscall_map != 0) { return 0; }
@@ -361,7 +361,7 @@ fn _syscall_map_init() {
 }
 
 # Map a syscall name to its x86_64 number. Returns -1 if not found.
-fn syscall_name_to_nr(name) {
+fn security_syscall_name_to_nr(name) {
     _syscall_map_init();
     if (map_has(_syscall_map, name) == 1) {
         return map_get(_syscall_map, name);

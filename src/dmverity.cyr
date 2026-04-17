@@ -36,13 +36,13 @@ enum VerityConst {
 # Hash algorithm helpers
 # ================================================================
 
-fn verity_hash_algo_str(algo) {
+fn dmverity_hash_algo_str(algo) {
     if (algo == VERITY_SHA256) { return "sha256"; }
     if (algo == VERITY_SHA512) { return "sha512"; }
     return "sha256";
 }
 
-fn verity_hash_hex_len(algo) {
+fn dmverity_hash_hex_len(algo) {
     if (algo == VERITY_SHA256) { return VERITY_SHA256_HEX_LEN; }
     if (algo == VERITY_SHA512) { return VERITY_SHA512_HEX_LEN; }
     return VERITY_SHA256_HEX_LEN;
@@ -56,20 +56,20 @@ fn verity_hash_hex_len(algo) {
 # Total: 64 bytes. salt=0 means no salt.
 # ================================================================
 
-fn verity_config_alloc() {
+fn dmverity_config_alloc() {
     var c = alloc(64);
     memset(c, 0, 64);
     return c;
 }
 
-fn verity_config_set_devices(c, name, data_device, hash_device) {
+fn dmverity_config_set_devices(c, name, data_device, hash_device) {
     store64(c, name);
     store64(c + 8, data_device);
     store64(c + 16, hash_device);
     return c;
 }
 
-fn verity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
+fn dmverity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
     store64(c + 24, data_bs);
     store64(c + 32, hash_bs);
     store64(c + 40, algo);
@@ -78,14 +78,14 @@ fn verity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
     return c;
 }
 
-fn verity_config_name(c) { return load64(c); }
-fn verity_config_data_device(c) { return load64(c + 8); }
-fn verity_config_hash_device(c) { return load64(c + 16); }
-fn verity_config_data_block_size(c) { return load64(c + 24); }
-fn verity_config_hash_block_size(c) { return load64(c + 32); }
-fn verity_config_hash_algorithm(c) { return load64(c + 40); }
-fn verity_config_root_hash(c) { return load64(c + 48); }
-fn verity_config_salt(c) { return load64(c + 56); }
+fn dmverity_config_name(c) { return load64(c); }
+fn dmverity_config_data_device(c) { return load64(c + 8); }
+fn dmverity_config_hash_device(c) { return load64(c + 16); }
+fn dmverity_config_data_block_size(c) { return load64(c + 24); }
+fn dmverity_config_hash_block_size(c) { return load64(c + 32); }
+fn dmverity_config_hash_algorithm(c) { return load64(c + 40); }
+fn dmverity_config_root_hash(c) { return load64(c + 48); }
+fn dmverity_config_salt(c) { return load64(c + 56); }
 
 # ================================================================
 # VerityStatus struct
@@ -94,7 +94,7 @@ fn verity_config_salt(c) { return load64(c + 56); }
 # Total: 40 bytes
 # ================================================================
 
-fn verity_status_new(name, is_active, is_verified, corruption_detected, root_hash) {
+fn dmverity_status_new(name, is_active, is_verified, corruption_detected, root_hash) {
     var s = alloc(40);
     store64(s, name);
     store64(s + 8, is_active);
@@ -104,18 +104,18 @@ fn verity_status_new(name, is_active, is_verified, corruption_detected, root_has
     return s;
 }
 
-fn verity_status_name(s) { return load64(s); }
-fn verity_status_is_active(s) { return load64(s + 8); }
-fn verity_status_is_verified(s) { return load64(s + 16); }
-fn verity_status_corruption_detected(s) { return load64(s + 24); }
-fn verity_status_root_hash(s) { return load64(s + 32); }
+fn dmverity_status_name(s) { return load64(s); }
+fn dmverity_status_is_active(s) { return load64(s + 8); }
+fn dmverity_status_is_verified(s) { return load64(s + 16); }
+fn dmverity_status_corruption_detected(s) { return load64(s + 24); }
+fn dmverity_status_root_hash(s) { return load64(s + 32); }
 
 # ================================================================
 # Validation helpers
 # ================================================================
 
 # Check if a byte is a valid hex character
-fn verity_is_hex_char(ch) {
+fn dmverity_is_hex_char(ch) {
     if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
     if (ch >= 65 && ch <= 70) { return 1; }   # A-F
     if (ch >= 97 && ch <= 102) { return 1; }  # a-f
@@ -123,11 +123,11 @@ fn verity_is_hex_char(ch) {
 }
 
 # Validate a hex string. Returns Ok(0) or Err.
-fn verity_validate_hex(s, label) {
+fn dmverity_validate_hex(s, label) {
     var slen = strlen(s);
     var i = 0;
     while (i < slen) {
-        if (verity_is_hex_char(load8(s + i)) == 0) {
+        if (dmverity_is_hex_char(load8(s + i)) == 0) {
             return err_invalid_argument("hex string contains non-hex characters");
         }
         i = i + 1;
@@ -136,7 +136,7 @@ fn verity_validate_hex(s, label) {
 }
 
 # Check if a byte is valid for a dm name (alphanum, dash, underscore)
-fn verity_is_name_char(ch) {
+fn dmverity_is_name_char(ch) {
     if (ch >= 48 && ch <= 57) { return 1; }
     if (ch >= 65 && ch <= 90) { return 1; }
     if (ch >= 97 && ch <= 122) { return 1; }
@@ -147,12 +147,12 @@ fn verity_is_name_char(ch) {
 
 # Validate a root hash: correct length for algorithm, all hex.
 # Returns Ok(0) or Err.
-fn verity_validate_root_hash(hash, algorithm) {
+fn dmverity_validate_root_hash(hash, algorithm) {
     if (strlen(hash) == 0) {
         return err_invalid_argument("Root hash cannot be empty");
     }
 
-    var expected_len = verity_hash_hex_len(algorithm);
+    var expected_len = dmverity_hash_hex_len(algorithm);
     var actual_len = strlen(hash);
 
     if (actual_len != expected_len) {
@@ -161,7 +161,7 @@ fn verity_validate_root_hash(hash, algorithm) {
 
     var i = 0;
     while (i < actual_len) {
-        if (verity_is_hex_char(load8(hash + i)) == 0) {
+        if (dmverity_is_hex_char(load8(hash + i)) == 0) {
             return err_invalid_argument("Root hash contains non-hex characters");
         }
         i = i + 1;
@@ -171,8 +171,8 @@ fn verity_validate_root_hash(hash, algorithm) {
 }
 
 # Validate a VerityConfig. Returns Ok(0) or Err.
-fn verity_config_validate(config) {
-    var name = verity_config_name(config);
+fn dmverity_config_validate(config) {
+    var name = dmverity_config_name(config);
     var namelen = strlen(name);
 
     if (namelen == 0) {
@@ -184,33 +184,33 @@ fn verity_config_validate(config) {
 
     var i = 0;
     while (i < namelen) {
-        if (verity_is_name_char(load8(name + i)) == 0) {
+        if (dmverity_is_name_char(load8(name + i)) == 0) {
             return err_invalid_argument("Verity name contains invalid characters");
         }
         i = i + 1;
     }
 
     # Block sizes must be powers of 2
-    var dbs = verity_config_data_block_size(config);
+    var dbs = dmverity_config_data_block_size(config);
     if (dbs == 0 || (dbs & (dbs - 1)) != 0) {
         return err_invalid_argument("Data block size must be a power of 2");
     }
 
-    var hbs = verity_config_hash_block_size(config);
+    var hbs = dmverity_config_hash_block_size(config);
     if (hbs == 0 || (hbs & (hbs - 1)) != 0) {
         return err_invalid_argument("Hash block size must be a power of 2");
     }
 
     # Validate root hash
-    var rh = verity_config_root_hash(config);
-    var algo = verity_config_hash_algorithm(config);
-    var res = verity_validate_root_hash(rh, algo);
+    var rh = dmverity_config_root_hash(config);
+    var algo = dmverity_config_hash_algorithm(config);
+    var res = dmverity_validate_root_hash(rh, algo);
     if (is_err_result(res) == 1) { return res; }
 
     # Validate salt if present
-    var salt = verity_config_salt(config);
+    var salt = dmverity_config_salt(config);
     if (salt != 0) {
-        var salt_res = verity_validate_hex(salt, "salt");
+        var salt_res = dmverity_validate_hex(salt, "salt");
         if (is_err_result(salt_res) == 1) { return salt_res; }
     }
 
@@ -221,7 +221,7 @@ fn verity_config_validate(config) {
 # Helper: run veritysetup
 # ================================================================
 
-fn verity_run_capture(args, buf, buflen) {
+fn dmverity_run_capture(args, buf, buflen) {
     var n = exec_capture(args, buf, buflen);
     if (n < 0) {
         return err_unknown("veritysetup execution failed");
@@ -229,7 +229,7 @@ fn verity_run_capture(args, buf, buflen) {
     return Ok(n);
 }
 
-fn verity_run_checked(args) {
+fn dmverity_run_checked(args) {
     var rc = exec_vec(args);
     if (rc != 0) {
         return err_unknown("veritysetup command failed");
@@ -243,7 +243,7 @@ fn verity_run_checked(args) {
 
 # Format a data device for dm-verity, generating the hash tree.
 # Returns Ok(root_hash_ptr) — the computed root hash as a heap string.
-fn verity_format(data_device, hash_device, algorithm, salt) {
+fn dmverity_format(data_device, hash_device, algorithm, salt) {
     # Verify data device exists
     var acc = syscall(SYS_ACCESS, data_device, 0);
     if (acc < 0) {
@@ -256,10 +256,10 @@ fn verity_format(data_device, hash_device, algorithm, salt) {
     vec_push(args, data_device);
     vec_push(args, hash_device);
     vec_push(args, "--hash");
-    vec_push(args, verity_hash_algo_str(algorithm));
+    vec_push(args, dmverity_hash_algo_str(algorithm));
 
     if (salt != 0) {
-        var salt_res = verity_validate_hex(salt, "salt");
+        var salt_res = dmverity_validate_hex(salt, "salt");
         if (is_err_result(salt_res) == 1) { return salt_res; }
         vec_push(args, "--salt");
         vec_push(args, salt);
@@ -267,7 +267,7 @@ fn verity_format(data_device, hash_device, algorithm, salt) {
 
     var outbuf[4096];
     memset(&outbuf, 0, 4096);
-    var cap_res = verity_run_capture(args, &outbuf, 4095);
+    var cap_res = dmverity_run_capture(args, &outbuf, 4095);
     if (is_err_result(cap_res) == 1) { return cap_res; }
 
     # Parse root hash from output: look for "Root hash:" line
@@ -318,33 +318,33 @@ fn verity_format(data_device, hash_device, algorithm, salt) {
 # Open (activate) a dm-verity volume.
 # Creates a read-only device mapping at /dev/mapper/{name}.
 # Returns Ok(0) or Err.
-fn verity_open(config) {
-    var res = verity_config_validate(config);
+fn dmverity_open(config) {
+    var res = dmverity_config_validate(config);
     if (is_err_result(res) == 1) { return res; }
 
     var args = vec_new();
     vec_push(args, "/usr/sbin/veritysetup");
     vec_push(args, "open");
     vec_push(args, "--hash");
-    vec_push(args, verity_hash_algo_str(verity_config_hash_algorithm(config)));
-    vec_push(args, verity_config_data_device(config));
-    vec_push(args, verity_config_hash_device(config));
-    vec_push(args, verity_config_name(config));
-    vec_push(args, verity_config_root_hash(config));
+    vec_push(args, dmverity_hash_algo_str(dmverity_config_hash_algorithm(config)));
+    vec_push(args, dmverity_config_data_device(config));
+    vec_push(args, dmverity_config_hash_device(config));
+    vec_push(args, dmverity_config_name(config));
+    vec_push(args, dmverity_config_root_hash(config));
 
-    var salt = verity_config_salt(config);
+    var salt = dmverity_config_salt(config);
     if (salt != 0) {
         vec_push(args, "--salt");
         vec_push(args, salt);
     }
 
-    return verity_run_checked(args);
+    return dmverity_run_checked(args);
 }
 
 # Close (deactivate) a dm-verity volume.
 # name: volume mapping name.
 # Returns Ok(0) or Err.
-fn verity_close(name) {
+fn dmverity_close(name) {
     if (strlen(name) == 0) {
         return err_invalid_argument("Verity name cannot be empty");
     }
@@ -354,12 +354,12 @@ fn verity_close(name) {
     vec_push(args, "close");
     vec_push(args, name);
 
-    return verity_run_checked(args);
+    return dmverity_run_checked(args);
 }
 
 # Query the status of a dm-verity volume.
 # Returns Ok(verity_status_ptr) or Err.
-fn verity_status(name) {
+fn dmverity_status(name) {
     if (strlen(name) == 0) {
         return err_invalid_argument("Verity name cannot be empty");
     }
@@ -375,7 +375,7 @@ fn verity_status(name) {
 
     if (n <= 0) {
         # Not active
-        return Ok(verity_status_new(name, 0, 0, 0, ""));
+        return Ok(dmverity_status_new(name, 0, 0, 0, ""));
     }
 
     var outlen = strlen(&outbuf);
@@ -432,12 +432,12 @@ fn verity_status(name) {
         }
     }
 
-    return Ok(verity_status_new(name, is_active, is_verified, corruption, rhash));
+    return Ok(dmverity_status_new(name, is_active, is_verified, corruption, rhash));
 }
 
 # Verify a dm-verity volume without activating it.
 # Returns Ok(1) if valid, Ok(0) if failed.
-fn verity_verify(data_device, hash_device, root_hash) {
+fn dmverity_verify(data_device, hash_device, root_hash) {
     # Validate inputs
     var acc1 = syscall(SYS_ACCESS, data_device, 0);
     if (acc1 < 0) {
@@ -453,7 +453,7 @@ fn verity_verify(data_device, hash_device, root_hash) {
     var rhlen = strlen(root_hash);
     var vi = 0;
     while (vi < rhlen) {
-        if (verity_is_hex_char(load8(root_hash + vi)) == 0) {
+        if (dmverity_is_hex_char(load8(root_hash + vi)) == 0) {
             return err_invalid_argument("Invalid root hash");
         }
         vi = vi + 1;
@@ -472,7 +472,7 @@ fn verity_verify(data_device, hash_device, root_hash) {
 
 # Check if dm-verity is supported on this system.
 # Returns 1 if supported, 0 if not.
-fn verity_supported() {
+fn dmverity_supported() {
     # Check for kernel module
     if (syscall(SYS_ACCESS, "/sys/module/dm_verity", 0) == 0) { return 1; }
 

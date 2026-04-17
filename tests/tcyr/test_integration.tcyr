@@ -93,9 +93,9 @@ fn test_syscall() {
     assert_gt(sysinfo_uptime(info), 0, "uptime");
     assert_gt(sysinfo_total_memory(info), 0, "ram");
     assert_gt(sysinfo_procs(info), 0 - 1, "procs");
-    assert(is_ok(checked_syscall(0)) == 1, "chk_ok");
-    assert(is_err_result(checked_syscall(0 - 1)) == 1, "chk_err");
-    assert_eq(payload(checked_syscall(42)), 42, "chk_v");
+    assert(is_ok(agnosys_checked_syscall(0)) == 1, "chk_ok");
+    assert(is_err_result(agnosys_checked_syscall(0 - 1)) == 1, "chk_err");
+    assert_eq(payload(agnosys_checked_syscall(42)), 42, "chk_v");
     return 0;
 }
 
@@ -124,19 +124,19 @@ fn test_logging() {
 
 fn test_security() {
     println("-- security --");
-    var fres = create_basic_seccomp_filter();
+    var fres = security_create_basic_seccomp_filter();
     assert(is_ok(fres) == 1, "seccomp");
     var fi = payload(fres);
-    assert_eq(seccomp_filter_len(fi), 184, "sc_len");
-    assert(seccomp_filter_ptr(fi) != 0, "sc_ptr");
-    assert_eq(syscall_name_to_nr("read"), 0, "nr_read");
-    assert_eq(syscall_name_to_nr("write"), 1, "nr_write");
-    assert_eq(syscall_name_to_nr("close"), 3, "nr_close");
-    assert_eq(syscall_name_to_nr("getpid"), 39, "nr_pid");
-    assert_eq(syscall_name_to_nr("exit"), 60, "nr_exit");
-    assert_eq(syscall_name_to_nr("xxx"), 0 - 1, "nr_miss");
-    assert_eq(fs_rule_access(fs_rule_read_only("/t")), FS_READ_ONLY, "fs_ro");
-    assert_eq(fs_rule_access(fs_rule_read_write("/t")), FS_READ_WRITE, "fs_rw");
+    assert_eq(security_seccomp_filter_len(fi), 184, "sc_len");
+    assert(security_seccomp_filter_ptr(fi) != 0, "sc_ptr");
+    assert_eq(security_syscall_name_to_nr("read"), 0, "nr_read");
+    assert_eq(security_syscall_name_to_nr("write"), 1, "nr_write");
+    assert_eq(security_syscall_name_to_nr("close"), 3, "nr_close");
+    assert_eq(security_syscall_name_to_nr("getpid"), 39, "nr_pid");
+    assert_eq(security_syscall_name_to_nr("exit"), 60, "nr_exit");
+    assert_eq(security_syscall_name_to_nr("xxx"), 0 - 1, "nr_miss");
+    assert_eq(security_fs_rule_access(security_fs_rule_read_only("/t")), FS_READ_ONLY, "fs_ro");
+    assert_eq(security_fs_rule_access(security_fs_rule_read_write("/t")), FS_READ_WRITE, "fs_rw");
     return 0;
 }
 
@@ -198,18 +198,18 @@ fn test_bootloader() {
     assert(is_ok(bootloader_validate_kernel_cmdline("quiet splash")) == 1, "cmd_qs");
     assert(streq(bootloader_type_str(BOOT_SYSTEMD_BOOT), "systemd-boot") == 1, "bt_sd");
     assert(streq(bootloader_type_str(BOOT_GRUB2), "GRUB2") == 1, "bt_gr");
-    var be = boot_entry_new();
-    boot_entry_set_id(be, "arch");
-    boot_entry_set_title(be, "Arch Linux");
-    boot_entry_set_is_default(be, 1);
-    assert(streq(boot_entry_id(be), "arch") == 1, "be_id");
-    assert(streq(boot_entry_title(be), "Arch Linux") == 1, "be_t");
-    assert_eq(boot_entry_is_default(be), 1, "be_d");
-    var bc = boot_config_new();
-    boot_config_set_type(bc, BOOT_SYSTEMD_BOOT);
-    boot_config_set_timeout(bc, 5);
-    assert_eq(boot_config_type(bc), BOOT_SYSTEMD_BOOT, "bc_t");
-    assert_eq(boot_config_timeout(bc), 5, "bc_to");
+    var be = bootloader_entry_new();
+    bootloader_entry_set_id(be, "arch");
+    bootloader_entry_set_title(be, "Arch Linux");
+    bootloader_entry_set_is_default(be, 1);
+    assert(streq(bootloader_entry_id(be), "arch") == 1, "be_id");
+    assert(streq(bootloader_entry_title(be), "Arch Linux") == 1, "be_t");
+    assert_eq(bootloader_entry_is_default(be), 1, "be_d");
+    var bc = bootloader_config_new();
+    bootloader_config_set_type(bc, BOOT_SYSTEMD_BOOT);
+    bootloader_config_set_timeout(bc, 5);
+    assert_eq(bootloader_config_type(bc), BOOT_SYSTEMD_BOOT, "bc_t");
+    assert_eq(bootloader_config_timeout(bc), 5, "bc_to");
     return 0;
 }
 
@@ -289,15 +289,15 @@ fn test_mac() {
 fn test_dmverity() {
     println("-- dmverity --");
     var h = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    assert(is_ok(verity_validate_root_hash(h, VERITY_SHA256)) == 1, "h_ok");
-    assert(is_err_result(verity_validate_root_hash("short", VERITY_SHA256)) == 1, "h_short");
-    assert(is_err_result(verity_validate_root_hash("", VERITY_SHA256)) == 1, "h_empty");
-    assert(streq(verity_hash_algo_str(VERITY_SHA256), "sha256") == 1, "a256");
-    assert_eq(verity_hash_hex_len(VERITY_SHA256), 64, "hl256");
-    var st = verity_status_new("test-vol", 1, 1, 0, h);
-    assert(streq(verity_status_name(st), "test-vol") == 1, "vs_n");
-    assert_eq(verity_status_is_active(st), 1, "vs_a");
-    assert_eq(verity_status_corruption_detected(st), 0, "vs_c");
+    assert(is_ok(dmverity_validate_root_hash(h, VERITY_SHA256)) == 1, "h_ok");
+    assert(is_err_result(dmverity_validate_root_hash("short", VERITY_SHA256)) == 1, "h_short");
+    assert(is_err_result(dmverity_validate_root_hash("", VERITY_SHA256)) == 1, "h_empty");
+    assert(streq(dmverity_hash_algo_str(VERITY_SHA256), "sha256") == 1, "a256");
+    assert_eq(dmverity_hash_hex_len(VERITY_SHA256), 64, "hl256");
+    var st = dmverity_status_new("test-vol", 1, 1, 0, h);
+    assert(streq(dmverity_status_name(st), "test-vol") == 1, "vs_n");
+    assert_eq(dmverity_status_is_active(st), 1, "vs_a");
+    assert_eq(dmverity_status_corruption_detected(st), 0, "vs_c");
     return 0;
 }
 
@@ -441,14 +441,14 @@ fn test_netns() {
     var h = netns_handle_new("ns1", "veth-h", "veth-a", "/var/run/netns/ns1");
     assert(streq(netns_handle_name(h), "ns1") == 1, "nh_n");
     assert(streq(netns_handle_veth_host(h), "veth-h") == 1, "nh_vh");
-    var fr = fw_rule_new(TRAFFIC_INBOUND, PROTO_TCP, 443, "0.0.0.0", FW_ACCEPT, "https");
-    assert_eq(fw_rule_direction(fr), TRAFFIC_INBOUND, "fr_d");
-    assert_eq(fw_rule_protocol(fr), PROTO_TCP, "fr_p");
-    assert_eq(fw_rule_port(fr), 443, "fr_pt");
-    assert_eq(fw_rule_action(fr), FW_ACCEPT, "fr_a");
-    var fp = fw_policy_new(FW_DROP, FW_ACCEPT);
-    assert_eq(fw_policy_default_in(fp), FW_DROP, "fp_i");
-    assert_eq(fw_policy_default_out(fp), FW_ACCEPT, "fp_o");
+    var fr = netns_fw_rule_new(TRAFFIC_INBOUND, PROTO_TCP, 443, "0.0.0.0", FW_ACCEPT, "https");
+    assert_eq(netns_fw_rule_direction(fr), TRAFFIC_INBOUND, "fr_d");
+    assert_eq(netns_fw_rule_protocol(fr), PROTO_TCP, "fr_p");
+    assert_eq(netns_fw_rule_port(fr), 443, "fr_pt");
+    assert_eq(netns_fw_rule_action(fr), FW_ACCEPT, "fr_a");
+    var fp = netns_fw_policy_new(FW_DROP, FW_ACCEPT);
+    assert_eq(netns_fw_policy_default_in(fp), FW_DROP, "fp_i");
+    assert_eq(netns_fw_policy_default_out(fp), FW_ACCEPT, "fp_o");
     return 0;
 }
 
@@ -458,17 +458,17 @@ fn test_netns() {
 
 fn test_journald() {
     println("-- journald --");
-    var e = journal_entry_new(170000, str_from("svc"), JOURNAL_INFO, str_from("hello"), 1234);
-    assert_eq(journal_entry_timestamp(e), 170000, "je_ts");
-    assert_eq(journal_entry_priority(e), JOURNAL_INFO, "je_pri");
-    assert_eq(journal_entry_pid(e), 1234, "je_pid");
-    var f = journal_filter_new();
-    journal_filter_set_unit(f, "sshd.service");
-    journal_filter_set_priority(f, JOURNAL_ERR);
-    journal_filter_set_lines(f, 50);
-    assert(streq(journal_filter_unit(f), "sshd.service") == 1, "jf_u");
-    assert_eq(journal_filter_priority(f), JOURNAL_ERR, "jf_p");
-    assert_eq(journal_filter_lines(f), 50, "jf_l");
+    var e = journald_entry_new(170000, str_from("svc"), JOURNAL_INFO, str_from("hello"), 1234);
+    assert_eq(journald_entry_timestamp(e), 170000, "je_ts");
+    assert_eq(journald_entry_priority(e), JOURNAL_INFO, "je_pri");
+    assert_eq(journald_entry_pid(e), 1234, "je_pid");
+    var f = journald_filter_new();
+    journald_filter_set_unit(f, "sshd.service");
+    journald_filter_set_priority(f, JOURNAL_ERR);
+    journald_filter_set_lines(f, 50);
+    assert(streq(journald_filter_unit(f), "sshd.service") == 1, "jf_u");
+    assert_eq(journald_filter_priority(f), JOURNAL_ERR, "jf_p");
+    assert_eq(journald_filter_lines(f), 50, "jf_l");
     return 0;
 }
 
@@ -482,13 +482,13 @@ fn main() {
     println("  agnosys integration tests — all 20 modules");
     println("================================================================");
     test_error();
-    syscall_map_reset(); bootloader_danger_reset(); alloc_reset(); alloc_init();
+    security_syscall_map_reset(); bootloader_danger_reset(); alloc_reset(); alloc_init();
     test_syscall();
     alloc_reset(); alloc_init();
     test_logging();
     alloc_reset(); alloc_init();
     test_security();
-    syscall_map_reset(); alloc_reset(); alloc_init();
+    security_syscall_map_reset(); alloc_reset(); alloc_init();
     test_certpin();
     alloc_reset(); alloc_init();
     test_update();
