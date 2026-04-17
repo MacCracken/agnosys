@@ -1,10 +1,9 @@
-# agnosys — AGNOS kernel interface (Cyrius port)
-# Ported from 29257 lines of Rust to ~8500 lines of Cyrius
-# Safe bindings for Linux syscalls and security primitives
+# agnosys — AGNOS kernel interface
+# Cyrius bindings for Linux syscalls and security primitives
 #
-# All 20 modules are ported in src/*.cyr. Due to cc2 identifier
-# buffer limits, include only the modules your program needs.
-# This main.cyr demonstrates the core modules.
+# 20 modules ship under src/*.cyr. Consumers include only what
+# they need (feature-gating), or include dist/agnosys.cyr for
+# the full bundle. This main.cyr demonstrates the core modules.
 
 #define LINUX
 

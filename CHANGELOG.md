@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-04-16
+
+### Added
+
+- **`dist/agnosys.cyr` bundle** — single-file distribution (9704 lines) generated via `cyrius distlib` from the 20 modules declared in `cyrius.cyml [build] modules`. Consumers can now `include "dist/agnosys.cyr"` for the full surface area while per-module includes from `src/*.cyr` remain available for feature-gated consumption.
+
+### Changed
+
+- **Minimum Cyrius version raised to 5.2.0** — picks up `cyrius distlib`, `[build] modules`, `${file:VERSION}` expansion, `cyrius capacity --check`, `cyrius soak`. (`cyrius.cyml` already aligned.)
+- **`src/main.cyr` header** — removed stale `cc2` and Rust line-count references; now describes the feature-gated vs. `dist/` bundled consumption model.
+
+### Notes — 5.2 adoption opportunities (tracked for follow-up, not in this release)
+
+- `#derive(accessors)` could replace ~661 hand-written `load64`/`store64` accessors across 20 modules — large audit-gated refactor.
+- `cyrius capacity --check` and `cyrius soak` worth wiring into `ci.yml` once a capacity budget is agreed.
+- `sakshi` 2.0.0 could back `src/logging.cyr` with structured tracing instead of the current `AGNOSYS_LOG`-gated `eprint` path.
+
 ## [0.97.2] - 2026-04-09
 
 ### Changed

@@ -1,0 +1,37 @@
+[package]
+name = "agnosys"
+version = "${file:VERSION}"
+description = "agnosys — AGNOS kernel interface library"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "5.2.0"
+repository = "https://github.com/MacCracken/agnosys"
+
+[build]
+entry = "src/main.cyr"
+output = "agnosys"
+modules = [
+    "src/error.cyr",
+    "src/syscall.cyr",
+    "src/logging.cyr",
+    "src/security.cyr",
+    "src/mac.cyr",
+    "src/audit.cyr",
+    "src/pam.cyr",
+    "src/journald.cyr",
+    "src/luks.cyr",
+    "src/dmverity.cyr",
+    "src/ima.cyr",
+    "src/tpm.cyr",
+    "src/certpin.cyr",
+    "src/secureboot.cyr",
+    "src/udev.cyr",
+    "src/drm.cyr",
+    "src/netns.cyr",
+    "src/bootloader.cyr",
+    "src/update.cyr",
+    "src/fuse.cyr"
+]
+
+[deps]
+stdlib = ["syscalls", "string", "alloc", "fmt", "vec", "str", "io"]

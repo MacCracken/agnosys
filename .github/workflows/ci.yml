@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CYRIUS_VERSION: "3.2.6"
+  CYRIUS_VERSION: "5.2.0"
 
 jobs:
   build-and-test:
@@ -104,14 +104,13 @@ jobs:
       - name: Check required docs
         run: |
           MISSING=0
-          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE cyrius.toml; do
+          for doc in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md LICENSE cyrius.cyml; do
             if [ -f "$doc" ]; then echo "  OK: $doc"; else echo "  MISSING: $doc"; MISSING=1; fi
           done
           exit $MISSING
       - name: Verify version consistency
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          TOML_VERSION=$(grep '^version = ' cyrius.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          [ "$FILE_VERSION" = "$TOML_VERSION" ] || { echo "VERSION ($FILE_VERSION) != cyrius.toml ($TOML_VERSION)"; exit 1; }
+          grep -q '^version = "\${file:VERSION}"' cyrius.cyml || { echo "cyrius.cyml version must be \${file:VERSION} — VERSION is source of truth"; exit 1; }
           grep -q "$FILE_VERSION" CHANGELOG.md || { echo "version not in changelog"; exit 1; }
           echo "Version consistent: $FILE_VERSION"
