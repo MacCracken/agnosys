@@ -9,9 +9,9 @@
 | Item | Value |
 |---|---|
 | `VERSION` | **1.0.2** |
-| `cyrius.cyml [package].cyrius` | **5.7.7** |
-| Min Cyrius (consumer) | 5.7.7 |
-| Last cyrius bump | 5.7.6 → 5.7.7 (1.0.2) |
+| `cyrius.cyml [package].cyrius` | **5.7.8** |
+| Min Cyrius (consumer) | 5.7.8 |
+| Last cyrius bump | 5.7.6 → 5.7.8 (1.0.2) |
 
 ## Build Metrics
 
@@ -79,7 +79,7 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 - **Runtime**: 0
 - **Stdlib via `[deps] stdlib`**: `syscalls`, `string`, `alloc`, `fmt`, `vec`, `str`, `io` (7)
 - **Git-pinned**: 0 (no `[deps.<name>]` stanzas; no `cyrius.lock` needed today)
-- **Vendored stdlib refresh** (last): 2026-04-26 to cyrius 5.7.6 snapshot (`alloc.cyr`, `io.cyr`, `string.cyr`, `syscalls.cyr` — 5.5.x split into per-OS dispatch). 5.7.7 introduced no stdlib changes affecting agnosys's `[deps] stdlib = [syscalls, string, alloc, fmt, vec, str, io]` set; `cyrius deps` is a no-op against the existing vendor.
+- **Vendored stdlib refresh** (last): 2026-04-26 to cyrius 5.7.6 snapshot (`alloc.cyr`, `io.cyr`, `string.cyr`, `syscalls.cyr` — 5.5.x split into per-OS dispatch). 5.7.7 and 5.7.8 introduced no stdlib changes affecting agnosys's `[deps] stdlib = [syscalls, string, alloc, fmt, vec, str, io]` set; `cyrius deps` is a no-op against the existing vendor.
 
 ## Consumer Status
 
@@ -113,7 +113,7 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.0.2** | 2026-04-26 | P(-1) sweep follow-up: audit-regression integration tests, three ADRs, SECURITY-NOTES F-4/F-5 entries, bench-history row for 1.0.1; toolchain pin 5.7.6 → 5.7.7 |
+| **1.0.2** | 2026-04-26 | P(-1) sweep follow-up: audit-regression integration tests, three ADRs, SECURITY-NOTES F-4/F-5 entries, bench-history row for 1.0.1; toolchain pin 5.7.6 → 5.7.8 (skipping 5.7.7 — `cyrius check` regression, fixed in 5.7.8) |
 | 1.0.1 | 2026-04-26 | Toolchain bump 5.2.0 → 5.7.6; CI ported to yukti pattern; binary size 76% reduction via `[lib]`-modules refactor; audit findings F-1..F-6 fixed |
 | 1.0.0 | 2026-04-17 | API freeze. 139 renames, 20 modules ported, 556 public fns, 220 integration assertions, 30 benchmarks |
 | 0.97.1 | 2026-04 (pre-1.0) | Rust source deleted, Cyrius port complete |
