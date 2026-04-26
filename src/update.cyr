@@ -367,7 +367,7 @@ fn update_channel_str(channel) {
 # UpdateState struct
 # ================================================================
 # Layout: { current_slot, current_version, pending_update, rollback_available,
-#            boot_count_since_update }
+    #            boot_count_since_update }
 # 5 fields * 8 = 40 bytes
 
 fn update_state_new(slot, version) {
@@ -395,7 +395,7 @@ fn update_state_set_boot_count(s, n) { store64(s + 32, n); return 0; }
 # UpdateConfig struct
 # ================================================================
 # Layout: { update_url, slot_a_device, slot_b_device, state_file,
-#            backup_dir, max_retries, verify_after_apply }
+    #            backup_dir, max_retries, verify_after_apply }
 # 7 fields * 8 = 56 bytes
 
 fn update_config_new() {
@@ -537,62 +537,62 @@ fn update_save_state(state, path) {
 
     # JSON: current_slot, current_version, pending, rollback, boot_count
     var hdr = "{\"current_slot\":";
-    memcpy(buf + pos, hdr, strlen(hdr));
-    pos = pos + strlen(hdr);
+        memcpy(buf + pos, hdr, strlen(hdr));
+        pos = pos + strlen(hdr);
 
-    var slot = update_state_slot(state);
-    store8(buf + pos, 48 + slot);  # '0' + slot value (1 or 2)
-    pos = pos + 1;
+        var slot = update_state_slot(state);
+        store8(buf + pos, 48 + slot);  # '0' + slot value (1 or 2)
+        pos = pos + 1;
 
-    var cvh = ",\"current_version\":\"";
-    memcpy(buf + pos, cvh, strlen(cvh));
-    pos = pos + strlen(cvh);
+        var cvh = ",\"current_version\":\"";
+        memcpy(buf + pos, cvh, strlen(cvh));
+        pos = pos + strlen(cvh);
 
-    var ver = update_state_version(state);
-    if (ver != 0) {
-        var vlen = strlen(ver);
-        memcpy(buf + pos, ver, vlen);
-        pos = pos + vlen;
-    }
-    store8(buf + pos, 34); pos = pos + 1;  # '"'
+        var ver = update_state_version(state);
+        if (ver != 0) {
+            var vlen = strlen(ver);
+            memcpy(buf + pos, ver, vlen);
+            pos = pos + vlen;
+        }
+        store8(buf + pos, 34); pos = pos + 1;  # '"'
 
-    # pending_update
-    var puh = ",\"pending_update\":";
-    memcpy(buf + pos, puh, strlen(puh));
-    pos = pos + strlen(puh);
-    var pending = update_state_pending(state);
-    if (pending == 0) {
-        memcpy(buf + pos, "null", 4);
-        pos = pos + 4;
-    } else {
-        store8(buf + pos, 34); pos = pos + 1;
-        var plen = strlen(pending);
-        memcpy(buf + pos, pending, plen);
-        pos = pos + plen;
-        store8(buf + pos, 34); pos = pos + 1;
-    }
+        # pending_update
+        var puh = ",\"pending_update\":";
+        memcpy(buf + pos, puh, strlen(puh));
+        pos = pos + strlen(puh);
+        var pending = update_state_pending(state);
+        if (pending == 0) {
+            memcpy(buf + pos, "null", 4);
+            pos = pos + 4;
+        } else {
+            store8(buf + pos, 34); pos = pos + 1;
+            var plen = strlen(pending);
+            memcpy(buf + pos, pending, plen);
+            pos = pos + plen;
+            store8(buf + pos, 34); pos = pos + 1;
+        }
 
-    # rollback_available
-    var rah = ",\"rollback_available\":";
-    memcpy(buf + pos, rah, strlen(rah));
-    pos = pos + strlen(rah);
-    if (update_state_rollback_available(state) == 1) {
-        memcpy(buf + pos, "true", 4); pos = pos + 4;
-    } else {
-        memcpy(buf + pos, "false", 5); pos = pos + 5;
-    }
+        # rollback_available
+        var rah = ",\"rollback_available\":";
+        memcpy(buf + pos, rah, strlen(rah));
+        pos = pos + strlen(rah);
+        if (update_state_rollback_available(state) == 1) {
+            memcpy(buf + pos, "true", 4); pos = pos + 4;
+        } else {
+            memcpy(buf + pos, "false", 5); pos = pos + 5;
+        }
 
-    # boot_count
-    var bch = ",\"boot_count\":";
-    memcpy(buf + pos, bch, strlen(bch));
-    pos = pos + strlen(bch);
-    var bc = update_state_boot_count(state);
-    var bc_buf[8];
-    var bc_len = fmt_int_buf(bc, &bc_buf);
-    memcpy(buf + pos, &bc_buf, bc_len);
-    pos = pos + bc_len;
+        # boot_count
+        var bch = ",\"boot_count\":";
+        memcpy(buf + pos, bch, strlen(bch));
+        pos = pos + strlen(bch);
+        var bc = update_state_boot_count(state);
+        var bc_buf[8];
+        var bc_len = fmt_int_buf(bc, &bc_buf);
+        memcpy(buf + pos, &bc_buf, bc_len);
+        pos = pos + bc_len;
 
-    store8(buf + pos, 125); pos = pos + 1;  # '}'
+        store8(buf + pos, 125); pos = pos + 1;  # '}'
     store8(buf + pos, 10); pos = pos + 1;   # '\n'
     store8(buf + pos, 0);
 

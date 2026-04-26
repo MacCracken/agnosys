@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-04-26
+
+**Toolchain bump 5.2.0 → 5.7.6 + CI/release alignment with the yukti pattern.** No source changes; agnosys built and tested clean against 5.7.6 as-is. The win is the manifest refactor: moving `modules` from `[build]` to `[lib]` cuts the binary 306,344 → 73,144 B (76% reduction) by eliminating the double-include path (5.x `cyrius build` prepends `[build] modules` before `src/main.cyr`, which then re-includes them via `include` directives).
+
+### Changed
+- `cyrius.cyml`: pin `cyrius = "5.2.0"` → `"5.7.6"`; moved module list from `[build] modules` → `[lib] modules` (yukti pattern). `cyrius distlib` still produces a byte-identical `dist/agnosys.cyr`.
+- `.github/workflows/ci.yml`: ported to yukti shape — toolchain version derived from `cyrius.cyml` (no `CYRIUS_VERSION` env pin), tarball install from tagged release, `cyrius deps --verify` gate (skip-if-no-lock), `cyrius fmt --check` drift gate, `cyrius lint` warn-fail with auto-discovery, dist-bundle staleness gate, `CYRIUS_DCE=1` builds, best-effort aarch64 cross-build, awk-based comment filtering in security scan.
+- `.github/workflows/release.yml`: accepts both `v1.0.1` and `1.0.1` tag shapes; strips optional `v` prefix for VERSION match; DCE build; aarch64 cross-build; regenerates `dist/agnosys.cyr` before archive; ships prebuilt x86_64 + aarch64 binaries alongside source tarball + bundle + SHA256SUMS + cyrius.lock.
+- `CLAUDE.md`: min cyrius version 5.2.0 → 5.7.6; reserved-keyword DO-NOT list adds `secret` (introduced as a sigil-driven qualifier in 5.3.5, lexer-reserved through the 5.6.45 grammar refresh).
+- `scripts/audit.sh`: vet gate now relies on exit code only; cyrius 5.7.x changed `cyrius vet` output format and the prior `grep "0 untrusted, 0 missing"` no longer matches. Aligns with the yukti CI pattern.
+- Vendored stdlib refreshed via `cyrius deps` to match the cyrius 5.7.6 snapshot: `lib/alloc.cyr`, `lib/io.cyr`, `lib/string.cyr`, `lib/syscalls.cyr`. Note the alloc/syscalls diff is large because 5.5.x split syscalls into per-OS modules (`syscalls_linux.cyr` / `syscalls_agnos.cyr` already vendored; `lib/syscalls.cyr` is now a thin dispatcher) and 5.5.16 added macOS support — relevant to the planned Mac/Windows platform-abstraction work.
+- Reformatted `src/pam.cyr`, `src/secureboot.cyr`, `src/update.cyr` (whitespace-only via `cyrius fmt`); shortened over-120-byte lines in `tests/bcyr/bench_compare.bcyr` (box-drawing separator) and `fuzz/certpin_pin.fcyr` (split trailing comments) so the new lint warn-fail gate stays green.
+
+### Verified
+- `cyrius build src/main.cyr build/agnosys` → 73,144-byte ELF (down from 306,344 B), clean.
+- `cyrius distlib` → `dist/agnosys.cyr` byte-identical to committed (314,910 B).
+- `cyrius test` → 222 passed, 0 failed.
+- `./build/agnosys` smoke prints "agnosys ready — 20 modules ported" through the full module list.
+- `scripts/audit.sh` 10-gate pass.
+
 ## [1.0.0] - 2026-04-17
 
 **API freeze.** Every public function carries its module prefix; the surface at `docs/development/api-surface-1.0.snapshot` is the stable contract. Future 1.x releases add functions; removing or changing signatures will bump to 2.0.

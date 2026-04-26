@@ -649,9 +649,9 @@ fn pam_validate_rule(rule) {
         }
         if (ch == 123) {
             return err_invalid_argument("PAM module: dangerous char '{'");
-        }
-        if (ch == 125) {
-            return err_invalid_argument("PAM module: dangerous char '}'");
+            }
+            if (ch == 125) {
+                return err_invalid_argument("PAM module: dangerous char '}'");
         }
         mi = mi + 1;
     }

@@ -4,12 +4,19 @@ version = "${file:VERSION}"
 description = "agnosys — AGNOS kernel interface library"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.2.0"
+cyrius = "5.7.6"
 repository = "https://github.com/MacCracken/agnosys"
 
 [build]
 entry = "src/main.cyr"
 output = "agnosys"
+
+# `[lib]` exists so `cyrius distlib` knows what to concatenate into
+# dist/agnosys.cyr. Don't move `modules` into `[build]` — it makes
+# `cyrius build` prepend them before src/main.cyr, which then
+# re-includes them via src/main.cyr's `include` directives and
+# inflates the binary.
+[lib]
 modules = [
     "src/error.cyr",
     "src/syscall.cyr",

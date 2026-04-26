@@ -23,8 +23,10 @@ var valid = "YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=";
 if (certpin_validate_pin_format("") != 0) { syscall(60, 10); }
 if (certpin_validate_pin_format("A") != 0) { syscall(60, 11); }
 if (certpin_validate_pin_format("AAA") != 0) { syscall(60, 12); }
-if (certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") != 0) { syscall(60, 13); }  # 43 chars — too short
-if (certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") != 0) { syscall(60, 14); }  # 45 — too long
+# 43 chars — too short
+if (certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") != 0) { syscall(60, 13); }
+# 45 chars — too long
+if (certpin_validate_pin_format("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") != 0) { syscall(60, 14); }
 if (certpin_validate_pin_format(valid) != 1) { syscall(60, 15); }
 
 # --- bad characters at every position of a well-formed pin ---

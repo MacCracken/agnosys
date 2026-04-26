@@ -234,8 +234,8 @@ fn secureboot_parse_mokutil_list(output, outlen) {
             # Save previous key if any
             if (in_key == 1 && strlen(cur_fingerprint) > 0) {
                 vec_push(keys, secureboot_enrolled_key_new(
-                    cur_subject, cur_issuer, cur_fingerprint,
-                    cur_not_before, cur_not_after));
+                cur_subject, cur_issuer, cur_fingerprint,
+                cur_not_before, cur_not_after));
             }
             cur_subject = "";
             cur_issuer = "";
@@ -316,8 +316,8 @@ fn secureboot_parse_mokutil_list(output, outlen) {
     # Save last key
     if (in_key == 1 && strlen(cur_fingerprint) > 0) {
         vec_push(keys, secureboot_enrolled_key_new(
-            cur_subject, cur_issuer, cur_fingerprint,
-            cur_not_before, cur_not_after));
+        cur_subject, cur_issuer, cur_fingerprint,
+        cur_not_before, cur_not_after));
     }
 
     return keys;

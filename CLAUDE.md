@@ -4,7 +4,7 @@
 
 **Agnosys** (agi + nosys — the gnosis of AGI at the system level) is the AGNOS kernel interface library. Cyrius bindings for Linux kernel syscalls and security primitives. Consumers include only the modules they need, or include `dist/agnosys.cyr` for the full bundle.
 
-- **Language**: Cyrius (min 5.2.0)
+- **Language**: Cyrius (min 5.7.6)
 - **License**: GPL-3.0-only
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -122,7 +122,7 @@ scripts/check-api-surface.sh              # diff public API vs. 1.0 snapshot
 - Do not skip `scripts/audit.sh` before claiming a change is ready
 - Do not skip benchmarks before claiming performance improvements
 - Do not commit `build/`
-- Do not use reserved keywords as variable names (`match`, `default`, `shared`, `in`)
+- Do not use reserved keywords as variable names (`match`, `default`, `shared`, `in`, `secret`)
 - Do not define functions with 7+ parameters — split into `module_thing_new(...)` + `module_thing_set_*(...)` pattern
 - Do not rename a public function without bumping the API snapshot via `scripts/check-api-surface.sh --update` and updating CHANGELOG `Breaking`
 - Do not edit `dist/agnosys.cyr` by hand — regenerate via `cyrius distlib`
