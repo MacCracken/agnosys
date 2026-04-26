@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-04-26
+
+**P(-1) sweep follow-up to 1.0.1.** Doc + test gaps caught while re-walking the P(-1) Scaffold/Project Hardening process against the just-released 1.0.1 tree. No source changes; the audit fixes themselves shipped clean in 1.0.1. This release closes the regression-test contract (audit step 6) and the documentation contract (audit step 8) that the prior pass landed only partially.
+
+### Added
+- `tests/tcyr/test_integration.tcyr::test_audit_regressions` — 12 deterministic assertions pinning the 1.0.1 audit-finding fixes. F-1 round-trips shell-metacharacter strings through `journald_filter_set_grep` / `set_unit` and asserts verbatim get-back (would catch any future setter that escapes or splits). F-2 covers seven cipher allowlist cases: three `null` substring variants (`cipher_null`, `Cipher_Null`, `xts-NULL`), two off-allowlist rejections, two allowed pairs (`aes`/`xts-plain64`, `serpent`/`cbc-essiv:sha256`). F-3 calls `luks_keyfile_path()` twice and asserts the paths differ (proves the getrandom suffix is actually random, not a degraded constant). Total integration assertions: 245 → 257.
+- `docs/adr/` — directory created. Three ADRs covering the material 1.0.1 decisions:
+  - **ADR-001** — argv-based exec for kernel-boundary subprocess invocation. Generalizes F-1's fix into a project-wide rule: every userspace tool wrapper goes through `lib/process.cyr::exec_capture` with explicit `argv` vec; `sys_system` is reserved for shell-feature-required, no-caller-input cases (currently zero call sites).
+  - **ADR-002** — LUKS cipher allowlist with case-insensitive `null`-substring rejection. Records the policy (allowlist over denylist), the 4×4 algo×mode matrix, and why the substring check exists on top of the allowlist.
+  - **ADR-003** — `[lib] modules` manifest layout, with the 306 KB → 73 KB measurement and a "do not move back to `[build]`" guardrail for future contributors.
+- `bench-history.csv` — row recorded at commit `562a014` (1.0.1). The prior 1.0.1 release shipped without one because the closeout step 2 was skipped during the interrupted session. Notable: `ct_streq_equal` 239 → 139 ns, `ct_streq_diff` 238 → 148 ns under the 5.7.6 toolchain. The constant-time XOR-accumulator implementation is unchanged; the wider equal-vs-diff gap (~9 ns) appears to be a 5.7.6 codegen artifact and is being tracked.
+
+### Documentation
+- `docs/SECURITY-NOTES.md` — secureboot section now references F-4 (the `agnosys_uname`-driven sign-file fallback) and explains that the pre-1.0.1 hardcoded path resolved to a non-existent file on every supported distro. dmverity section gains the rationale for 4 KB function-scope `var buf[N]` output buffers (cyrius static-data hazard does not apply at these specific sites because contents are consumed before any sibling function reuses the slot) and notes that CI's security scan tightened to warn ≥ 4 KB / fail ≥ 64 KB in 1.0.1 (audit finding F-5).
+
+### Verified
+- `cyrius test` → 234 passed, 0 failed (was 222 in 1.0.1; +12 audit-regression assertions).
+- `scripts/audit.sh` 10-gate pass.
+- `dist/agnosys.cyr` regenerated. The only delta vs. 1.0.1 is the `# Version:` stamp in the header comment; module bodies are identical (no `src/*.cyr` changes; manifest list unchanged).
+- Binary size unchanged at 73,144 B.
+
 ## [1.0.1] — 2026-04-26
 
 **Toolchain bump 5.2.0 → 5.7.6 + CI/release alignment with the yukti pattern.** No source changes; agnosys built and tested clean against 5.7.6 as-is. The win is the manifest refactor: moving `modules` from `[build]` to `[lib]` cuts the binary 306,344 → 73,144 B (76% reduction) by eliminating the double-include path (5.x `cyrius build` prepends `[build] modules` before `src/main.cyr`, which then re-includes them via `include` directives).

@@ -473,6 +473,54 @@ fn test_journald() {
 }
 
 # ================================================================
+# audit regressions (12 assertions) — pinned exploit vectors from
+# the 2026-04-26 P(-1) audit. Fuzz harnesses cover input families;
+# these assertions pin the specific behaviors so a future refactor
+# can't silently undo a finding's fix.
+# ================================================================
+
+fn test_audit_regressions() {
+    println("-- audit regressions --");
+
+    # F-1 — journald filter values must round-trip verbatim through
+    # set/get. The whole point of the argv-based exec rewrite is that
+    # shell metacharacters land in argv[i] unchanged for journalctl
+    # to consume verbatim. If a setter ever starts escaping or
+    # splitting, this breaks first.
+    var f = journald_filter_new();
+    var hostile = "; rm -rf /; #";
+    journald_filter_set_grep(f, hostile);
+    assert(streq(journald_filter_grep(f), hostile) == 1, "f1_grep_verbatim");
+    journald_filter_set_unit(f, "sshd.service; touch /tmp/pwn");
+    assert(streq(journald_filter_unit(f), "sshd.service; touch /tmp/pwn") == 1, "f1_unit_verbatim");
+
+    # F-2 — LUKS cipher allowlist. cipher_null and any "null" substring
+    # (case-insensitive) must reject; off-allowlist algos/modes must
+    # reject; the four allowed algos × four allowed modes must accept.
+    assert(is_err_result(luks_validate_cipher("cipher_null", "ecb")) == 1, "f2_null_lower");
+    assert(is_err_result(luks_validate_cipher("Cipher_Null", "ecb")) == 1, "f2_null_mixed");
+    assert(is_err_result(luks_validate_cipher("aes", "xts-NULL")) == 1, "f2_null_in_mode");
+    assert(is_err_result(luks_validate_cipher("chacha20", "xts-plain64")) == 1, "f2_off_algo");
+    assert(is_err_result(luks_validate_cipher("aes", "ecb")) == 1, "f2_off_mode");
+    assert(is_ok(luks_validate_cipher("aes", "xts-plain64")) == 1, "f2_aes_xts");
+    assert(is_ok(luks_validate_cipher("serpent", "cbc-essiv:sha256")) == 1, "f2_serpent_cbc");
+
+    # F-3 — LUKS keyfile path must include the /tmp/.agnos-luks- prefix
+    # AND two consecutive calls must return distinct paths (the random
+    # 16-hex suffix from getrandom defeats prediction). If getrandom
+    # ever degrades to fixed bytes, both calls return the same string.
+    var p1_res = luks_keyfile_path();
+    assert(is_ok(p1_res) == 1, "f3_p1_ok");
+    var p1 = payload(p1_res);
+    var p2_res = luks_keyfile_path();
+    assert(is_ok(p2_res) == 1, "f3_p2_ok");
+    var p2 = payload(p2_res);
+    assert(streq(p1, p2) == 0, "f3_unique");
+
+    return 0;
+}
+
+# ================================================================
 # edge cases (24 assertions) — boundary/error paths that the
 # per-module tests above don't reach, validated pre-1.0 freeze.
 # ================================================================
@@ -572,6 +620,8 @@ fn main() {
     alloc_reset(); alloc_init();
     test_journald();
     bootloader_danger_reset(); alloc_reset(); alloc_init();
+    test_audit_regressions();
+    alloc_reset(); alloc_init();
     test_edge_cases();
     println("");
     var f = assert_summary();

@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-04-26 (1.0.1)
+**Last refresh:** 2026-04-26 (1.0.2)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.0.1** |
+| `VERSION` | **1.0.2** |
 | `cyrius.cyml [package].cyrius` | **5.7.6** |
 | Min Cyrius (consumer) | 5.7.6 |
 | Last cyrius bump | 5.2.0 → 5.7.6 (1.0.1) |
@@ -59,15 +59,15 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 
 | Category | Count | Where |
 |---|---|---|
-| Integration tests passed | **222 / 222** | `cyrius test` |
-| Integration assertions | 246 | `tests/tcyr/test_integration.tcyr` |
-| Fuzz harnesses | 3 | `fuzz/audit_nlmsg.fcyr`, `fuzz/certpin_pin.fcyr`, `fuzz/pam_config.fcyr` |
+| Integration tests passed | **234 / 234** | `cyrius test` |
+| Integration assertions | 257 | `tests/tcyr/test_integration.tcyr` (audit-regression block added 1.0.2) |
+| Fuzz harnesses | 6 | `fuzz/audit_nlmsg.fcyr`, `fuzz/audit_reply.fcyr`, `fuzz/certpin_pin.fcyr`, `fuzz/journald_filter.fcyr`, `fuzz/luks_cipher.fcyr`, `fuzz/pam_config.fcyr` |
 | Benchmarks | 30 (11 groups) | `tests/bcyr/bench_all.bcyr` |
 | Bench file (compare) | 1 | `tests/bcyr/bench_compare.bcyr` (Cyrius vs Rust port baseline) |
 
 ## Local Audit Gates (`scripts/audit.sh`)
 
-10 gates, all green at 1.0.1: syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
+10 gates, all green at 1.0.2: syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
 
 ## CI Workflow Status
 
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.0.1** | 2026-04-26 | Toolchain bump 5.2.0 → 5.7.6; CI ported to yukti pattern; binary size 76% reduction via `[lib]`-modules refactor |
+| **1.0.2** | 2026-04-26 | P(-1) sweep follow-up: audit-regression integration tests, three ADRs, SECURITY-NOTES F-4/F-5 entries, bench-history row for 1.0.1 |
+| 1.0.1 | 2026-04-26 | Toolchain bump 5.2.0 → 5.7.6; CI ported to yukti pattern; binary size 76% reduction via `[lib]`-modules refactor; audit findings F-1..F-6 fixed |
 | 1.0.0 | 2026-04-17 | API freeze. 139 renames, 20 modules ported, 556 public fns, 220 integration assertions, 30 benchmarks |
 | 0.97.1 | 2026-04 (pre-1.0) | Rust source deleted, Cyrius port complete |
 
@@ -121,7 +122,7 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 
 ## In-Flight Slots
 
-None. Post-1.0.1 backlog is in [`roadmap.md`](roadmap.md) Phase 8.
+None. Post-1.0.2 backlog is in [`roadmap.md`](roadmap.md) Phase 8.
 
 ## Last Security Audit
 

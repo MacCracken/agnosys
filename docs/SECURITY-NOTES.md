@@ -76,6 +76,7 @@ with different trust boundaries and privilege requirements.
 - Shells out to `veritysetup` for format and verify operations.
 - Constant-time root hash comparison to prevent timing side-channels.
 - Salt size capped to prevent malicious superblock OOM.
+- 4 KB output buffers in `dmverity` / `ima` `exec_capture` call sites are function-scope `var buf[N]` — in cyrius these are static-data, not stack (consecutive calls to a function with `var buf[N]` clobber the slot). The contents are consumed within the same call before any sibling function reuses the buffer, so the clobber hazard does not apply at these specific sites. CI's security scan warns on any function-scope buffer ≥ 4 KB and fails ≥ 64 KB to surface this hazard class for new code. Audit finding F-5 — visibility scan tightened in 1.0.1.
 
 ## audit
 
@@ -130,6 +131,7 @@ with different trust boundaries and privilege requirements.
 - Reads EFI variables from /sys/firmware/efi/efivars/.
 - EFI variable format: 4-byte attributes header + data payload.
 - Boolean variables (SecureBoot, SetupMode) check byte at offset 4.
+- **Module signing fallback** uses `agnosys_uname(2)` to detect the running kernel release at runtime, then probes `/lib/modules/<release>/build/scripts/sign-file` and `/usr/src/linux/scripts/sign-file` via `sys_access` before invoking. The pre-1.0.1 hardcoded path `/usr/lib/modules-load.d/../linux/scripts/sign-file` resolved to `/usr/lib/linux/scripts/sign-file` which does not exist on any supported distro. Audit finding F-4 — fixed in 1.0.1.
 
 ## journald
 
