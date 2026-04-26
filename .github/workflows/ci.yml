@@ -199,16 +199,19 @@ jobs:
           # Writes to system paths that agnosys shouldn't touch
           scan "writes to /bin"  '"/bin/'
           scan "writes to /sbin" '"/sbin/'
-          # Unbounded stack buffers (>= 64KB — force heap review).
-          # NB: cyrius emits `var buf[N]` in fn scope as static data,
-          # not stack — the same warning the build emits for "large
-          # static data". Catch it here too.
+          # Unbounded fn-scope buffers (cyrius emits `var buf[N]` inside
+          # functions as STATIC DATA, not stack — consecutive calls
+          # share the backing memory; any returned Str/buf borrow into
+          # them is invalidated by the next call). Per audit F-5
+          # (2026-04-26), surface anything >= 4 KB to make the class
+          # visible. >= 64 KB fails the build.
           awk -F: '
             /var [A-Za-z_][A-Za-z0-9_]*\[[0-9]+\]/ {
               match($0, /\[[0-9]+\]/); s=substr($0,RSTART+1,RLENGTH-2); n=s+0;
-              if (n >= 65536) print FILENAME":"NR": large static buffer ("n" bytes): "$0
+              if (n >= 65536) print FILENAME":"NR": FAIL large static buffer ("n" bytes): "$0
+              else if (n >= 4096) print FILENAME":"NR": warn fn-scope buffer ("n" bytes): "$0
             }' src/*.cyr | tee /tmp/bigbuf.txt
-          [ -s /tmp/bigbuf.txt ] && FAIL=1
+          if grep -q "^.*: FAIL " /tmp/bigbuf.txt; then FAIL=1; fi
           echo "security scan complete (fail: $FAIL)"
           exit $FAIL
 

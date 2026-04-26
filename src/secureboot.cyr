@@ -420,9 +420,42 @@ fn secureboot_sign_module(module_path, private_key, certificate) {
     var n = exec_capture(args, &outbuf, 1023);
     if (n >= 0) { return Ok(0); }
 
-    # Fallback: sign-file from kernel headers
+    # Fallback: sign-file from kernel headers. Audit F-4 (2026-04-26):
+    # the prior hardcoded "/usr/lib/modules-load.d/../linux/scripts/sign-file"
+    # resolved to /usr/lib/linux/scripts/sign-file which does not exist on
+    # any supported distro. Now we build the path at runtime from the
+    # running kernels release string and fall back to /usr/src/linux.
+    var uts[392];
+    var ures = agnosys_uname(&uts);
+    if (is_err_result(ures) == 1) {
+        return err_io(0, "sign-file fallback: uname(2) failed");
+    }
+    var release = uname_release(&uts);
+    var rlen = strlen(release);
+    # Try /lib/modules/<release>/build/scripts/sign-file first
+    var p1_pre = "/lib/modules/";
+    var p1_suf = "/build/scripts/sign-file";
+    var p1_pre_len = strlen(p1_pre);
+    var p1_suf_len = strlen(p1_suf);
+    var p1_total = p1_pre_len + rlen + p1_suf_len + 1;
+    var p1 = alloc(p1_total);
+    memcpy(p1, p1_pre, p1_pre_len);
+    memcpy(p1 + p1_pre_len, release, rlen);
+    memcpy(p1 + p1_pre_len + rlen, p1_suf, p1_suf_len);
+    store8(p1 + p1_total - 1, 0);
+    var sign_file = 0;
+    if (sys_access(p1, 0) == 0) {
+        sign_file = p1;
+    } else {
+        # Then /usr/src/linux/scripts/sign-file
+        var p2 = "/usr/src/linux/scripts/sign-file";
+        if (sys_access(p2, 0) == 0) { sign_file = p2; }
+    }
+    if (sign_file == 0) {
+        return err_io(0, "module signing: kmodsign missing and sign-file not found");
+    }
     var args2 = vec_new();
-    vec_push(args2, "/usr/lib/modules-load.d/../linux/scripts/sign-file");
+    vec_push(args2, sign_file);
     vec_push(args2, "sha256");
     vec_push(args2, private_key);
     vec_push(args2, certificate);
@@ -430,7 +463,7 @@ fn secureboot_sign_module(module_path, private_key, certificate) {
 
     n = exec_capture(args2, &outbuf, 1023);
     if (n < 0) {
-        return err_io(0, "kernel module signing failed (kmodsign and sign-file)");
+        return err_io(0, "kernel module signing failed (kmodsign and sign-file both errored)");
     }
 
     return Ok(0);

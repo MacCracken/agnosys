@@ -54,6 +54,7 @@ with different trust boundaries and privilege requirements.
 - **Irreversible (unshare):** creates new namespace for calling thread.
 - Per-PID nftables temp file instead of fixed path (avoids races).
 - nftables buffer increased to 16KB with bounds checking.
+- **nftables ruleset is pass-through.** `netns_apply_nftables_ruleset` invokes `nft -f -` with the caller-supplied ruleset string via argv (`exec_vec`, no shell). agnosys does **not** parse or sanitize the ruleset content; the kernel nft surface is exposed to whatever the caller provides. Consumers (nein) must trust their ruleset source. Recent kernel CVEs in this surface include CVE-2026-31407 (conntrack netlink validation) and CVE-2026-23231 (UAF in `nft_chain`); agnosys is on the data path, not the vulnerability sink.
 
 ## certpin
 
@@ -65,9 +66,10 @@ with different trust boundaries and privilege requirements.
 
 ## luks
 
-- Shells out to `cryptsetup`, `fallocate`, `losetup`, `mkfs.*`, `mount`, `umount`.
-- Per-PID keyfile path instead of predictable `/tmp/.agnos-luks-keyfile`.
-- Keyfile created with mode 0600.
+- Shells out to `cryptsetup`, `fallocate`, `losetup`, `mkfs.*`, `mount`, `umount` via `exec_vec` (argv-based, no shell).
+- Keyfile path = `/tmp/.agnos-luks-<pid>-<16hex>` where the 16 hex chars are 8 bytes from `getrandom(2)`. PID alone is enumerable; the random suffix defeats prediction. `luks_keyfile_path` returns `Result(path)` so callers handle a getrandom failure (audit finding F-3, fixed in 1.0.1).
+- Keyfile open uses `O_WRONLY | O_CREAT | O_TRUNC | O_EXCL | O_NOFOLLOW` mode 0600. `O_EXCL` closes the create-race window; `O_NOFOLLOW` refuses to traverse a symlink at the final component (CVE-2025-6020 / pam_namespace symlink-race class).
+- `luks_validate_cipher(algo, mode)` allowlists `aes`/`serpent`/`twofish`/`camellia` × `xts-plain64`/`cbc-plain64`/`xts-essiv:sha256`/`cbc-essiv:sha256`. Rejects any name containing `null` (case-insensitive — catches `cipher_null-ecb`, `Cipher_Null`, `NULL`). Wired into `luks_config_validate` so `luks_format` and `luks_open` both gate on it. Audit finding F-2 (Trail of Bits Oct 2025 confidential-VM disclosure) — fixed in 1.0.1, fuzz coverage at `fuzz/luks_cipher.fcyr`.
 
 ## dmverity
 
@@ -76,6 +78,8 @@ with different trust boundaries and privilege requirements.
 - Salt size capped to prevent malicious superblock OOM.
 
 ## audit
+
+- Netlink reply parsers verify the full nlmsghdr, not just length: `nlmsg_len` ≤ bytes received, `nlmsg_seq == 1` (request seq), `NLMSG_ERROR` (type 2) surfaces as a structured `err_syscall_failed` with the negative-errno extracted from the payload, any other unexpected `nlmsg_type` is rejected. Defends against the netlink-validation kernel CVE class (CVE-2026-31495 ctnetlink, CVE-2026-31407 conntrack). Audit finding F-6 — fixed in 1.0.1, fuzz coverage at `fuzz/audit_reply.fcyr`.
 
 - Raw netlink AUDIT protocol via `syscall()`.
 - **Privilege: CAP_AUDIT_READ or CAP_AUDIT_CONTROL** for socket operations.
@@ -133,6 +137,7 @@ with different trust boundaries and privilege requirements.
 - Journal protocol: `KEY=VALUE\n` for single-line, binary length prefix for multi-line.
 - Fields with newline characters in keys are skipped (injection prevention).
 - No authentication — any process can write to the journal socket.
+- **`journald_query` uses argv-based exec — no shell.** Every filter value (`unit`, `grep`, `since`, `until`, `boot`, `priority`, `lines`) lands in its own `argv[i]` entry via `lib/process.cyr::exec_capture`; journalctl reads the value verbatim, no metacharacter expansion. Consumers passing external input through filter setters are safe from command injection. Audit finding F-1 (HIGH) — fixed in 1.0.1, fuzz coverage at `fuzz/journald_filter.fcyr`.
 
 ## bootloader
 

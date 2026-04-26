@@ -110,60 +110,68 @@ fn journald_filter_lines(f) { return load64(f + 40); }
 fn journald_filter_boot(f) { return load64(f + 48); }
 
 # ================================================================
-# Build journalctl argument string
+# Build journalctl argv vec
 # ================================================================
 
-# Build the argument list for a journalctl invocation from a filter.
-# Returns a Str with all arguments space-separated (for run_capture).
-# Note: since run_capture uses _exec3 with only 2 extra args, we build
-# a single combined argument string and use /bin/sh -c for complex queries.
-fn journald_build_args(filter) {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "journalctl --output=json --no-pager");
+# Build a vec of cstring args for an exec_vec / exec_capture invocation
+# of journalctl. Each filter value lands in its OWN argv entry — no shell,
+# no concatenation, no metacharacter expansion. Caller-controlled values
+# (unit, grep, since, until, boot) are passed verbatim to journalctl as
+# argv[i]; an attacker controlling those values cannot escape into the
+# shell because there is no shell. See audit F-1 (2026-04-26).
+fn _journald_build_argv(filter) {
+    var args = vec_new();
+    vec_push(args, "/usr/bin/journalctl");
+    vec_push(args, "--output=json");
+    vec_push(args, "--no-pager");
 
     var unit = load64(filter);
     if (unit != 0) {
-        str_builder_add_cstr(sb, " --unit=");
-        str_builder_add(sb, unit);
+        vec_push(args, "--unit");
+        vec_push(args, str_cstr(unit));
     }
 
     var since = load64(filter + 8);
     if (since != 0) {
-        str_builder_add_cstr(sb, " --since=");
-        str_builder_add(sb, since);
+        vec_push(args, "--since");
+        vec_push(args, str_cstr(since));
     }
 
     var until = load64(filter + 16);
     if (until != 0) {
-        str_builder_add_cstr(sb, " --until=");
-        str_builder_add(sb, until);
+        vec_push(args, "--until");
+        vec_push(args, str_cstr(until));
     }
 
     var prio = load64(filter + 24);
     if (prio >= 0) {
-        str_builder_add_cstr(sb, " --priority=");
-        str_builder_add_int(sb, prio);
+        var pbuf = alloc(24);
+        fmt_int_buf(prio, pbuf);
+        vec_push(args, "--priority");
+        vec_push(args, pbuf);
     }
 
     var grep = load64(filter + 32);
     if (grep != 0) {
-        str_builder_add_cstr(sb, " --grep=");
-        str_builder_add(sb, grep);
+        vec_push(args, "--grep");
+        vec_push(args, str_cstr(grep));
     }
 
     var lines = load64(filter + 40);
     if (lines >= 0) {
-        str_builder_add_cstr(sb, " --lines=");
-        str_builder_add_int(sb, lines);
+        var lbuf = alloc(24);
+        fmt_int_buf(lines, lbuf);
+        vec_push(args, "--lines");
+        vec_push(args, lbuf);
     }
 
     var boot = load64(filter + 48);
     if (boot != 0) {
-        str_builder_add_cstr(sb, " --boot=");
-        str_builder_add(sb, boot);
+        vec_push(args, "--boot");
+        vec_push(args, str_cstr(boot));
     }
 
-    return str_builder_build(sb);
+    return args;
 }
 
 # ================================================================
@@ -428,17 +436,20 @@ fn journald_parse_json(json_line) {
 # Query the systemd journal using journalctl and parse JSON output.
 # filter: JournalFilter pointer (from journald_filter_new).
 # Returns Result: Ok(vec_of_entry_ptrs) or Err.
+#
+# Argv-based exec via lib/process.cyr's exec_capture: every filter value
+# becomes its OWN argv entry. No shell. No metacharacter expansion.
+# A consumer that passes attacker-controlled input through filter setters
+# is safe — the value lands in argv[i] and is read verbatim by journalctl.
+# See audit F-1 (2026-04-26) and SECURITY-NOTES.md § journald.
 fn journald_query(filter) {
-    var cmd_str = journald_build_args(filter);
-
-    # Use /bin/sh -c "<cmd>" to execute the full command
+    var args = _journald_build_argv(filter);
     var buf = alloc(131072);  # 128KB capture buffer
-    var res = run_capture("/bin/sh", "-c", str_data(cmd_str), buf, 131072);
-    if (is_err_result(res) == 1) {
+    var nbytes = exec_capture(args, buf, 131072);
+    if (nbytes < 0) {
         return err_unknown("failed to execute journalctl");
     }
 
-    var nbytes = payload(res);
     store8(buf + nbytes, 0);
     var output = str_new(buf, nbytes);
 

@@ -1,0 +1,125 @@
+# Fuzz: audit_get_status reply parser must reject malformed nlmsg replies.
+# Audit F-6 (2026-04-26): post-fix audit_get_status validates nlmsg_type
+# matches AUDIT_GET, nlmsg_seq matches the request, and surfaces NLMSG_ERROR
+# replies as structured errors. This harness exercises the validation logic
+# directly by simulating the byte-level decisions the parser makes.
+#
+# We don''t actually open a netlink socket here (root-only). Instead this
+# harness pokes the same byte patterns into a synthetic recv_buf and re-runs
+# the validation block''s checks via local copies of the same constants.
+# CI invokes: build/audit_reply 500
+
+#define LINUX
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+include "src/audit.cyr"
+
+alloc_init();
+
+# Constants mirrored from src/audit.cyr (file-local enum scoping).
+var NLMSG_ERROR_K = 2;
+var AUDIT_GET_K = 1000;
+var NLMSG_HDRLEN_K = 16;
+
+# Helper: build a synthetic nlmsg reply at buf with given type+seq+payload_len.
+# Returns nbytes written.
+fn mk_nlmsg(buf, msg_type, seq, payload_len) {
+    var total = NLMSG_HDRLEN_K + payload_len;
+    memset(buf, 0, total);
+    store32(buf, total);          # nlmsg_len
+    store16(buf + 4, msg_type);   # nlmsg_type
+    store16(buf + 6, 0);          # flags
+    store32(buf + 8, seq);        # nlmsg_seq
+    store32(buf + 12, 0);         # nlmsg_pid
+    return total;
+}
+
+# The validation logic the production parser runs. Returns 1 if reply is
+# accepted (would proceed to audit_status parse), 0 if rejected.
+# Mirrors the post-fix audit_get_status block byte-for-byte.
+fn would_accept(buf, nbytes) {
+    if (nbytes < NLMSG_HDRLEN_K) { return 0; }
+    var hdr_len = load32(buf);
+    var hdr_type = load16(buf + 4);
+    var hdr_seq = load32(buf + 8);
+    if (hdr_len > nbytes) { return 0; }
+    if (hdr_seq != 1) { return 0; }
+    if (hdr_type == NLMSG_ERROR_K) { return 0; }
+    if (hdr_type != AUDIT_GET_K) { return 0; }
+    if (nbytes < NLMSG_HDRLEN_K + 24) { return 0; }
+    return 1;
+}
+
+var buf = alloc(4096);
+
+# --- positive: AUDIT_GET, seq=1, payload >= 24 → accept ---
+var n0 = mk_nlmsg(buf, AUDIT_GET_K, 1, 32);
+if (would_accept(buf, n0) != 1) { syscall(60, 10); }
+
+# --- truncated below NLMSG_HDRLEN ---
+if (would_accept(buf, 8) != 0) { syscall(60, 20); }
+if (would_accept(buf, 0) != 0) { syscall(60, 21); }
+
+# --- nlmsg_len > nbytes (kernel claims more than we received) ---
+mk_nlmsg(buf, AUDIT_GET_K, 1, 1024);
+if (would_accept(buf, NLMSG_HDRLEN_K + 8) != 0) { syscall(60, 30); }
+
+# --- wrong seq ---
+mk_nlmsg(buf, AUDIT_GET_K, 0, 32);
+if (would_accept(buf, NLMSG_HDRLEN_K + 32) != 0) { syscall(60, 40); }
+mk_nlmsg(buf, AUDIT_GET_K, 99, 32);
+if (would_accept(buf, NLMSG_HDRLEN_K + 32) != 0) { syscall(60, 41); }
+
+# --- NLMSG_ERROR (kernel error reply) ---
+mk_nlmsg(buf, NLMSG_ERROR_K, 1, 32);
+if (would_accept(buf, NLMSG_HDRLEN_K + 32) != 0) { syscall(60, 50); }
+
+# --- unexpected nlmsg_type ---
+var bogus_types = vec_new();
+vec_push(bogus_types, 1);     # NLMSG_NOOP
+vec_push(bogus_types, 3);     # NLMSG_DONE
+vec_push(bogus_types, 1001);  # AUDIT_SET
+vec_push(bogus_types, 1011);  # AUDIT_ADD_RULE
+vec_push(bogus_types, 65535);
+
+var bi = 0;
+while (bi < vec_len(bogus_types)) {
+    mk_nlmsg(buf, vec_get(bogus_types, bi), 1, 32);
+    if (would_accept(buf, NLMSG_HDRLEN_K + 32) != 0) { syscall(60, 60); }
+    bi = bi + 1;
+}
+
+# --- valid type+seq but payload too short for audit_status ---
+mk_nlmsg(buf, AUDIT_GET_K, 1, 16);
+if (would_accept(buf, NLMSG_HDRLEN_K + 16) != 0) { syscall(60, 70); }
+mk_nlmsg(buf, AUDIT_GET_K, 1, 23);
+if (would_accept(buf, NLMSG_HDRLEN_K + 23) != 0) { syscall(60, 71); }
+
+# --- exact boundary: payload = 24 → accept ---
+var n_edge = mk_nlmsg(buf, AUDIT_GET_K, 1, 24);
+if (would_accept(buf, n_edge) != 1) { syscall(60, 72); }
+
+# --- iteration stress with random-ish type values ---
+var iters = 500;
+var x = 0;
+while (x < iters) {
+    var t = (x * 7919) & 65535;
+    mk_nlmsg(buf, t, 1, 32);
+    var got = would_accept(buf, NLMSG_HDRLEN_K + 32);
+    if (t == AUDIT_GET_K) {
+        if (got != 1) { syscall(60, 80); }
+    } else {
+        if (got != 0) { syscall(60, 81); }
+    }
+    x = x + 1;
+}
+
+syscall(1, 1, "audit_reply: ok\n", 16);
+syscall(60, 0);

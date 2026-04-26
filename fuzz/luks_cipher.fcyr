@@ -1,0 +1,70 @@
+# Fuzz: luks_validate_cipher rejects null/identity ciphers and off-list pairs.
+# Audit F-2 (2026-04-26): per Trail of Bits Oct 2025 LUKS2 confidential-VM
+# disclosure, cipher_null-ecb passes through cryptsetup unchanged.
+# Allowlist policy: aes/serpent/twofish/camellia + xts-plain64/cbc-plain64/
+# {xts,cbc}-essiv:sha256.
+# CI invokes: build/luks_cipher 500
+
+#define LINUX
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "src/error.cyr"
+include "src/luks.cyr"
+
+alloc_init();
+
+# --- positive cases (must accept) ---
+if (is_err_result(luks_validate_cipher("aes", "xts-plain64")) == 1) { syscall(60, 10); }
+if (is_err_result(luks_validate_cipher("aes", "cbc-plain64")) == 1) { syscall(60, 11); }
+if (is_err_result(luks_validate_cipher("aes", "xts-essiv:sha256")) == 1) { syscall(60, 12); }
+if (is_err_result(luks_validate_cipher("serpent", "xts-plain64")) == 1) { syscall(60, 13); }
+if (is_err_result(luks_validate_cipher("twofish", "xts-plain64")) == 1) { syscall(60, 14); }
+if (is_err_result(luks_validate_cipher("camellia", "cbc-plain64")) == 1) { syscall(60, 15); }
+
+# --- explicit null cipher attacks (Trail of Bits 2025) ---
+if (is_err_result(luks_validate_cipher("cipher_null", "ecb")) == 0) { syscall(60, 20); }
+if (is_err_result(luks_validate_cipher("null", "ecb")) == 0) { syscall(60, 21); }
+if (is_err_result(luks_validate_cipher("aes", "null")) == 0) { syscall(60, 22); }
+if (is_err_result(luks_validate_cipher("ciphernull", "xts-plain64")) == 0) { syscall(60, 23); }
+
+# --- case-variant null tokens ---
+if (is_err_result(luks_validate_cipher("Cipher_Null", "ecb")) == 0) { syscall(60, 24); }
+if (is_err_result(luks_validate_cipher("CIPHER_NULL", "ECB")) == 0) { syscall(60, 25); }
+if (is_err_result(luks_validate_cipher("Null", "xts-plain64")) == 0) { syscall(60, 26); }
+if (is_err_result(luks_validate_cipher("aes", "NuLl-plain64")) == 0) { syscall(60, 27); }
+
+# --- off-list algos (must reject) ---
+if (is_err_result(luks_validate_cipher("des", "cbc-plain64")) == 0) { syscall(60, 30); }
+if (is_err_result(luks_validate_cipher("rc4", "stream")) == 0) { syscall(60, 31); }
+if (is_err_result(luks_validate_cipher("blowfish", "cbc-plain64")) == 0) { syscall(60, 32); }
+if (is_err_result(luks_validate_cipher("AES", "xts-plain64")) == 0) { syscall(60, 33); }  # case-sensitive
+
+# --- off-list modes (must reject) ---
+if (is_err_result(luks_validate_cipher("aes", "ecb")) == 0) { syscall(60, 40); }
+if (is_err_result(luks_validate_cipher("aes", "cbc")) == 0) { syscall(60, 41); }
+if (is_err_result(luks_validate_cipher("aes", "xts")) == 0) { syscall(60, 42); }
+if (is_err_result(luks_validate_cipher("aes", "cfb-plain64")) == 0) { syscall(60, 43); }
+
+# --- empty / null pointer ---
+if (is_err_result(luks_validate_cipher("", "xts-plain64")) == 0) { syscall(60, 50); }
+if (is_err_result(luks_validate_cipher("aes", "")) == 0) { syscall(60, 51); }
+if (is_err_result(luks_validate_cipher(0, "xts-plain64")) == 0) { syscall(60, 52); }
+if (is_err_result(luks_validate_cipher("aes", 0)) == 0) { syscall(60, 53); }
+
+# --- iteration stress ---
+var iters = 500;
+var x = 0;
+while (x < iters) {
+    if (is_err_result(luks_validate_cipher("aes", "xts-plain64")) == 1) { syscall(60, 60); }
+    if (is_err_result(luks_validate_cipher("cipher_null", "ecb")) == 0) { syscall(60, 61); }
+    x = x + 1;
+}
+
+syscall(1, 1, "luks_cipher: ok\n", 16);
+syscall(60, 0);

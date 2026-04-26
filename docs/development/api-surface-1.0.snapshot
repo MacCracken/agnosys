@@ -224,7 +224,6 @@ ima::ima_status_policy_loaded/1
 ima::ima_target_str/1
 ima::ima_verify_file_integrity/1
 ima::ima_write_policy/1
-journald::journald_build_args/1
 journald::journald_debug/1
 journald::journald_entry_add_field/3
 journald::journald_entry_field_keys/1
@@ -300,6 +299,7 @@ luks::luks_pbkdf_as_str/1
 luks::luks_run_capture/3
 luks::luks_run_checked/1
 luks::luks_unmount/1
+luks::luks_validate_cipher/2
 luks::luks_write_keyfile/2
 luks::luks_zeroize_key/2
 mac::mac_apparmor_change_profile/1

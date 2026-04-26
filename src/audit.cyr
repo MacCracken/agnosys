@@ -32,6 +32,9 @@ enum AuditConst {
     NETLINK_AUDIT = 9;
     NLMSG_HDRLEN = 16;
     NLM_F_REQUEST = 1;
+    NLMSG_NOOP = 1;
+    NLMSG_ERROR = 2;
+    NLMSG_DONE = 3;
     AUDIT_GET = 1000;
     AUDIT_SET = 1001;
     AUDIT_USER = 1005;
@@ -425,9 +428,39 @@ fn audit_get_status(handle) {
     if (is_err_result(rres) == 1) { return rres; }
 
     var nbytes = payload(rres);
-    # Minimum: nlmsghdr (16) + at least 24 bytes of audit_status
+    # Audit F-6 (2026-04-26): validate the full nlmsghdr, not just length.
+    # Per CVE-2026-31495 (ctnetlink) and the broader netlink validation
+    # CVE class, defensive parsers must verify type + seq match the
+    # request and surface NLMSG_ERROR replies as structured errors
+    # instead of treating them as success.
+    if (nbytes < NLMSG_HDRLEN) {
+        return err_unknown("AUDIT_GET reply truncated (no nlmsghdr)");
+    }
+    var hdr_len = load32(recv_buf);          # u32 nlmsg_len
+    var hdr_type = load16(recv_buf + 4);     # u16 nlmsg_type
+    var hdr_seq = load32(recv_buf + 8);      # u32 nlmsg_seq
+    if (hdr_len > nbytes) {
+        return err_unknown("AUDIT_GET reply nlmsg_len exceeds bytes received");
+    }
+    if (hdr_seq != 1) {
+        return err_unknown("AUDIT_GET reply seq mismatch (expected 1)");
+    }
+    if (hdr_type == NLMSG_ERROR) {
+        # struct nlmsgerr { s32 error; struct nlmsghdr msg; }
+        if (nbytes < NLMSG_HDRLEN + 4) {
+            return err_unknown("NLMSG_ERROR reply truncated (no error code)");
+        }
+        var nerr = load32(recv_buf + NLMSG_HDRLEN);  # negative errno
+        if (nerr == 0) {
+            return err_unknown("NLMSG_ERROR with zero error (ack-only)");
+        }
+        return err_syscall_failed(0 - nerr, "AUDIT_GET kernel returned NLMSG_ERROR");
+    }
+    if (hdr_type != AUDIT_GET) {
+        return err_unknown("AUDIT_GET reply unexpected nlmsg_type");
+    }
     if (nbytes < NLMSG_HDRLEN + 24) {
-        return err_unknown("AUDIT_GET response too short");
+        return err_unknown("AUDIT_GET response too short for audit_status");
     }
 
     # Parse audit_status from payload after nlmsghdr

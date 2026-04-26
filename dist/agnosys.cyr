@@ -1604,6 +1604,9 @@ enum AuditConst {
     NETLINK_AUDIT = 9;
     NLMSG_HDRLEN = 16;
     NLM_F_REQUEST = 1;
+    NLMSG_NOOP = 1;
+    NLMSG_ERROR = 2;
+    NLMSG_DONE = 3;
     AUDIT_GET = 1000;
     AUDIT_SET = 1001;
     AUDIT_USER = 1005;
@@ -1997,9 +2000,39 @@ fn audit_get_status(handle) {
     if (is_err_result(rres) == 1) { return rres; }
 
     var nbytes = payload(rres);
-    # Minimum: nlmsghdr (16) + at least 24 bytes of audit_status
+    # Audit F-6 (2026-04-26): validate the full nlmsghdr, not just length.
+    # Per CVE-2026-31495 (ctnetlink) and the broader netlink validation
+    # CVE class, defensive parsers must verify type + seq match the
+    # request and surface NLMSG_ERROR replies as structured errors
+    # instead of treating them as success.
+    if (nbytes < NLMSG_HDRLEN) {
+        return err_unknown("AUDIT_GET reply truncated (no nlmsghdr)");
+    }
+    var hdr_len = load32(recv_buf);          # u32 nlmsg_len
+    var hdr_type = load16(recv_buf + 4);     # u16 nlmsg_type
+    var hdr_seq = load32(recv_buf + 8);      # u32 nlmsg_seq
+    if (hdr_len > nbytes) {
+        return err_unknown("AUDIT_GET reply nlmsg_len exceeds bytes received");
+    }
+    if (hdr_seq != 1) {
+        return err_unknown("AUDIT_GET reply seq mismatch (expected 1)");
+    }
+    if (hdr_type == NLMSG_ERROR) {
+        # struct nlmsgerr { s32 error; struct nlmsghdr msg; }
+        if (nbytes < NLMSG_HDRLEN + 4) {
+            return err_unknown("NLMSG_ERROR reply truncated (no error code)");
+        }
+        var nerr = load32(recv_buf + NLMSG_HDRLEN);  # negative errno
+        if (nerr == 0) {
+            return err_unknown("NLMSG_ERROR with zero error (ack-only)");
+        }
+        return err_syscall_failed(0 - nerr, "AUDIT_GET kernel returned NLMSG_ERROR");
+    }
+    if (hdr_type != AUDIT_GET) {
+        return err_unknown("AUDIT_GET reply unexpected nlmsg_type");
+    }
     if (nbytes < NLMSG_HDRLEN + 24) {
-        return err_unknown("AUDIT_GET response too short");
+        return err_unknown("AUDIT_GET response too short for audit_status");
     }
 
     # Parse audit_status from payload after nlmsghdr
@@ -3087,60 +3120,68 @@ fn journald_filter_lines(f) { return load64(f + 40); }
 fn journald_filter_boot(f) { return load64(f + 48); }
 
 # ================================================================
-# Build journalctl argument string
+# Build journalctl argv vec
 # ================================================================
 
-# Build the argument list for a journalctl invocation from a filter.
-# Returns a Str with all arguments space-separated (for run_capture).
-# Note: since run_capture uses _exec3 with only 2 extra args, we build
-# a single combined argument string and use /bin/sh -c for complex queries.
-fn journald_build_args(filter) {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "journalctl --output=json --no-pager");
+# Build a vec of cstring args for an exec_vec / exec_capture invocation
+# of journalctl. Each filter value lands in its OWN argv entry — no shell,
+# no concatenation, no metacharacter expansion. Caller-controlled values
+# (unit, grep, since, until, boot) are passed verbatim to journalctl as
+# argv[i]; an attacker controlling those values cannot escape into the
+# shell because there is no shell. See audit F-1 (2026-04-26).
+fn _journald_build_argv(filter) {
+    var args = vec_new();
+    vec_push(args, "/usr/bin/journalctl");
+    vec_push(args, "--output=json");
+    vec_push(args, "--no-pager");
 
     var unit = load64(filter);
     if (unit != 0) {
-        str_builder_add_cstr(sb, " --unit=");
-        str_builder_add(sb, unit);
+        vec_push(args, "--unit");
+        vec_push(args, str_cstr(unit));
     }
 
     var since = load64(filter + 8);
     if (since != 0) {
-        str_builder_add_cstr(sb, " --since=");
-        str_builder_add(sb, since);
+        vec_push(args, "--since");
+        vec_push(args, str_cstr(since));
     }
 
     var until = load64(filter + 16);
     if (until != 0) {
-        str_builder_add_cstr(sb, " --until=");
-        str_builder_add(sb, until);
+        vec_push(args, "--until");
+        vec_push(args, str_cstr(until));
     }
 
     var prio = load64(filter + 24);
     if (prio >= 0) {
-        str_builder_add_cstr(sb, " --priority=");
-        str_builder_add_int(sb, prio);
+        var pbuf = alloc(24);
+        fmt_int_buf(prio, pbuf);
+        vec_push(args, "--priority");
+        vec_push(args, pbuf);
     }
 
     var grep = load64(filter + 32);
     if (grep != 0) {
-        str_builder_add_cstr(sb, " --grep=");
-        str_builder_add(sb, grep);
+        vec_push(args, "--grep");
+        vec_push(args, str_cstr(grep));
     }
 
     var lines = load64(filter + 40);
     if (lines >= 0) {
-        str_builder_add_cstr(sb, " --lines=");
-        str_builder_add_int(sb, lines);
+        var lbuf = alloc(24);
+        fmt_int_buf(lines, lbuf);
+        vec_push(args, "--lines");
+        vec_push(args, lbuf);
     }
 
     var boot = load64(filter + 48);
     if (boot != 0) {
-        str_builder_add_cstr(sb, " --boot=");
-        str_builder_add(sb, boot);
+        vec_push(args, "--boot");
+        vec_push(args, str_cstr(boot));
     }
 
-    return str_builder_build(sb);
+    return args;
 }
 
 # ================================================================
@@ -3405,17 +3446,20 @@ fn journald_parse_json(json_line) {
 # Query the systemd journal using journalctl and parse JSON output.
 # filter: JournalFilter pointer (from journald_filter_new).
 # Returns Result: Ok(vec_of_entry_ptrs) or Err.
+#
+# Argv-based exec via lib/process.cyr's exec_capture: every filter value
+# becomes its OWN argv entry. No shell. No metacharacter expansion.
+# A consumer that passes attacker-controlled input through filter setters
+# is safe — the value lands in argv[i] and is read verbatim by journalctl.
+# See audit F-1 (2026-04-26) and SECURITY-NOTES.md § journald.
 fn journald_query(filter) {
-    var cmd_str = journald_build_args(filter);
-
-    # Use /bin/sh -c "<cmd>" to execute the full command
+    var args = _journald_build_argv(filter);
     var buf = alloc(131072);  # 128KB capture buffer
-    var res = run_capture("/bin/sh", "-c", str_data(cmd_str), buf, 131072);
-    if (is_err_result(res) == 1) {
+    var nbytes = exec_capture(args, buf, 131072);
+    if (nbytes < 0) {
         return err_unknown("failed to execute journalctl");
     }
 
-    var nbytes = payload(res);
     store8(buf + nbytes, 0);
     var output = str_new(buf, nbytes);
 
@@ -3653,6 +3697,15 @@ fn luks_config_validate(config) {
         return err_invalid_argument("Invalid key size (must be 256 or 512)");
     }
 
+    # Cipher allowlist — audit F-2 (2026-04-26).
+    # Per Trail of Bits Oct 2025 LUKS2 confidential-VM disclosure,
+    # cipher_null-ecb passes through cryptsetup unchanged and provides
+    # zero confidentiality. Defense-in-depth against older cryptsetup
+    # versions that lack the v2.8.1 partial mitigation.
+    var cipher_res = luks_validate_cipher(luks_config_cipher_algo(config),
+    luks_config_cipher_mode(config));
+    if (is_err_result(cipher_res) == 1) { return cipher_res; }
+
     return Ok(0);
 }
 
@@ -3692,6 +3745,77 @@ fn luks_zeroize_key(key_ptr, size) {
 }
 
 # ================================================================
+# Cipher allowlist — audit F-2 (2026-04-26)
+# ================================================================
+
+# Algos: known-safe symmetric block ciphers.
+# Modes: known-safe with explicit IV scheme (no plain ECB; xts/cbc only with
+# plain64 or essiv:sha256 — what cryptsetup itself defaults to and recommends).
+# Anything else (cipher_null, null, identity transforms, ECB without IV) is
+# rejected. Reject is case-sensitive vs cryptsetup conventions; the redundant
+# "null" substring rejection catches case variants like "Null" / "NULL".
+
+fn _luks_algo_allowed(algo) {
+    if (streq(algo, "aes") == 1) { return 1; }
+    if (streq(algo, "serpent") == 1) { return 1; }
+    if (streq(algo, "twofish") == 1) { return 1; }
+    if (streq(algo, "camellia") == 1) { return 1; }
+    return 0;
+}
+
+fn _luks_mode_allowed(mode) {
+    if (streq(mode, "xts-plain64") == 1) { return 1; }
+    if (streq(mode, "cbc-plain64") == 1) { return 1; }
+    if (streq(mode, "xts-essiv:sha256") == 1) { return 1; }
+    if (streq(mode, "cbc-essiv:sha256") == 1) { return 1; }
+    return 0;
+}
+
+# Case-insensitive substring search for "null" — catches null, Null, NULL,
+# cipher_null, ciphernull, etc. used in v2.8.1-pre cryptsetup attacks.
+fn _luks_contains_null_ci(s) {
+    var slen = strlen(s);
+    if (slen < 4) { return 0; }
+    var i = 0;
+    while (i + 4 <= slen) {
+        var c0 = load8(s + i);
+        var c1 = load8(s + i + 1);
+        var c2 = load8(s + i + 2);
+        var c3 = load8(s + i + 3);
+        if (c0 >= 65 && c0 <= 90) { c0 = c0 + 32; }
+        if (c1 >= 65 && c1 <= 90) { c1 = c1 + 32; }
+        if (c2 >= 65 && c2 <= 90) { c2 = c2 + 32; }
+        if (c3 >= 65 && c3 <= 90) { c3 = c3 + 32; }
+        if (c0 == 110 && c1 == 117 && c2 == 108 && c3 == 108) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Validate that (algo, mode) names a safe cipher pairing.
+# Rejects: empty strings, anything containing "null" (any case), any algo or
+# mode not on the allowlist. Returns Ok(0) or Err.
+fn luks_validate_cipher(algo, mode) {
+    if (algo == 0) { return err_invalid_argument("LUKS cipher algo is null pointer"); }
+    if (mode == 0) { return err_invalid_argument("LUKS cipher mode is null pointer"); }
+    if (strlen(algo) == 0) { return err_invalid_argument("LUKS cipher algo is empty"); }
+    if (strlen(mode) == 0) { return err_invalid_argument("LUKS cipher mode is empty"); }
+    if (_luks_contains_null_ci(algo) == 1) {
+        return err_invalid_argument("LUKS cipher algo contains forbidden token \"null\"");
+    }
+    if (_luks_contains_null_ci(mode) == 1) {
+        return err_invalid_argument("LUKS cipher mode contains forbidden token \"null\"");
+    }
+    if (_luks_algo_allowed(algo) == 0) {
+        return err_invalid_argument("LUKS cipher algo not on allowlist (aes/serpent/twofish/camellia)");
+    }
+    if (_luks_mode_allowed(mode) == 0) {
+        return err_invalid_argument("LUKS cipher mode not on allowlist");
+    }
+    return Ok(0);
+}
+
+# ================================================================
 # Build cipher string for cryptsetup (e.g., "aes-xts-plain64")
 # ================================================================
 
@@ -3713,27 +3837,66 @@ fn luks_cipher_str(config) {
 # Keyfile helpers — per-PID temp file for key material
 # ================================================================
 
-# Build a per-PID keyfile path: /tmp/.agnos-luks-<pid>
+# Build a per-PID keyfile path with 8 random bytes appended.
+# Audit F-3 (2026-04-26): PID alone is enumerable; an attacker on the
+# local host could pre-create /tmp/.agnos-luks-<predicted_pid> as a
+# symlink to /etc/shadow. The random suffix from getrandom(2) defeats
+# prediction; the O_EXCL | O_NOFOLLOW flags in luks_write_keyfile defeat
+# symlink races.
+# Returns Ok(path) on success or Err if getrandom fails.
 fn luks_keyfile_path() {
     var pid = sys_getpid();
     var pid_buf[24];
     var pid_len = fmt_int_buf(pid, &pid_buf);
+    var rnd[8];
+    var got = 0;
+    while (got < 8) {
+        var rret = syscall(SYS_GETRANDOM, &rnd + got, 8 - got, 0);
+        if (rret < 0) {
+            return err_syscall_failed(0 - rret, "getrandom for keyfile suffix");
+        }
+        got = got + rret;
+    }
     var prefix = "/tmp/.agnos-luks-";
     var prefix_len = strlen(prefix);
-    var path = alloc(prefix_len + pid_len + 1);
+    # Layout: <prefix><pid>-<16 hex chars><NUL>
+    var total = prefix_len + pid_len + 1 + 16 + 1;
+    var path = alloc(total);
     memcpy(path, prefix, prefix_len);
     memcpy(path + prefix_len, &pid_buf, pid_len);
-    store8(path + prefix_len + pid_len, 0);
-    return path;
+    store8(path + prefix_len + pid_len, 45);  # -
+    var hex_off = prefix_len + pid_len + 1;
+    var hex_chars = "0123456789abcdef";
+    var bi = 0;
+    while (bi < 8) {
+        var b = load8(&rnd + bi);
+        var hi = (b / 16) & 15;
+        var lo = b & 15;
+        store8(path + hex_off + bi * 2, load8(hex_chars + hi));
+        store8(path + hex_off + bi * 2 + 1, load8(hex_chars + lo));
+        bi = bi + 1;
+    }
+    store8(path + total - 1, 0);
+    return Ok(path);
 }
 
-# Write key material to a per-PID keyfile.
+# Write key material to a unique per-PID-plus-random keyfile.
+# Audit F-3: O_EXCL refuses to open if the path already exists (race window
+# closed); O_NOFOLLOW refuses to traverse a symlink at the final component
+# (CVE-2025-6020 / pam_namespace symlink-race class). 0600 mode means only
+# the creating user can read.
 # Returns Ok(keyfile_path) or Err.
 fn luks_write_keyfile(key_ptr, key_len) {
-    var keyfile = luks_keyfile_path();
-    var fd = sys_open(keyfile, O_WRONLY | O_CREAT | O_TRUNC, 384);  # 0600
+    var path_res = luks_keyfile_path();
+    if (is_err_result(path_res) == 1) { return path_res; }
+    var keyfile = payload(path_res);
+    # O_NOFOLLOW = 0x20000 (131072) on Linux. Not currently exported
+    # as a named constant in lib/syscalls_*.cyr; written numerically
+    # with a comment until the stdlib gets the symbol.
+    var open_flags = O_WRONLY | O_CREAT | O_TRUNC | O_EXCL | 131072;
+    var fd = sys_open(keyfile, open_flags, 384);  # 0600
     if (fd < 0) {
-        return err_syscall_failed(0 - fd, "failed to create keyfile");
+        return err_syscall_failed(0 - fd, "failed to create keyfile (O_EXCL|O_NOFOLLOW)");
     }
     defer { sys_close(fd); }
     var wret = sys_write(fd, key_ptr, key_len);
@@ -6417,9 +6580,42 @@ fn secureboot_sign_module(module_path, private_key, certificate) {
     var n = exec_capture(args, &outbuf, 1023);
     if (n >= 0) { return Ok(0); }
 
-    # Fallback: sign-file from kernel headers
+    # Fallback: sign-file from kernel headers. Audit F-4 (2026-04-26):
+    # the prior hardcoded "/usr/lib/modules-load.d/../linux/scripts/sign-file"
+    # resolved to /usr/lib/linux/scripts/sign-file which does not exist on
+    # any supported distro. Now we build the path at runtime from the
+    # running kernels release string and fall back to /usr/src/linux.
+    var uts[392];
+    var ures = agnosys_uname(&uts);
+    if (is_err_result(ures) == 1) {
+        return err_io(0, "sign-file fallback: uname(2) failed");
+    }
+    var release = uname_release(&uts);
+    var rlen = strlen(release);
+    # Try /lib/modules/<release>/build/scripts/sign-file first
+    var p1_pre = "/lib/modules/";
+    var p1_suf = "/build/scripts/sign-file";
+    var p1_pre_len = strlen(p1_pre);
+    var p1_suf_len = strlen(p1_suf);
+    var p1_total = p1_pre_len + rlen + p1_suf_len + 1;
+    var p1 = alloc(p1_total);
+    memcpy(p1, p1_pre, p1_pre_len);
+    memcpy(p1 + p1_pre_len, release, rlen);
+    memcpy(p1 + p1_pre_len + rlen, p1_suf, p1_suf_len);
+    store8(p1 + p1_total - 1, 0);
+    var sign_file = 0;
+    if (sys_access(p1, 0) == 0) {
+        sign_file = p1;
+    } else {
+        # Then /usr/src/linux/scripts/sign-file
+        var p2 = "/usr/src/linux/scripts/sign-file";
+        if (sys_access(p2, 0) == 0) { sign_file = p2; }
+    }
+    if (sign_file == 0) {
+        return err_io(0, "module signing: kmodsign missing and sign-file not found");
+    }
     var args2 = vec_new();
-    vec_push(args2, "/usr/lib/modules-load.d/../linux/scripts/sign-file");
+    vec_push(args2, sign_file);
     vec_push(args2, "sha256");
     vec_push(args2, private_key);
     vec_push(args2, certificate);
@@ -6427,7 +6623,7 @@ fn secureboot_sign_module(module_path, private_key, certificate) {
 
     n = exec_capture(args2, &outbuf, 1023);
     if (n < 0) {
-        return err_io(0, "kernel module signing failed (kmodsign and sign-file)");
+        return err_io(0, "kernel module signing failed (kmodsign and sign-file both errored)");
     }
 
     return Ok(0);
