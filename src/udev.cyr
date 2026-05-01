@@ -27,7 +27,7 @@ enum DeviceSubsystem {
 # ================================================================
 
 # DeviceInfo: { syspath, devpath, subsystem, devtype, driver,
-    #   devnode, prop_keys, prop_vals, prop_count }
+#   devnode, prop_keys, prop_vals, prop_count }
 # Layout: 9 * 8 = 72 bytes
 # prop_keys and prop_vals are arrays of string pointers
 

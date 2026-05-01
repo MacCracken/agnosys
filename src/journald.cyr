@@ -10,6 +10,8 @@
 # All structs are bags of i64 fields accessed via store64/load64.
 # Strings are Str (fat pointer: data + length) from lib/str.cyr.
 
+include "src/syscall_arch.cyr"
+
 # ================================================================
 # Constants
 # ================================================================
@@ -76,8 +78,8 @@ fn journald_entry_add_field(e, key, val) {
 # ================================================================
 # JournalFilter struct
 # { unit (Str or 0), since (Str or 0), until (Str or 0),
-    #   priority (-1 = unset), grep (Str or 0), lines (-1 = unset),
-    #   boot (Str or 0) }
+#   priority (-1 = unset), grep (Str or 0), lines (-1 = unset),
+#   boot (Str or 0) }
 # Layout: +0 unit, +8 since, +16 until, +24 priority,
 #         +32 grep, +40 lines, +48 boot. Total: 56 bytes.
 # ================================================================
@@ -310,7 +312,6 @@ fn journald_send_fields(message, priority, identifier, fields_keys, fields_vals)
     }
 
     var payload = str_builder_build(sb);
-
 
     var fd = syscall(SYS_SOCKET_NR, AF_UNIX, 2, 0);
     if (fd < 0) {

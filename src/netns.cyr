@@ -490,102 +490,102 @@ fn netns_render_nftables_ruleset(policy) {
 
     pos = netns_nft_append(buf, pos, "table inet kavach {\n");
 
-        # Input chain
-        pos = netns_nft_append(buf, pos, "  chain input { type filter hook input priority 0; policy ");
-            pos = netns_nft_append(buf, pos, netns_nft_action_str(netns_fw_policy_default_in(policy)));
-            pos = netns_nft_append(buf, pos, ";\n");
-            pos = netns_nft_append(buf, pos, "    ct state established,related accept\n");
-            pos = netns_nft_append(buf, pos, "    iif lo accept\n");
+    # Input chain
+    pos = netns_nft_append(buf, pos, "  chain input { type filter hook input priority 0; policy ");
+    pos = netns_nft_append(buf, pos, netns_nft_action_str(netns_fw_policy_default_in(policy)));
+    pos = netns_nft_append(buf, pos, ";\n");
+    pos = netns_nft_append(buf, pos, "    ct state established,related accept\n");
+    pos = netns_nft_append(buf, pos, "    iif lo accept\n");
 
-            var rules = netns_fw_policy_rules(policy);
-            var count = netns_fw_policy_rule_count(policy);
-            var i = 0;
-            while (i < count) {
-                var rule = load64(rules + i * 8);
-                if (netns_fw_rule_direction(rule) == TRAFFIC_INBOUND) {
-                    var action = netns_nft_action_str(netns_fw_rule_action(rule));
-                    var proto = netns_nft_proto_str(netns_fw_rule_protocol(rule));
-                    var port = netns_fw_rule_port(rule);
-                    if (proto != 0) {
-                        if (port > 0) {
-                            pos = netns_nft_append(buf, pos, "    ");
-                            pos = netns_nft_append(buf, pos, proto);
-                            pos = netns_nft_append(buf, pos, " dport ");
-                            var pbuf = alloc(8);
-                            var plen = fmt_int_buf(port, pbuf);
-                            store8(pbuf + plen, 0);
-                            pos = netns_nft_append(buf, pos, pbuf);
-                            pos = netns_nft_append(buf, pos, " ");
-                            pos = netns_nft_append(buf, pos, action);
-                            pos = netns_nft_append(buf, pos, " comment \"");
-                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
-                            pos = netns_nft_append(buf, pos, "\"\n");
-                        }
-                    }
-                    var raddr = netns_fw_rule_remote_addr(rule);
-                    if (raddr != 0) {
-                        if (strlen(raddr) > 0) {
-                            pos = netns_nft_append(buf, pos, "    ip saddr ");
-                            pos = netns_nft_append(buf, pos, raddr);
-                            pos = netns_nft_append(buf, pos, " ");
-                            pos = netns_nft_append(buf, pos, action);
-                            pos = netns_nft_append(buf, pos, " comment \"");
-                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
-                            pos = netns_nft_append(buf, pos, "\"\n");
-                        }
-                    }
+    var rules = netns_fw_policy_rules(policy);
+    var count = netns_fw_policy_rule_count(policy);
+    var i = 0;
+    while (i < count) {
+        var rule = load64(rules + i * 8);
+        if (netns_fw_rule_direction(rule) == TRAFFIC_INBOUND) {
+            var action = netns_nft_action_str(netns_fw_rule_action(rule));
+            var proto = netns_nft_proto_str(netns_fw_rule_protocol(rule));
+            var port = netns_fw_rule_port(rule);
+            if (proto != 0) {
+                if (port > 0) {
+                    pos = netns_nft_append(buf, pos, "    ");
+                    pos = netns_nft_append(buf, pos, proto);
+                    pos = netns_nft_append(buf, pos, " dport ");
+                    var pbuf = alloc(8);
+                    var plen = fmt_int_buf(port, pbuf);
+                    store8(pbuf + plen, 0);
+                    pos = netns_nft_append(buf, pos, pbuf);
+                    pos = netns_nft_append(buf, pos, " ");
+                    pos = netns_nft_append(buf, pos, action);
+                    pos = netns_nft_append(buf, pos, " comment \"");
+                    pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                    pos = netns_nft_append(buf, pos, "\"\n");
                 }
-                i = i + 1;
             }
-            pos = netns_nft_append(buf, pos, "  }\n");
-
-        # Output chain
-        pos = netns_nft_append(buf, pos, "  chain output { type filter hook output priority 0; policy ");
-            pos = netns_nft_append(buf, pos, netns_nft_action_str(netns_fw_policy_default_out(policy)));
-            pos = netns_nft_append(buf, pos, ";\n");
-            pos = netns_nft_append(buf, pos, "    ct state established,related accept\n");
-            pos = netns_nft_append(buf, pos, "    oif lo accept\n");
-
-            i = 0;
-            while (i < count) {
-                var rule = load64(rules + i * 8);
-                if (netns_fw_rule_direction(rule) == TRAFFIC_OUTBOUND) {
-                    var action = netns_nft_action_str(netns_fw_rule_action(rule));
-                    var proto = netns_nft_proto_str(netns_fw_rule_protocol(rule));
-                    var port = netns_fw_rule_port(rule);
-                    if (proto != 0) {
-                        if (port > 0) {
-                            pos = netns_nft_append(buf, pos, "    ");
-                            pos = netns_nft_append(buf, pos, proto);
-                            pos = netns_nft_append(buf, pos, " dport ");
-                            var pbuf = alloc(8);
-                            var plen = fmt_int_buf(port, pbuf);
-                            store8(pbuf + plen, 0);
-                            pos = netns_nft_append(buf, pos, pbuf);
-                            pos = netns_nft_append(buf, pos, " ");
-                            pos = netns_nft_append(buf, pos, action);
-                            pos = netns_nft_append(buf, pos, " comment \"");
-                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
-                            pos = netns_nft_append(buf, pos, "\"\n");
-                        }
-                    }
-                    var raddr = netns_fw_rule_remote_addr(rule);
-                    if (raddr != 0) {
-                        if (strlen(raddr) > 0) {
-                            pos = netns_nft_append(buf, pos, "    ip daddr ");
-                            pos = netns_nft_append(buf, pos, raddr);
-                            pos = netns_nft_append(buf, pos, " ");
-                            pos = netns_nft_append(buf, pos, action);
-                            pos = netns_nft_append(buf, pos, " comment \"");
-                            pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
-                            pos = netns_nft_append(buf, pos, "\"\n");
-                        }
-                    }
+            var raddr = netns_fw_rule_remote_addr(rule);
+            if (raddr != 0) {
+                if (strlen(raddr) > 0) {
+                    pos = netns_nft_append(buf, pos, "    ip saddr ");
+                    pos = netns_nft_append(buf, pos, raddr);
+                    pos = netns_nft_append(buf, pos, " ");
+                    pos = netns_nft_append(buf, pos, action);
+                    pos = netns_nft_append(buf, pos, " comment \"");
+                    pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                    pos = netns_nft_append(buf, pos, "\"\n");
                 }
-                i = i + 1;
             }
-            pos = netns_nft_append(buf, pos, "  }\n");
-        pos = netns_nft_append(buf, pos, "}\n");
+        }
+        i = i + 1;
+    }
+    pos = netns_nft_append(buf, pos, "  }\n");
+
+    # Output chain
+    pos = netns_nft_append(buf, pos, "  chain output { type filter hook output priority 0; policy ");
+    pos = netns_nft_append(buf, pos, netns_nft_action_str(netns_fw_policy_default_out(policy)));
+    pos = netns_nft_append(buf, pos, ";\n");
+    pos = netns_nft_append(buf, pos, "    ct state established,related accept\n");
+    pos = netns_nft_append(buf, pos, "    oif lo accept\n");
+
+    i = 0;
+    while (i < count) {
+        var rule = load64(rules + i * 8);
+        if (netns_fw_rule_direction(rule) == TRAFFIC_OUTBOUND) {
+            var action = netns_nft_action_str(netns_fw_rule_action(rule));
+            var proto = netns_nft_proto_str(netns_fw_rule_protocol(rule));
+            var port = netns_fw_rule_port(rule);
+            if (proto != 0) {
+                if (port > 0) {
+                    pos = netns_nft_append(buf, pos, "    ");
+                    pos = netns_nft_append(buf, pos, proto);
+                    pos = netns_nft_append(buf, pos, " dport ");
+                    var pbuf = alloc(8);
+                    var plen = fmt_int_buf(port, pbuf);
+                    store8(pbuf + plen, 0);
+                    pos = netns_nft_append(buf, pos, pbuf);
+                    pos = netns_nft_append(buf, pos, " ");
+                    pos = netns_nft_append(buf, pos, action);
+                    pos = netns_nft_append(buf, pos, " comment \"");
+                    pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                    pos = netns_nft_append(buf, pos, "\"\n");
+                }
+            }
+            var raddr = netns_fw_rule_remote_addr(rule);
+            if (raddr != 0) {
+                if (strlen(raddr) > 0) {
+                    pos = netns_nft_append(buf, pos, "    ip daddr ");
+                    pos = netns_nft_append(buf, pos, raddr);
+                    pos = netns_nft_append(buf, pos, " ");
+                    pos = netns_nft_append(buf, pos, action);
+                    pos = netns_nft_append(buf, pos, " comment \"");
+                    pos = netns_nft_append(buf, pos, netns_fw_rule_comment(rule));
+                    pos = netns_nft_append(buf, pos, "\"\n");
+                }
+            }
+        }
+        i = i + 1;
+    }
+    pos = netns_nft_append(buf, pos, "  }\n");
+    pos = netns_nft_append(buf, pos, "}\n");
     store8(buf + pos, 0);
 
     return buf;
