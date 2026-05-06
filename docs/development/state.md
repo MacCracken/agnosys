@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-06 (1.0.5)
+**Last refresh:** 2026-05-06 (1.0.6)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.0.5** |
+| `VERSION` | **1.0.6** |
 | `cyrius.cyml [package].cyrius` | **5.9.1** |
 | Min Cyrius (consumer) | 5.9.1 |
 | Last cyrius bump | 5.7.48 → 5.9.1 (1.0.5) |
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.0.5** | 2026-05-06 | Toolchain pin bump 5.7.48 → 5.9.1; no source changes, all 10 audit gates green |
+| **1.0.6** | 2026-05-06 | First V1.1.0 `#derive(accessors)` slot — `src/mac.cyr` migrated (1 of ~13 struct-bearing modules); `scripts/check-api-surface.sh` extended to count derive-generated accessors |
+| 1.0.5 | 2026-05-06 | Toolchain pin bump 5.7.48 → 5.9.1; no source changes, all 10 audit gates green |
 | 1.0.4 | 2026-04-30 | aarch64 portability sweep — per-arch syscall peer files, raw-numeric syscall sweep across error/journald/etc.; toolchain pin 5.7.8 → 5.7.48 |
 | 1.0.2 | 2026-04-26 | P(-1) sweep follow-up: audit-regression integration tests, three ADRs, SECURITY-NOTES F-4/F-5 entries, bench-history row for 1.0.1; toolchain pin 5.7.6 → 5.7.8 (skipping 5.7.7 — `cyrius check` regression, fixed in 5.7.8) |
 | 1.0.1 | 2026-04-26 | Toolchain bump 5.2.0 → 5.7.6; CI ported to yukti pattern; binary size 76% reduction via `[lib]`-modules refactor; audit findings F-1..F-6 fixed |
@@ -124,7 +125,12 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 
 ## In-Flight Slots
 
-None. Post-1.0.5 backlog is in [`roadmap.md`](roadmap.md) Phase 8.
+**V1.1.0 — `#derive(accessors)` migration** (in progress, slot-by-slot)
+- [x] mac.cyr (1.0.6)
+- [ ] fuse.cyr · drm.cyr · dmverity.cyr · luks.cyr · udev.cyr · certpin.cyr · bootloader.cyr · journald.cyr · audit.cyr · ima.cyr · tpm.cyr · secureboot.cyr · security.cyr · pam.cyr · netns.cyr · update.cyr (in any order; depends on per-module struct count)
+- [ ] Closeout pass + cumulative bench/audit before tagging 1.1.0
+
+See [`roadmap.md`](roadmap.md) V1.1 for full backlog.
 
 ## Last Security Audit
 

@@ -314,6 +314,7 @@ mac::mac_profile_agent_type/1
 mac::mac_profile_apparmor_name/1
 mac::mac_profile_new/1
 mac::mac_profile_selinux_ctx/1
+mac::mac_profile_set_agent_type/2
 mac::mac_profile_set_apparmor_name/2
 mac::mac_profile_set_selinux_ctx/2
 mac::mac_profile_validate/2
@@ -460,6 +461,10 @@ syscall::sysinfo_uptime/1
 syscall::uname_hostname/1
 syscall::uname_machine/1
 syscall::uname_release/1
+syscall_aarch64_linux::agnosys_fsync/1
+syscall_aarch64_linux::agnosys_rename/2
+syscall_x86_64_linux::agnosys_fsync/1
+syscall_x86_64_linux::agnosys_rename/2
 tpm::tpm_bank_hex_len/1
 tpm::tpm_bank_str/1
 tpm::tpm_detect/0

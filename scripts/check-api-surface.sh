@@ -23,6 +23,7 @@ trap 'rm -f "$CURRENT"' EXIT
 for f in src/*.cyr; do
     mod=$(basename "$f" .cyr)
     awk -v m="$mod" '
+        # 1. Hand-written public fn definitions
         /^fn [a-zA-Z]/ {
             if (match($0, /^fn ([a-zA-Z0-9_]+)\(([^)]*)\)/, arr)) {
                 name = arr[1]; params = arr[2]
@@ -34,8 +35,46 @@ for f in src/*.cyr; do
                 print m "::" name "/" arity
             }
         }
+        # 2. #derive(accessors) on a struct: emit synthesized getters/setters.
+        # The directive sits on its own line; the struct decl follows on the
+        # next non-blank line (possibly spanning multiple lines until the
+        # closing brace). Field names are tokens between `{` and `}`,
+        # separated by `;` (with optional `: type` annotations stripped).
+        /^[[:space:]]*#derive\(accessors\)/ {
+            # Collect lines from `struct <name> {` through the closing `}`
+            sname = ""
+            body = ""
+            getline line
+            while (line !~ /\{/) { getline line }
+            if (match(line, /struct[[:space:]]+([a-zA-Z0-9_]+)/, sarr)) {
+                sname = sarr[1]
+            }
+            # Body starts after `{`
+            body = line
+            sub(/.*\{/, "", body)
+            while (body !~ /\}/) {
+                getline more
+                body = body " " more
+            }
+            sub(/\}.*/, "", body)
+            # Strip comments
+            gsub(/#[^;}]*/, "", body)
+            # Split on `;` and emit accessor pairs
+            n = split(body, fields, ";")
+            for (i = 1; i <= n; i++) {
+                fld = fields[i]
+                # Strip whitespace and type annotation `: <type>`
+                sub(/^[[:space:]]+/, "", fld)
+                sub(/[[:space:]]+$/, "", fld)
+                sub(/[[:space:]]*:.*$/, "", fld)
+                if (fld == "" || sname == "") continue
+                if (fld !~ /^[a-zA-Z][a-zA-Z0-9_]*$/) continue
+                print m "::" sname "_" fld "/1"
+                print m "::" sname "_set_" fld "/2"
+            }
+        }
     ' "$f"
-done | sort > "$CURRENT"
+done | sort -u > "$CURRENT"
 
 if [ "${1:-}" = "--update" ]; then
     cp "$CURRENT" "$SNAPSHOT"

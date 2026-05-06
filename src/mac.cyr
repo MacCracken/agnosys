@@ -344,25 +344,22 @@ fn mac_apparmor_change_profile(profile_name) {
 
 # ================================================================
 # Agent MAC profile struct
-# Layout: { agent_type_ptr, selinux_ctx_ptr, apparmor_profile_ptr }
 # Each field is a pointer to a null-terminated C string (or 0 for none).
-# Offsets: agent_type=0, selinux_ctx=8, apparmor_profile=16. Size: 24 bytes.
+# Total: 24 bytes (3 * 8). Accessors auto-generated:
+#   getters: mac_profile_<field>(p)
+#   setters: mac_profile_set_<field>(p, v)
 # ================================================================
+
+#derive(accessors)
+struct mac_profile { agent_type; selinux_ctx; apparmor_name; }
 
 fn mac_profile_new(agent_type) {
     var p = alloc(24);
-    store64(p, agent_type);
-    store64(p + 8, 0);
-    store64(p + 16, 0);
+    mac_profile_set_agent_type(p, agent_type);
+    mac_profile_set_selinux_ctx(p, 0);
+    mac_profile_set_apparmor_name(p, 0);
     return p;
 }
-
-fn mac_profile_agent_type(p) { return load64(p); }
-fn mac_profile_selinux_ctx(p) { return load64(p + 8); }
-fn mac_profile_apparmor_name(p) { return load64(p + 16); }
-
-fn mac_profile_set_selinux_ctx(p, ctx) { store64(p + 8, ctx); return 0; }
-fn mac_profile_set_apparmor_name(p, name) { store64(p + 16, name); return 0; }
 
 # ================================================================
 # Create a default agent MAC profile from an agent type string

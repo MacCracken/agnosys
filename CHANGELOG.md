@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-05-06
+
+**First V1.1.0 `#derive(accessors)` slot — `src/mac.cyr` migrated.**
+1 of ~13 struct-bearing modules done. Ships as a 1.0.x patch
+(continuing the per-change patch line); V1.1.0 tags at the cumulative
+closeout when all modules are migrated.
+
+### Changed
+- **`src/mac.cyr`** — first V1.1.0 `#derive(accessors)` migration slot.
+  The `mac_profile` heap struct (24 bytes, 3 ptr fields: agent_type,
+  selinux_ctx, apparmor_name) is now declared as
+  `#derive(accessors) struct mac_profile { ... }`; the 5 hand-written
+  `mac_profile_*` getters/setters are replaced by compiler-generated
+  ones with byte-identical layout. `mac_profile_new` body switched
+  to use the generated setters. Bench parity verified
+  (`mac_default_profile`: 285ns → 294ns, +3%, within run-to-run noise).
+- **`scripts/check-api-surface.sh`** — extended awk parser to also
+  count `#derive(accessors)`-generated accessor pairs as public fns.
+  Without this, every `#derive(accessors)` migration would look like
+  a BREAKING removal of the hand-written accessors. The script now
+  parses the `struct <name> { f1; f2; ... }` body following each
+  `#derive(accessors)` directive and emits `<name>_<field>/1` +
+  `<name>_set_<field>/2` for each field.
+- **`docs/development/api-surface-1.0.snapshot`** — additive bump
+  for the mac slot: `mac::mac_profile_set_agent_type/2` is new
+  (the auto-generated setter for a field that previously had no
+  hand-written setter — `mac_profile_new` was the only initializer).
+  Other 6 mac_profile accessors keep their existing names + arities.
+- **`dist/agnosys.cyr`** regenerated.
+
 ## [1.0.5] — 2026-05-06
 
 **Toolchain pin bump.** No source changes; pulls in the cyrius
