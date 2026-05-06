@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] — 2026-05-06
+
+**Toolchain pin bump.** No source changes; pulls in the cyrius
+5.8.x / 5.9.x improvements while keeping 1.0's API surface frozen.
+
+### Changed
+- **`cyrius.cyml [package].cyrius`** pinned `5.7.48` → `5.9.1`.
+  All 10 audit gates pass under the new toolchain (syntax, API
+  surface, capacity, build, smoke, 234 tests, lint, vet, 6 fuzz
+  harnesses, 30 benchmarks across 11 groups). Binary size on
+  `CYRIUS_DCE=1` build: 85592 bytes.
+- **`dist/agnosys.cyr`** regenerated — header version stamp only;
+  bundle body unchanged from 1.0.4.
+
 ## [1.0.4] — 2026-04-30
 
 **aarch64 portability sweep — full agnosys-side fix per the

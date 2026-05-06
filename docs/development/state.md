@@ -2,23 +2,23 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-04-26 (1.0.2)
+**Last refresh:** 2026-05-06 (1.0.5)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.0.2** |
-| `cyrius.cyml [package].cyrius` | **5.7.8** |
-| Min Cyrius (consumer) | 5.7.8 |
-| Last cyrius bump | 5.7.6 → 5.7.8 (1.0.2) |
+| `VERSION` | **1.0.5** |
+| `cyrius.cyml [package].cyrius` | **5.9.1** |
+| Min Cyrius (consumer) | 5.9.1 |
+| Last cyrius bump | 5.7.48 → 5.9.1 (1.0.5) |
 
 ## Build Metrics
 
 | Metric | Value | Notes |
 |---|---|---|
-| Binary size (DCE) | **73,144 B** | down from 306,344 B at 1.0.0 — `[build] modules` → `[lib] modules` refactor |
-| `dist/agnosys.cyr` size | 314,910 B | bundled distlib (full library) |
+| Binary size (DCE) | **85,592 B** | down from 306,344 B at 1.0.0 — `[build] modules` → `[lib] modules` refactor |
+| `dist/agnosys.cyr` size | 324,902 B | bundled distlib (full library) |
 | Fn-table utilization | 289 / 4,096 (7%) | from `cyrius capacity --check` |
 | Var-table | 302 / 8,192 | |
 | Fixup-table | 724 / 262,144 | |
@@ -67,7 +67,7 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 
 ## Local Audit Gates (`scripts/audit.sh`)
 
-10 gates, all green at 1.0.2: syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
+10 gates, all green at 1.0.5: syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
 
 ## CI Workflow Status
 
@@ -79,7 +79,7 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 - **Runtime**: 0
 - **Stdlib via `[deps] stdlib`**: `syscalls`, `string`, `alloc`, `fmt`, `vec`, `str`, `io` (7)
 - **Git-pinned**: 0 (no `[deps.<name>]` stanzas; no `cyrius.lock` needed today)
-- **Vendored stdlib refresh** (last): 2026-04-26 to cyrius 5.7.6 snapshot (`alloc.cyr`, `io.cyr`, `string.cyr`, `syscalls.cyr` — 5.5.x split into per-OS dispatch). 5.7.7 and 5.7.8 introduced no stdlib changes affecting agnosys's `[deps] stdlib = [syscalls, string, alloc, fmt, vec, str, io]` set; `cyrius deps` is a no-op against the existing vendor.
+- **Vendored stdlib refresh** (last): 2026-04-26 to cyrius 5.7.6 snapshot (`alloc.cyr`, `io.cyr`, `string.cyr`, `syscalls.cyr` — 5.5.x split into per-OS dispatch). 5.7.7 through 5.9.1 introduced no stdlib changes affecting agnosys's `[deps] stdlib = [syscalls, string, alloc, fmt, vec, str, io]` set; `cyrius deps` is a no-op against the existing vendor.
 
 ## Consumer Status
 
@@ -113,7 +113,9 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.0.2** | 2026-04-26 | P(-1) sweep follow-up: audit-regression integration tests, three ADRs, SECURITY-NOTES F-4/F-5 entries, bench-history row for 1.0.1; toolchain pin 5.7.6 → 5.7.8 (skipping 5.7.7 — `cyrius check` regression, fixed in 5.7.8) |
+| **1.0.5** | 2026-05-06 | Toolchain pin bump 5.7.48 → 5.9.1; no source changes, all 10 audit gates green |
+| 1.0.4 | 2026-04-30 | aarch64 portability sweep — per-arch syscall peer files, raw-numeric syscall sweep across error/journald/etc.; toolchain pin 5.7.8 → 5.7.48 |
+| 1.0.2 | 2026-04-26 | P(-1) sweep follow-up: audit-regression integration tests, three ADRs, SECURITY-NOTES F-4/F-5 entries, bench-history row for 1.0.1; toolchain pin 5.7.6 → 5.7.8 (skipping 5.7.7 — `cyrius check` regression, fixed in 5.7.8) |
 | 1.0.1 | 2026-04-26 | Toolchain bump 5.2.0 → 5.7.6; CI ported to yukti pattern; binary size 76% reduction via `[lib]`-modules refactor; audit findings F-1..F-6 fixed |
 | 1.0.0 | 2026-04-17 | API freeze. 139 renames, 20 modules ported, 556 public fns, 220 integration assertions, 30 benchmarks |
 | 0.97.1 | 2026-04 (pre-1.0) | Rust source deleted, Cyrius port complete |
@@ -122,7 +124,7 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 
 ## In-Flight Slots
 
-None. Post-1.0.2 backlog is in [`roadmap.md`](roadmap.md) Phase 8.
+None. Post-1.0.5 backlog is in [`roadmap.md`](roadmap.md) Phase 8.
 
 ## Last Security Audit
 
