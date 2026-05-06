@@ -40,10 +40,13 @@ audit::audit_status_new/0
 audit::audit_status_pid/1
 bootloader::bootloader_config_default_id/1
 bootloader::bootloader_config_entries/1
+bootloader::bootloader_config_entries_arr/1
 bootloader::bootloader_config_entry_count/1
 bootloader::bootloader_config_new/0
 bootloader::bootloader_config_set_default_id/2
 bootloader::bootloader_config_set_entries/3
+bootloader::bootloader_config_set_entries_arr/2
+bootloader::bootloader_config_set_entry_count/2
 bootloader::bootloader_config_set_timeout/2
 bootloader::bootloader_config_set_type/2
 bootloader::bootloader_config_timeout/1
@@ -153,6 +156,12 @@ drm::drm_verinfo_minor/1
 drm::drm_verinfo_name/1
 drm::drm_verinfo_new/6
 drm::drm_verinfo_patch/1
+drm::drm_verinfo_set_date/2
+drm::drm_verinfo_set_desc/2
+drm::drm_verinfo_set_major/2
+drm::drm_verinfo_set_minor/2
+drm::drm_verinfo_set_name/2
+drm::drm_verinfo_set_patch/2
 error::err_from_errno/1
 error::err_from_syscall_ret/1
 error::err_invalid_argument/1
@@ -186,6 +195,10 @@ fuse::fuse_mount_fstype/1
 fuse::fuse_mount_mountpoint/1
 fuse::fuse_mount_new/4
 fuse::fuse_mount_options/1
+fuse::fuse_mount_set_device/2
+fuse::fuse_mount_set_fstype/2
+fuse::fuse_mount_set_mountpoint/2
+fuse::fuse_mount_set_options/2
 fuse::fuse_parse_proc_mounts/3
 fuse::fuse_starts_with/2
 fuse::fuse_unmount/1

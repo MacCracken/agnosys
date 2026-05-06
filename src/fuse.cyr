@@ -8,24 +8,20 @@
 
 # ================================================================
 # FuseMount struct
+# 4 ptr fields * 8 = 32 bytes. Accessors auto-generated.
 # ================================================================
 
-# Layout: { device, mountpoint, fstype, options }
-# 4 fields * 8 = 32 bytes
+#derive(accessors)
+struct fuse_mount { device; mountpoint; fstype; options; }
 
 fn fuse_mount_new(device, mountpoint, fstype, options) {
     var m = alloc(32);
-    store64(m, device);
-    store64(m + 8, mountpoint);
-    store64(m + 16, fstype);
-    store64(m + 24, options);
+    fuse_mount_set_device(m, device);
+    fuse_mount_set_mountpoint(m, mountpoint);
+    fuse_mount_set_fstype(m, fstype);
+    fuse_mount_set_options(m, options);
     return m;
 }
-
-fn fuse_mount_device(m) { return load64(m); }
-fn fuse_mount_mountpoint(m) { return load64(m + 8); }
-fn fuse_mount_fstype(m) { return load64(m + 16); }
-fn fuse_mount_options(m) { return load64(m + 24); }
 
 # ================================================================
 # Parse /proc/mounts

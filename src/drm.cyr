@@ -119,28 +119,22 @@ enum DrmVerOff {
 
 # ================================================================
 # Version result struct
+# 6 fields (3 i64 + 3 ptr) * 8 = 48 bytes. Accessors auto-generated.
 # ================================================================
 
-# DrmVersionInfo: { major, minor, patchlevel, name_ptr, date_ptr, desc_ptr }
-# Layout: 48 bytes
+#derive(accessors)
+struct drm_verinfo { major; minor; patch; name; date; desc; }
 
 fn drm_verinfo_new(major, minor, patch, name, date, desc) {
     var v = alloc(48);
-    store64(v, major);
-    store64(v + 8, minor);
-    store64(v + 16, patch);
-    store64(v + 24, name);
-    store64(v + 32, date);
-    store64(v + 40, desc);
+    drm_verinfo_set_major(v, major);
+    drm_verinfo_set_minor(v, minor);
+    drm_verinfo_set_patch(v, patch);
+    drm_verinfo_set_name(v, name);
+    drm_verinfo_set_date(v, date);
+    drm_verinfo_set_desc(v, desc);
     return v;
 }
-
-fn drm_verinfo_major(v) { return load64(v); }
-fn drm_verinfo_minor(v) { return load64(v + 8); }
-fn drm_verinfo_patch(v) { return load64(v + 16); }
-fn drm_verinfo_name(v) { return load64(v + 24); }
-fn drm_verinfo_date(v) { return load64(v + 32); }
-fn drm_verinfo_desc(v) { return load64(v + 40); }
 
 # ================================================================
 # Device enumeration

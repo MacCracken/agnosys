@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-05-06
+
+**V1.1.0 `#derive(accessors)` slots 2–4 — fuse, drm, bootloader.**
+Three modules, four structs migrated. Cumulative: 4 of ~13
+struct-bearing modules done (mac in 1.0.6 + fuse/drm/bootloader
+in 1.0.7).
+
+### Changed
+- **`src/fuse.cyr`** — `FuseMount` (32 B, 4 ptr fields:
+  device/mountpoint/fstype/options) migrated to
+  `#derive(accessors) struct fuse_mount { … }`. The 4 hand-written
+  `fuse_mount_*` getters are gone, replaced by 8 compiler-generated
+  accessors (4 getters keep their existing names; 4 setters are new
+  additive surface). `fuse_mount_new` rewired to use the generated
+  setters. The pre-existing `fn fuse_mount(...)` syscall wrapper
+  (unrelated to the struct) is unaffected — cyrius accepts a struct
+  and a same-named fn peacefully because derive emits
+  `fuse_mount_<field>` not `fuse_mount` itself.
+- **`src/drm.cyr`** — `DrmVersionInfo` (48 B, 6 fields:
+  major/minor/patch/name/date/desc) migrated to
+  `#derive(accessors) struct drm_verinfo { … }`. The 6 hand-written
+  getters replaced by 12 compiler-generated accessors (6 getters
+  keep their existing names; 6 setters are new additive surface).
+  `drm_verinfo_new` rewired to use the generated setters.
+- **`src/bootloader.cyr`** — `BootEntry` (56 B, 7 fields:
+  id/title/linux/initrd/options/is_default/version) migrated to
+  `#derive(accessors) struct bootloader_entry { … }`. Replaces 14
+  hand-written get/set fns with 14 compiler-generated ones —
+  byte-identical layout, identical names, no API surface change for
+  this struct. `BootConfig` (40 B) also migrated, but with a wrinkle:
+  the 1.0 surface ships a 3-arg
+  `bootloader_config_set_entries(c, arr, count)` convenience setter
+  that writes both the array pointer and the count atomically; that
+  would collide with derive's auto-generated 2-arg setter. Resolved
+  by naming the array-pointer field `entries_arr` (matching the
+  original layout doc); the 1.0 `bootloader_config_entries(c)` getter
+  and 3-arg `set_entries(c, arr, count)` setter stay as thin
+  hand-written wrappers that delegate through the new derive
+  accessors. Net additive surface for BootConfig: `entries_arr/1`,
+  `set_entries_arr/2`, `set_entry_count/2`.
+- **`docs/development/api-surface-1.0.snapshot`** — additive bump:
+  13 new entries across the three modules (4 fuse setters, 6 drm
+  setters, 3 BootConfig accessors). 1.0 surface preserved exactly;
+  no removals.
+- **`dist/agnosys.cyr`** regenerated. Bundle shrinks from 9,954 lines
+  (1.0.6) to 9,932 lines (1.0.7) — net -22 lines from replacing
+  hand-written accessor fns with struct decls + derive directives.
+
 ## [1.0.6] — 2026-05-06
 
 **First V1.1.0 `#derive(accessors)` slot — `src/mac.cyr` migrated.**
