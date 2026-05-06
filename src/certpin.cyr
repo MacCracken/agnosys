@@ -20,62 +20,65 @@ enum CertPinResult {
 
 # ================================================================
 # Pin set struct
+# 6 fields * 8 = 48 bytes. expires == 0 means no expiry.
+#
+# The pins/backups array+count pairs ship 3-arg convenience setters
+# (`set_pins(e, ptr, count)`, `set_backups(e, ptr, count)`) in the
+# 1.0 surface. Those would collide with derive's auto-generated
+# 2-arg setters. Resolved by naming the array-pointer fields
+# `pins_arr` / `backups_arr`; the 1.0 `pins`/`backups` getters and
+# 3-arg setters stay as thin wrappers delegating through derive.
 # ================================================================
 
-# PinnedCert: { host_ptr, pins_vec, pin_count, backup_vec, backup_count, expires }
-# Layout: host at +0, pins at +8, pin_count at +16,
-#         backups at +24, backup_count at +32, expires at +40
-# Total: 48 bytes. expires == 0 means no expiry.
+#derive(accessors)
+struct certpin_entry { host; pins_arr; pin_count; backups_arr; backup_count; expires; }
 
 fn certpin_entry_new(host, expires) {
     var e = alloc(48);
-    store64(e, host);
-    store64(e + 8, 0);   # pins array ptr
-    store64(e + 16, 0);  # pin count
-    store64(e + 24, 0);  # backup pins array ptr
-    store64(e + 32, 0);  # backup pin count
-    store64(e + 40, expires);
+    certpin_entry_set_host(e, host);
+    certpin_entry_set_pins_arr(e, 0);
+    certpin_entry_set_pin_count(e, 0);
+    certpin_entry_set_backups_arr(e, 0);
+    certpin_entry_set_backup_count(e, 0);
+    certpin_entry_set_expires(e, expires);
     return e;
 }
 
-fn certpin_entry_host(e) { return load64(e); }
-fn certpin_entry_pins(e) { return load64(e + 8); }
-fn certpin_entry_pin_count(e) { return load64(e + 16); }
-fn certpin_entry_backups(e) { return load64(e + 24); }
-fn certpin_entry_backup_count(e) { return load64(e + 32); }
-fn certpin_entry_expires(e) { return load64(e + 40); }
-
+# 1.0 API preservation — `pins`/`backups` getters + 3-arg
+# `set_pins`/`set_backups` setters delegate through derive accessors.
+fn certpin_entry_pins(e) { return certpin_entry_pins_arr(e); }
+fn certpin_entry_backups(e) { return certpin_entry_backups_arr(e); }
 fn certpin_entry_set_pins(e, pins_ptr, count) {
-    store64(e + 8, pins_ptr);
-    store64(e + 16, count);
+    certpin_entry_set_pins_arr(e, pins_ptr);
+    certpin_entry_set_pin_count(e, count);
     return 0;
 }
-
 fn certpin_entry_set_backups(e, backups_ptr, count) {
-    store64(e + 24, backups_ptr);
-    store64(e + 32, count);
+    certpin_entry_set_backups_arr(e, backups_ptr);
+    certpin_entry_set_backup_count(e, count);
     return 0;
 }
 
-# CertPinSet: { entries_vec, entry_count, enforce }
-# Layout: entries at +0, count at +8, enforce at +16
-# Total: 24 bytes.
+# CertPinSet — 3 fields * 8 = 24 bytes. Same `entries`/3-arg
+# setter collision as PinnedCert; resolved with the same
+# `entries_arr` rename + thin wrappers for the 1.0 surface.
+
+#derive(accessors)
+struct certpin_set { entries_arr; count; enforce; }
 
 fn certpin_set_new(enforce) {
     var s = alloc(24);
-    store64(s, 0);       # entries array ptr
-    store64(s + 8, 0);   # entry count
-    store64(s + 16, enforce);
+    certpin_set_set_entries_arr(s, 0);
+    certpin_set_set_count(s, 0);
+    certpin_set_set_enforce(s, enforce);
     return s;
 }
 
-fn certpin_set_entries(s) { return load64(s); }
-fn certpin_set_count(s) { return load64(s + 8); }
-fn certpin_set_enforce(s) { return load64(s + 16); }
-
+# 1.0 API preservation
+fn certpin_set_entries(s) { return certpin_set_entries_arr(s); }
 fn certpin_set_set_entries(s, entries_ptr, count) {
-    store64(s, entries_ptr);
-    store64(s + 8, count);
+    certpin_set_set_entries_arr(s, entries_ptr);
+    certpin_set_set_count(s, count);
     return 0;
 }
 
@@ -299,30 +302,17 @@ fn certpin_compute_spki_pin(cert_path) {
 # Fetch server certificate info via openssl s_client
 # ================================================================
 
-# CertInfo struct: { subject, issuer, serial, not_before, not_after, sha256_fp, spki_sha256 }
-# Layout: 7 string pointers, 56 bytes total.
+# CertInfo — 7 string pointers, 56 bytes total. Per-field accessors
+# auto-generated; identical names + arities to the 1.0 surface.
+
+#derive(accessors)
+struct certpin_info { subject; issuer; serial; not_before; not_after; sha256_fp; spki_sha256; }
 
 fn certpin_info_new() {
     var c = alloc(56);
     memset(c, 0, 56);
     return c;
 }
-
-fn certpin_info_subject(c)   { return load64(c); }
-fn certpin_info_issuer(c)    { return load64(c + 8); }
-fn certpin_info_serial(c)    { return load64(c + 16); }
-fn certpin_info_not_before(c) { return load64(c + 24); }
-fn certpin_info_not_after(c) { return load64(c + 32); }
-fn certpin_info_sha256_fp(c) { return load64(c + 40); }
-fn certpin_info_spki_sha256(c) { return load64(c + 48); }
-
-fn certpin_info_set_subject(c, v) { store64(c, v); return 0; }
-fn certpin_info_set_issuer(c, v) { store64(c + 8, v); return 0; }
-fn certpin_info_set_serial(c, v) { store64(c + 16, v); return 0; }
-fn certpin_info_set_not_before(c, v) { store64(c + 24, v); return 0; }
-fn certpin_info_set_not_after(c, v) { store64(c + 32, v); return 0; }
-fn certpin_info_set_sha256_fp(c, v) { store64(c + 40, v); return 0; }
-fn certpin_info_set_spki_sha256(c, v) { store64(c + 48, v); return 0; }
 
 # Check pin expiry against current time.
 # Returns 1 if expired, 0 if not expired or no expiry set.

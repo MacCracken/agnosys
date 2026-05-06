@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] — 2026-05-06
+
+**V1.1.0 `#derive(accessors)` slots 5–7 — dmverity, luks, certpin.**
+Three modules, six structs migrated. Cumulative: 7 of ~13
+struct-bearing modules done.
+
+### Changed
+- **`src/dmverity.cyr`** — two structs migrated to `#derive(accessors)`:
+  - `dmverity_config` (64 B, 8 fields: name, data_device, hash_device,
+    data_block_size, hash_block_size, hash_algorithm, root_hash, salt).
+    The 8 hand-written getters replaced by 16 generated accessors
+    (8 getters keep their existing names; 8 setters are new additive
+    surface). The two named multi-field setters
+    `dmverity_config_set_devices(c, name, data_device, hash_device)/4`
+    and `dmverity_config_set_params(c, …×5)/6` keep their public
+    signatures; their bodies now delegate through the per-field
+    derive setters.
+  - `dmverity_status` (40 B, 5 fields: name, is_active, is_verified,
+    corruption_detected, root_hash). 5 hand-written getters replaced
+    by 10 generated accessors (5 getters identical, 5 setters new).
+    `dmverity_status_new` rewired through derive setters.
+- **`src/luks.cyr`** — `luks_config` (72 B, 9 fields: name,
+  backing_path, size_mb, mount_point, filesystem, cipher_algo,
+  cipher_mode, key_size_bits, pbkdf) migrated to
+  `#derive(accessors)`. 9 hand-written getters replaced by 18
+  generated accessors. The two named multi-field setters
+  `luks_config_set_core(c, …×5)/6` and `luks_config_set_crypto(c, …×4)/5`
+  keep their public signatures; bodies delegate through derive
+  setters.
+- **`src/certpin.cyr`** — three structs migrated:
+  - `certpin_entry` (48 B, 6 fields). The 1.0 surface ships 3-arg
+    `set_pins(e, ptr, count)` and `set_backups(e, ptr, count)`
+    convenience setters that would collide with derive's auto-generated
+    2-arg setters. Resolved by naming the array-pointer fields
+    `pins_arr` / `backups_arr` (with new derive accessors); the 1.0
+    `pins`/`backups` getters and 3-arg setters stay as thin wrappers.
+  - `certpin_set` (24 B, 3 fields). Same pattern as certpin_entry —
+    `entries` field renamed to `entries_arr` to dodge the 3-arg
+    `certpin_set_set_entries(s, ptr, count)/3` collision; 1.0
+    accessors preserved as wrappers.
+  - `certpin_info` (56 B, 7 fields: subject, issuer, serial, not_before,
+    not_after, sha256_fp, spki_sha256). Full hand-written get/set
+    parallel; clean swap, byte-identical layout, identical names —
+    no API surface change for this struct.
+- **Multi-line struct decl convention.** dmverity_config (8 fields)
+  and luks_config (9 fields) decls reformatted onto multi-line
+  bodies — the single-line form crossed `cyrius lint`'s
+  120-character ceiling. The api-surface awk parser handles
+  multi-line struct bodies (was already validated against the
+  multi-field bodies).
+- **`docs/development/api-surface-1.0.snapshot`** — additive bump:
+  34 new entries (12 certpin, 13 dmverity, 9 luks). 1.0 surface
+  preserved exactly; no removals. Cumulative additions since 1.0
+  freeze: 47 (5 mac in 1.0.6 + 13 fuse/drm/bootloader in 1.0.7 +
+  34 dmverity/luks/certpin in 1.0.8 + the 4 pre-existing 1.0.4
+  agnosys_fsync/agnosys_rename additions).
+- **`dist/agnosys.cyr`** regenerated. 9,932 (1.0.7) → 9,923 lines.
+
+### Verified
+- **Bench parity (certpin)** — `validate_pin_valid` 224ns→223ns;
+  `validate_pin_invalid` 14ns→13ns; `ct_streq_equal` 129ns→125ns;
+  `ct_streq_diff` 139ns→135ns. All within run-to-run noise; no
+  regressions on the certpin hot paths.
+
 ## [1.0.7] — 2026-05-06
 
 **V1.1.0 `#derive(accessors)` slots 2–4 — fuse, drm, bootloader.**

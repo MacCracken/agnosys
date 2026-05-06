@@ -50,11 +50,24 @@ fn dmverity_hash_hex_len(algo) {
 
 # ================================================================
 # VerityConfig struct
-# Layout: name(+0) data_device(+8) hash_device(+16)
-#         data_block_size(+24) hash_block_size(+32)
-#         hash_algorithm(+40) root_hash(+48) salt(+56)
-# Total: 64 bytes. salt=0 means no salt.
+# 8 fields * 8 = 64 bytes. salt=0 means no salt.
+# Per-field accessors auto-generated; the multi-field setters
+# `set_devices(c, …, …, …)` and `set_params(c, …×5)` stay as
+# named convenience setters with bodies rewritten to delegate
+# through the derive accessors.
 # ================================================================
+
+#derive(accessors)
+struct dmverity_config {
+    name;
+    data_device;
+    hash_device;
+    data_block_size;
+    hash_block_size;
+    hash_algorithm;
+    root_hash;
+    salt;
+}
 
 fn dmverity_config_alloc() {
     var c = alloc(64);
@@ -63,52 +76,38 @@ fn dmverity_config_alloc() {
 }
 
 fn dmverity_config_set_devices(c, name, data_device, hash_device) {
-    store64(c, name);
-    store64(c + 8, data_device);
-    store64(c + 16, hash_device);
+    dmverity_config_set_name(c, name);
+    dmverity_config_set_data_device(c, data_device);
+    dmverity_config_set_hash_device(c, hash_device);
     return c;
 }
 
 fn dmverity_config_set_params(c, data_bs, hash_bs, algo, root_hash, salt) {
-    store64(c + 24, data_bs);
-    store64(c + 32, hash_bs);
-    store64(c + 40, algo);
-    store64(c + 48, root_hash);
-    store64(c + 56, salt);
+    dmverity_config_set_data_block_size(c, data_bs);
+    dmverity_config_set_hash_block_size(c, hash_bs);
+    dmverity_config_set_hash_algorithm(c, algo);
+    dmverity_config_set_root_hash(c, root_hash);
+    dmverity_config_set_salt(c, salt);
     return c;
 }
 
-fn dmverity_config_name(c) { return load64(c); }
-fn dmverity_config_data_device(c) { return load64(c + 8); }
-fn dmverity_config_hash_device(c) { return load64(c + 16); }
-fn dmverity_config_data_block_size(c) { return load64(c + 24); }
-fn dmverity_config_hash_block_size(c) { return load64(c + 32); }
-fn dmverity_config_hash_algorithm(c) { return load64(c + 40); }
-fn dmverity_config_root_hash(c) { return load64(c + 48); }
-fn dmverity_config_salt(c) { return load64(c + 56); }
-
 # ================================================================
 # VerityStatus struct
-# Layout: name(+0) is_active(+8) is_verified(+16)
-#         corruption_detected(+24) root_hash(+32)
-# Total: 40 bytes
+# 5 fields * 8 = 40 bytes. Per-field accessors auto-generated.
 # ================================================================
+
+#derive(accessors)
+struct dmverity_status { name; is_active; is_verified; corruption_detected; root_hash; }
 
 fn dmverity_status_new(name, is_active, is_verified, corruption_detected, root_hash) {
     var s = alloc(40);
-    store64(s, name);
-    store64(s + 8, is_active);
-    store64(s + 16, is_verified);
-    store64(s + 24, corruption_detected);
-    store64(s + 32, root_hash);
+    dmverity_status_set_name(s, name);
+    dmverity_status_set_is_active(s, is_active);
+    dmverity_status_set_is_verified(s, is_verified);
+    dmverity_status_set_corruption_detected(s, corruption_detected);
+    dmverity_status_set_root_hash(s, root_hash);
     return s;
 }
-
-fn dmverity_status_name(s) { return load64(s); }
-fn dmverity_status_is_active(s) { return load64(s + 8); }
-fn dmverity_status_is_verified(s) { return load64(s + 16); }
-fn dmverity_status_corruption_detected(s) { return load64(s + 24); }
-fn dmverity_status_root_hash(s) { return load64(s + 32); }
 
 # ================================================================
 # Validation helpers

@@ -47,11 +47,23 @@ enum LuksConst {
 
 # ================================================================
 # LuksConfig struct
-# Layout: name(+0) backing_path(+8) size_mb(+16) mount_point(+24)
-#         filesystem(+32) cipher_algo(+40) cipher_mode(+48)
-#         key_size_bits(+56) pbkdf(+64)
-# Total: 72 bytes
+# 9 fields * 8 = 72 bytes. Per-field accessors auto-generated;
+# the multi-field setters `set_core(c, …×5)` and `set_crypto(c, …×4)`
+# stay as named convenience setters delegating through derive.
 # ================================================================
+
+#derive(accessors)
+struct luks_config {
+    name;
+    backing_path;
+    size_mb;
+    mount_point;
+    filesystem;
+    cipher_algo;
+    cipher_mode;
+    key_size_bits;
+    pbkdf;
+}
 
 fn luks_config_alloc() {
     var c = alloc(72);
@@ -60,31 +72,21 @@ fn luks_config_alloc() {
 }
 
 fn luks_config_set_core(c, name, backing_path, size_mb, mount_point, filesystem) {
-    store64(c, name);
-    store64(c + 8, backing_path);
-    store64(c + 16, size_mb);
-    store64(c + 24, mount_point);
-    store64(c + 32, filesystem);
+    luks_config_set_name(c, name);
+    luks_config_set_backing_path(c, backing_path);
+    luks_config_set_size_mb(c, size_mb);
+    luks_config_set_mount_point(c, mount_point);
+    luks_config_set_filesystem(c, filesystem);
     return c;
 }
 
 fn luks_config_set_crypto(c, cipher_algo, cipher_mode, key_size_bits, pbkdf) {
-    store64(c + 40, cipher_algo);
-    store64(c + 48, cipher_mode);
-    store64(c + 56, key_size_bits);
-    store64(c + 64, pbkdf);
+    luks_config_set_cipher_algo(c, cipher_algo);
+    luks_config_set_cipher_mode(c, cipher_mode);
+    luks_config_set_key_size_bits(c, key_size_bits);
+    luks_config_set_pbkdf(c, pbkdf);
     return c;
 }
-
-fn luks_config_name(c) { return load64(c); }
-fn luks_config_backing_path(c) { return load64(c + 8); }
-fn luks_config_size_mb(c) { return load64(c + 16); }
-fn luks_config_mount_point(c) { return load64(c + 24); }
-fn luks_config_filesystem(c) { return load64(c + 32); }
-fn luks_config_cipher_algo(c) { return load64(c + 40); }
-fn luks_config_cipher_mode(c) { return load64(c + 48); }
-fn luks_config_key_size_bits(c) { return load64(c + 56); }
-fn luks_config_pbkdf(c) { return load64(c + 64); }
 
 # Create a default config with sensible defaults (AES-XTS, 512-bit, Argon2id)
 fn luks_config_default(name, backing_path, mount_point) {

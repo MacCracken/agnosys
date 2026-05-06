@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-06 (1.0.7)
+**Last refresh:** 2026-05-06 (1.0.8)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.0.7** |
+| `VERSION` | **1.0.8** |
 | `cyrius.cyml [package].cyrius` | **5.9.1** |
 | Min Cyrius (consumer) | 5.9.1 |
 | Last cyrius bump | 5.7.48 → 5.9.1 (1.0.5) |
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.0.7** | 2026-05-06 | V1.1.0 `#derive(accessors)` slots 2–4 — fuse + drm + bootloader migrated (4 structs across 3 modules); 4 of ~13 struct-bearing modules done |
+| **1.0.8** | 2026-05-06 | V1.1.0 `#derive(accessors)` slots 5–7 — dmverity + luks + certpin migrated (6 structs across 3 modules); 7 of ~13 struct-bearing modules done; multi-line struct decl convention adopted |
+| 1.0.7 | 2026-05-06 | V1.1.0 `#derive(accessors)` slots 2–4 — fuse + drm + bootloader migrated (4 structs across 3 modules); 4 of ~13 struct-bearing modules done |
 | 1.0.6 | 2026-05-06 | First V1.1.0 `#derive(accessors)` slot — `src/mac.cyr` migrated (1 of ~13 struct-bearing modules); `scripts/check-api-surface.sh` extended to count derive-generated accessors |
 | 1.0.5 | 2026-05-06 | Toolchain pin bump 5.7.48 → 5.9.1; no source changes, all 10 audit gates green |
 | 1.0.4 | 2026-04-30 | aarch64 portability sweep — per-arch syscall peer files, raw-numeric syscall sweep across error/journald/etc.; toolchain pin 5.7.8 → 5.7.48 |
@@ -129,7 +130,8 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 **V1.1.0 — `#derive(accessors)` migration** (in progress, slot-by-slot)
 - [x] mac.cyr (1.0.6)
 - [x] fuse.cyr · drm.cyr · bootloader.cyr (1.0.7 — batch)
-- [ ] dmverity.cyr · luks.cyr · udev.cyr · certpin.cyr · journald.cyr · audit.cyr · ima.cyr · tpm.cyr · secureboot.cyr · security.cyr · pam.cyr · netns.cyr · update.cyr (in any order; depends on per-module struct count)
+- [x] dmverity.cyr · luks.cyr · certpin.cyr (1.0.8 — batch)
+- [ ] udev.cyr · journald.cyr · audit.cyr · ima.cyr · tpm.cyr · secureboot.cyr · security.cyr · pam.cyr · netns.cyr · update.cyr (struct-bearing TBC for the latter modules; survey when reached)
 - [ ] Closeout pass + cumulative bench/audit before tagging 1.1.0
 
 See [`roadmap.md`](roadmap.md) V1.1 for full backlog.
