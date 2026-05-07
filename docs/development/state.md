@@ -2,16 +2,16 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-06 (1.1.5)
+**Last refresh:** 2026-05-07 (1.1.6)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.1.5** |
-| `cyrius.cyml [package].cyrius` | **5.9.20** |
-| Min Cyrius (consumer) | 5.9.20 |
-| Last cyrius bump | 5.9.18 → 5.9.20 (1.1.4; pulls in `ct_eq_bytes_lens` dual-length variant + `sys_stat` for x86_64 — closes the 2026-05-01 sys-stat-x86 issue and completes V1.1.2's stdlib delegation) |
+| `VERSION` | **1.1.6** |
+| `cyrius.cyml [package].cyrius` | **5.9.25** |
+| Min Cyrius (consumer) | 5.9.25 |
+| Last cyrius bump | 5.9.20 → 5.9.25 (1.1.6; fixes match-coverage fn-name-dependent dispatch + cleans `--version` trailing byte; corrigendum to 1.1.5's wrong DCE-gating hypothesis) |
 
 ## Build Metrics
 
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.1.5** | 2026-05-06 | V1.1.3 exhaustive `match` coverage adoption — `syserr_print` converted to match (8 SysErrorKind variants explicit, no `_ =>`); audit gate 4 now greps build output for `non-exhaustive` warnings as a CI failure. Other 14 enum-to-string fns intentionally kept as if/elif chains (catch-all defaults are correct for wire-format serializers) |
+| **1.1.6** | 2026-05-07 | cyrius pin 5.9.20 → 5.9.25 — match-coverage check now deterministic (was fn-name-hash-bucket-dependent on 5.9.20–5.9.21); `--version` trailing-byte fix. 1.1.5 corrigendum: the "DCE-gated" hypothesis was wrong; real cause was hash-table indexing |
+| 1.1.5 | 2026-05-06 | V1.1.3 exhaustive `match` coverage adoption — `syserr_print` converted to match (8 SysErrorKind variants explicit, no `_ =>`); audit gate 4 now greps build output for `non-exhaustive` warnings as a CI failure. Other 14 enum-to-string fns intentionally kept as if/elif chains (catch-all defaults are correct for wire-format serializers) |
 | 1.1.4 | 2026-05-06 | cyrius pin 5.9.18 → 5.9.20 — `ct_eq_bytes_lens` dual-length variant lets `certpin_ct_streq` collapse to a one-liner full stdlib delegation; `sys_stat` now in both arch peer files closes the 2026-05-01 portability issue (filed by sigil 3.0 against 1.0.4). Issues directory now empty |
 | 1.1.3 | 2026-05-06 | V1.1.2 reopens — cyrius 5.9.18 ships `ct_eq_bytes` in `lib/ct.cyr`. `certpin_ct_streq` body shrinks to a length-check + delegation into stdlib; bench parity confirmed; resolved issue archived. cyrius pin 5.9.14 → 5.9.18 |
 | 1.1.2 | 2026-05-06 | V1.1.2 `secret var` + `ct_eq` in certpin — DEFERRED, upstream premise incomplete. `ct_eq` not a builtin; `lib/ct.cyr` lacks `ct_eq_bytes`; `secret var` requires array form, doesn't fit cstring-pointer pin storage. Existing hand-rolled `certpin_ct_streq` is correct as-is. Filed upstream issue `cyrius-ct-eq-bytes-stdlib`; slot re-opens when the helper lands |

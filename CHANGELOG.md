@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.6] — 2026-05-07
+
+**cyrius pin 5.9.20 → 5.9.25 — match-coverage check now
+deterministic across fn names. 1.1.5 corrigendum.**
+
+The match-coverage non-exhaustive warning that 1.1.5 wired into
+the audit gate was fn-name-dependent on cyrius 5.9.20–5.9.21
+(roughly 50/50 hit rate across hash buckets in the coverage
+check's internal bookkeeping). The 1.1.5 CHANGELOG attributed
+the inconsistency to DCE-gating; that diagnosis was wrong. The
+real cause was a hash-table indexing bug, fixed upstream in
+cyrius 5.9.25.
+
+### Changed
+- **`cyrius.cyml [package].cyrius`** pinned `5.9.20` → `5.9.25`.
+- **`docs/development/issues/2026-05-06-cyrius-match-coverage-fn-name-dependent.md`**
+  → moved to `archive/`; status header updated to RESOLVED with
+  cyrius 5.9.25 verification trail.
+- **`dist/agnosys.cyr`** regenerated.
+
+### Corrigendum to 1.1.5
+
+The 1.1.5 CHANGELOG claimed:
+
+> The check fires for ALL enum forms (explicit-value `= N`,
+> bare-name auto-incremented, paren'd-variant sum types) —
+> earlier testing missed this because dead-code-eliminated fns
+> are skipped before the check runs. Adding a caller surfaces
+> the warning reliably.
+
+The "DCE skips dead fns" hypothesis was wrong. Re-running the
+original failing probe under controlled fn-name variations
+revealed the real cause was **fn-name-dependent dispatch** in the
+coverage check — same source, only the fn identifier changed,
+warning fires for some names and silently skips others (e.g.
+`fn n` fires, `fn nm` doesn't; `fn name` doesn't, `fn dispatch_e1`
+does). The "adding a caller surfaces the warning" effect was
+correlation: the names used in successful probes happened to be
+in lucky hash buckets; the names in failed probes were in unlucky
+ones. Fixed in cyrius 5.9.25; full diagnosis in the now-archived
+[`docs/development/issues/archive/2026-05-06-cyrius-match-coverage-fn-name-dependent.md`](docs/development/issues/archive/2026-05-06-cyrius-match-coverage-fn-name-dependent.md).
+
+The 1.1.5 audit gate as written (`scripts/audit.sh` step 4
+greps build log for `non-exhaustive`) was correct as a CI hook.
+On 5.9.20–5.9.21 its effective coverage was hash-bucket-dependent
+(about half of agnosys's matches would have been silently skipped
+if more than one existed — `syserr_print` happened to be in a
+lucky bucket). On 5.9.25 the gate now reliably catches every
+non-exhaustive match across the entire compiled surface.
+
+### Side-observation also fixed
+
+cyrius 5.9.21's `cyrius --version` emitted a trailing `\xb3`
+byte before the newline (`cyrius 5.9.21\xb3\n`). cyrius 5.9.25
+emits clean `cyrius 5.9.25\n`. Worth noting for any tooling
+that consumed the version string.
+
+### Verified
+- All 10 audit gates pass under cyrius 5.9.25.
+- 234 / 234 integration tests pass.
+- Sweep across 13 fn-name variations: all 13 fire the warning
+  on 5.9.25 (was a roughly 50/50 mix on 5.9.21).
+- API surface clean: 721 fns, no drift.
+- Issues directory now empty again — all upstream tooling gaps
+  found during V1.1 are archived as resolved.
+
 ## [1.1.5] — 2026-05-06
 
 **V1.1.3 — exhaustive `match` coverage adoption.** First match
