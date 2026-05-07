@@ -45,6 +45,19 @@ grep -q "non-exhaustive" /tmp/audit_build.log && {
     fail "non-exhaustive match"
 }
 xxd -l 4 build/agnosys | grep -q "7f45 4c46" || fail "ELF magic"
+# Also cross-build for aarch64 if the toolchain is present locally.
+# CI runs this same gate; catching it locally avoids "passes audit
+# but breaks CI" surprises (per the 1.1.8 → 1.1.9 sub-8-byte
+# struct-field-load incident; full diagnosis at
+# docs/development/issues/2026-05-07-cyrius-aarch64-sub-8-byte-struct-load.md).
+if command -v cc5_aarch64 >/dev/null 2>&1 || [ -x "$HOME/.cyrius/bin/cc5_aarch64" ]; then
+    cyrius build --aarch64 src/main.cyr build/agnosys-aarch64 > /tmp/audit_build_aarch64.log 2>&1 \
+        || { cat /tmp/audit_build_aarch64.log; fail "aarch64 build"; }
+    grep -q "non-exhaustive" /tmp/audit_build_aarch64.log && {
+        grep "non-exhaustive" /tmp/audit_build_aarch64.log
+        fail "aarch64 non-exhaustive match"
+    }
+fi
 pass "build/agnosys ($(wc -c < build/agnosys) bytes)"
 
 stage 5/10 "smoke"

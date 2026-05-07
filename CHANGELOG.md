@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.9] — 2026-05-07
+
+**V1.1.8 reverted — cyrius aarch64 backend doesn't support
+sub-8-byte struct field loads.** The V1.1.8 multi-width struct
+field migration shipped clean on x86_64 but broke the aarch64
+CI cross-build:
+
+```
+compile fuzz/audit_nlmsg.fcyr -> build/audit_nlmsg-aarch64 [aarch64] FAIL
+error:4225: sub-8-byte struct field load is x86-only for v5.6.0; aarch64 + cx pending
+```
+
+The error message itself flags the gap as known-pending in
+cyrius. agnosys 1.1.9 reverts source-side and adds an aarch64
+cross-build to local audit so this regression class doesn't
+slip past local validation again.
+
+### Changed
+- **`src/audit.cyr`** + **`src/security.cyr`** — V1.1.8's typed
+  struct decls + pointer-to-struct dot syntax reverted to the
+  pre-V1.1.8 explicit `store16`/`store32`/`load16`/`load32`
+  pattern. The original kernel-ABI byte layout is preserved
+  (which is the same as V1.1.8 produced; this is purely a
+  source-style revert).
+- **`scripts/audit.sh` gate 4 (build)** — added `cyrius build
+  --aarch64` cross-build when `cc5_aarch64` is present locally,
+  with the same `non-exhaustive`-warning gate as the x86_64
+  build. Catches the aarch64-specific class of regression
+  (sub-8-byte struct field loads, future arch-only codegen
+  paths) in local audit instead of CI-only.
+- **`docs/development/issues/2026-05-07-cyrius-aarch64-sub-8-byte-struct-load.md`**
+  — new upstream issue filed; reproducer at
+  `/tmp/cyrius-aarch64-sub-8-byte-struct-load/`.
+- **`dist/agnosys.cyr`** regenerated. 9,912 → 9,886 lines (back
+  to the pre-V1.1.8 size since the typed struct decls are
+  reverted).
+
+### Verified
+- All 10 audit gates pass under cyrius 5.9.25, including the
+  new aarch64 cross-build step.
+- 234 / 234 integration tests pass.
+- API surface clean: 721 fns, no drift.
+
+### Status of V1.1.8
+
+V1.1.8 (multi-width struct fields for kernel binary protocols)
+re-enters the queue. The migration shape (typed `struct` decl
++ `var s: T = ptr;` pointer-to-struct dot syntax for kernel-ABI
+write/read) is correct and verified working on x86_64. When the
+cyrius aarch64 backend implements sub-8-byte struct field loads
+(per the issue's "Suggested upstream investigation" — the fix
+is parallel to the existing aarch64 sub-8-byte STORE codegen),
+V1.1.8 reopens with the same source change.
+
 ## [1.1.8] — 2026-05-07
 
 **V1.1.8 — Multi-width struct fields for kernel binary protocols.**

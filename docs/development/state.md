@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-07 (1.1.8)
+**Last refresh:** 2026-05-07 (1.1.9)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.1.8** |
+| `VERSION` | **1.1.9** |
 | `cyrius.cyml [package].cyrius` | **5.9.25** |
 | Min Cyrius (consumer) | 5.9.25 |
 | Last cyrius bump | 5.9.20 → 5.9.25 (1.1.6; fixes match-coverage fn-name-dependent dispatch + cleans `--version` trailing byte; corrigendum to 1.1.5's wrong DCE-gating hypothesis) |
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.1.8** | 2026-05-07 | V1.1.8 multi-width struct fields — 4 kernel-ABI structs (`sockaddr_nl`, `nlmsghdr`, `audit_kstatus`, `bpf_insn`) migrated to typed `struct` decls + pointer-to-struct dot syntax; 14 explicit `store{8,16,32}` calls eliminated. Discovery: `#derive(accessors)` uses i64 slots not tight packing; pointer-dot syntax does honor tight packing |
+| **1.1.9** | 2026-05-07 | V1.1.8 reverted — cyrius aarch64 backend rejects sub-8-byte struct field loads (`error:4225`). x86_64 build clean; aarch64 CI broke. `scripts/audit.sh` gate 4 extended to also cross-build aarch64 so regression class is caught locally. Upstream issue filed; V1.1.8 re-enters queue |
+| 1.1.8 | 2026-05-07 | V1.1.8 multi-width struct fields — 4 kernel-ABI structs (`sockaddr_nl`, `nlmsghdr`, `audit_kstatus`, `bpf_insn`) migrated to typed `struct` decls + pointer-to-struct dot syntax; 14 explicit `store{8,16,32}` calls eliminated. **Note:** reverted in 1.1.9 due to aarch64 sub-8-byte struct-field-load gap |
 | 1.1.7 | 2026-05-07 | V1.1.7 tagged-union `Result` adoption — verification slot. agnosys uses only high-level `Ok`/`Err`/`is_ok`/`payload` API; cyrius v5.8.28 already migrated `lib/result.cyr` to first-class `enum Result<T, E>`. agnosys is on first-class tagged unions transparently; no source changes needed |
 | 1.1.6 | 2026-05-07 | cyrius pin 5.9.20 → 5.9.25 — match-coverage check now deterministic (was fn-name-hash-bucket-dependent on 5.9.20–5.9.21); `--version` trailing-byte fix. 1.1.5 corrigendum: the "DCE-gated" hypothesis was wrong; real cause was hash-table indexing |
 | 1.1.5 | 2026-05-06 | V1.1.3 exhaustive `match` coverage adoption — `syserr_print` converted to match (8 SysErrorKind variants explicit, no `_ =>`); audit gate 4 now greps build output for `non-exhaustive` warnings as a CI failure. Other 14 enum-to-string fns intentionally kept as if/elif chains (catch-all defaults are correct for wire-format serializers) |
@@ -153,7 +154,7 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 - [x] V1.1.5 — exhaustive `match` coverage — `syserr_print` converted; audit gate 4 enforces non-exhaustive warnings; 14 enum-to-string serializers kept as if/elif chains (catch-all defaults are correct)
 - [x] V1.1.6 — match-coverage corrigendum + cyrius 5.9.25 pin — fixed 5.9.20–5.9.21 fn-name-dependent dispatch (hash-bucket bug); `--version` trailing-byte cleanup
 - [x] V1.1.7 — tagged-union `Result` adoption — verification slot. agnosys's high-level `Ok`/`Err`/`is_ok`/`payload` API already routes through cyrius's first-class `enum Result<T, E>` (v5.8.28 stdlib migration); zero direct `tagged_new`/`tag`/`is_tag` calls in src/*. Pattern-payload destructuring (`match res { Ok(v) => ... }`) waits for cyrius — not yet shipped.
-- [x] V1.1.8 — multi-width struct fields — `sockaddr_nl`/`nlmsghdr`/`audit_kstatus`/`bpf_insn` migrated; 14 explicit width-store calls eliminated. Stack-local kernel-ABI writes (landlock, sock_fprog) deferred — stack slots are 8-byte regardless of declared width
+- [~] V1.1.8 — multi-width struct fields — shipped in 1.1.8, **reverted in 1.1.9** (cyrius aarch64 backend lacks sub-8-byte struct field load codegen — `error:4225`). Re-enters queue once upstream lands; x86_64 codegen + write-side aarch64 already work, so the migration is shovel-ready when the load path lands.
 - [ ] V1.1.9 — slice migration for syscall + parser buffers
 - [ ] V1.1.10 — `#derive(Serialize)` for diagnostic JSON output
 
