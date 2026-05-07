@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-07 (1.1.11)
+**Last refresh:** 2026-05-07 (1.1.12)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.1.11** |
+| `VERSION` | **1.1.12** |
 | `cyrius.cyml [package].cyrius` | **5.9.27** |
 | Min Cyrius (consumer) | 5.9.27 |
 | Last cyrius bump | 5.9.25 → 5.9.27 (1.1.10; aarch64 backend now implements sub-8-byte struct field loads — unblocks V1.1.8 reopen) |
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.1.11** | 2026-05-07 | V1.1.11 slice migration — survey shows most `var buf[N]` sites aren't real slice candidates (tiny fmt bufs, kernel-ABI stack structs, one-shot syscall args, length-bounded `memeq`/`memcpy` walks). One representative site (`ima_get_status` rbuf newline counter) migrated to `slice<u8>` with bounds-checked indexing as the canonical pattern for future scalar-subscript parsers |
+| **1.1.12** | 2026-05-07 | V1.1.12 `#derive(Serialize)` — DEFERRED. cyrius 5.9.27 ships the `#derive(Serialize)` syntax but generated `_to_json` body is either empty (untyped fields) or references nonexistent stdlib helpers (`i64_to_json_sb`, etc. for typed fields). Filed upstream issue; slot reopens when primitive Serialize helpers land |
+| 1.1.11 | 2026-05-07 | V1.1.11 slice migration — survey shows most `var buf[N]` sites aren't real slice candidates (tiny fmt bufs, kernel-ABI stack structs, one-shot syscall args, length-bounded `memeq`/`memcpy` walks). One representative site (`ima_get_status` rbuf newline counter) migrated to `slice<u8>` with bounds-checked indexing as the canonical pattern for future scalar-subscript parsers |
 | 1.1.10 | 2026-05-07 | V1.1.8 reopens — cyrius 5.9.27 implements aarch64 sub-8-byte struct field load codegen; the 1.1.9 revert is now itself reverted. Typed kernel-ABI structs + pointer-to-struct dot syntax build clean on both arches; resolved issue archived |
 | 1.1.9 | 2026-05-07 | V1.1.8 reverted — cyrius aarch64 backend rejected sub-8-byte struct field loads (`error:1610`). x86_64 build clean; aarch64 CI broke. `scripts/audit.sh` gate 4 extended to also cross-build aarch64 so regression class is caught locally. Upstream issue filed; V1.1.8 re-entered queue |
 | 1.1.8 | 2026-05-07 | V1.1.8 multi-width struct fields — 4 kernel-ABI structs (`sockaddr_nl`, `nlmsghdr`, `audit_kstatus`, `bpf_insn`) migrated to typed `struct` decls + pointer-to-struct dot syntax; 14 explicit `store{8,16,32}` calls eliminated. **Note:** reverted in 1.1.9 due to aarch64 sub-8-byte struct-field-load gap |
@@ -160,7 +161,7 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 - [x] V1.1.9 — V1.1.8 revert (aarch64 sub-8-byte struct field load gap); upstream issue filed; `scripts/audit.sh` gate 4 extended with permanent `cyrius build --aarch64` cross-build
 - [x] V1.1.10 — V1.1.8 reopen (cyrius pin 5.9.25 → 5.9.27); both arches clean
 - [x] V1.1.11 — slice migration — most agnosys `var buf[N]` sites aren't real slice candidates (verification finding); one representative site migrated as the canonical pattern (`ima_get_status` rbuf newline counter)
-- [ ] V1.1.12 — `#derive(Serialize)` for diagnostic JSON output (NEXT)
+- [~] V1.1.12 — `#derive(Serialize)` — DEFERRED. cyrius 5.9.27 ships the directive but the generated `_to_json` body is non-functional (empty for untyped fields, references nonexistent helpers for typed fields). Filed upstream issue `cyrius-derive-serialize-incomplete`; slot reopens when primitive Serialize helpers (`i64_to_json_sb`, `Str_to_json_sb`, etc.) ship in stdlib.
 
 Slot # = agnosys VERSION # for this minor cycle. Multi-version
 shipping arcs (1.1.2-1.1.4 ct_eq_bytes; 1.1.5-1.1.6 exhaustive

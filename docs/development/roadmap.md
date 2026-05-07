@@ -345,11 +345,26 @@ stay as-is since their bounds are already explicit.
 
 **Rationale:** bounds-checked indexing on the agnosys parsers (audit netlink, fuse mount entries, EFI var bytes, IMA measurement records) closes the off-by-one class without a runtime cost we can't already amortize.
 
-#### V1.1.12 — `#derive(Serialize)` for module status diagnostics
+#### V1.1.12 — `#derive(Serialize)` — DEFERRED 2026-05-07 (upstream gap)
 
-- [ ] Generate JSON serializers for status structs returned by query fns (mac status, audit status, ima status, secureboot state, tpm caps, drm caps).
-- [ ] Consumer-facing benefit: kavach / sigil / argonaut can dump agnosys state to log without writing per-module formatters.
-- [ ] Public API addition; document in CHANGELOG `Added`.
+The slot's premise — `#derive(Serialize)` auto-generates a
+working `<struct>_to_json(ptr, sb)` per vidya
+`derive_str_fields` — turned out incomplete on cyrius 5.9.27:
+generated body is either empty (untyped fields) or references
+nonexistent stdlib helpers (`i64_to_json_sb`,
+`Str_to_json_sb` — not shipped) for typed fields.
+
+Filed
+[`docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`](../issues/2026-05-07-cyrius-derive-serialize-incomplete.md)
+proposing primitive-type Serialize helpers in stdlib. When
+they ship, V1.1.12 re-opens with the actual derive-driven
+implementation across 4-6 status structs (mac/audit/ima/
+secureboot/tpm/drm).
+
+Hand-rolling the JSON serializers is the alternative (yukti/
+sigil pattern), but defeats the slot's auto-generate intent
+and a future re-migration to working `#derive(Serialize)`
+would just unwind the hand-rolls.
 
 **Rationale:** consumer ergonomics. Today every consumer that wants to log agnosys state writes its own formatter. `#derive(Serialize)` ships the canonical one with the module.
 

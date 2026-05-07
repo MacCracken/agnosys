@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.12] — 2026-05-07
+
+**V1.1.12 — `#derive(Serialize)` deferred (upstream
+primitive-helper gap).**
+
+The slot scoped generating JSON serializers for module status
+structs (mac/audit/ima/secureboot/tpm/drm) via cyrius's
+`#derive(Serialize)` directive. Verification on cyrius 5.9.27:
+
+- For untyped fields (`struct s { x; y; z; }`) the generated
+  `s_to_json(...)` body is **empty** — emits 0 bytes to the
+  str_builder.
+- For typed fields (`struct s { x: i64; y: i64; z: i64; }`)
+  the body references `i64_to_json_sb(sb, n)` which is **not
+  in stdlib** — build warns "undefined function" and the
+  binary SIGILLs at runtime.
+
+No primitive-type Serialize helpers (`i64_to_json_sb`,
+`Str_to_json_sb`, etc.) ship in cyrius 5.9.27. The only
+`_to_json` fns in `~/.cyrius/lib` are sigil's domain-specific
+revocation-list serializers and yukti's hand-rolled
+`device_info_to_json` — both manual, not derive-driven.
+
+Filed
+[`docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`](docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md);
+reproducer at `/tmp/cyrius-derive-serialize-incomplete/`. When
+the primitive Serialize helpers land upstream, V1.1.12
+re-opens.
+
+### Changed
+- **`docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`**
+  — new upstream issue.
+- **`dist/agnosys.cyr`** regenerated (header v1.1.12 — no body
+  changes).
+
+### Verified
+- All 10 audit gates pass under cyrius 5.9.27, including the
+  aarch64 cross-build gate.
+- 234 / 234 integration tests pass.
+- 30 benchmarks across 11 groups; bench parity unchanged.
+- API surface clean: 721 fns, no drift.
+
+### Why ship as deferral
+
+Hand-rolling JSON serializers (the yukti/sigil pattern) is
+the alternative route, but defeats the slot's "auto-generate"
+intent — and a future re-migration to working
+`#derive(Serialize)` would just unwind the hand-rolls. Defer
+matches V1.1.2's pattern (initial filing → upstream fix →
+reopen). The 5 V1.1.x slots that have shipped as deferred or
+verification (V1.1.1 defer, V1.1.2 ct_eq deferral, V1.1.7
+tagged-union verify, V1.1.11 slice survey, this one) reflect
+the broader observation that V1.1.x's roadmap was authored
+with more upstream lag in mind than actually exists — most
+of the language affordances were already shipped, and the
+ones that weren't (this `#derive(Serialize)` gap) get filed
+upstream and tracked there.
+
 ## [1.1.11] — 2026-05-07
 
 **V1.1.11 — slice migration for syscall + parser buffers.**
