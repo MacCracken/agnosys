@@ -9,9 +9,9 @@
 | Item | Value |
 |---|---|
 | `VERSION` | **1.0.12** |
-| `cyrius.cyml [package].cyrius` | **5.9.13** |
-| Min Cyrius (consumer) | 5.9.13 |
-| Last cyrius bump | 5.9.7 → 5.9.13 (1.0.12; pulls in api-surface `--scope=project` and `--snapshot=PATH` fixes; lets `scripts/check-api-surface.sh` shrink to a four-line wrapper) |
+| `cyrius.cyml [package].cyrius` | **5.9.14** |
+| Min Cyrius (consumer) | 5.9.14 |
+| Last cyrius bump | 5.9.7 → 5.9.14 (1.0.12; pulls in api-surface `--scope=project` + `--snapshot=PATH` fixes from 5.9.12/5.9.13 plus the `cyrius_api_surface` tarball-packaging fix from 5.9.14; lets `scripts/check-api-surface.sh` shrink to a four-line wrapper) |
 
 ## Build Metrics
 
@@ -113,7 +113,7 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.0.12** | 2026-05-06 | Tooling cleanup — `cyrius api-surface` adoption (5.9.13 ships `--scope=project` + `--snapshot=PATH`); `scripts/check-api-surface.sh` reduced from 70-line awk walker to a four-line wrapper; resolved api-surface issue archived |
+| **1.0.12** | 2026-05-06 | Tooling cleanup — `cyrius api-surface` adoption (5.9.14 ships `--scope=project`, `--snapshot=PATH`, and the `cyrius_api_surface` helper binary); `scripts/check-api-surface.sh` reduced from 70-line awk walker to a four-line wrapper; resolved api-surface issue archived |
 | 1.0.11 | 2026-05-06 | V1.1.0 `#derive(accessors)` migration complete — pam + netns + update migrated (11 structs across 3 modules); cyrius pin 5.9.1 → 5.9.7 lifts the derive 32-struct cap; 16 of 16 struct-bearing modules done; ready for V1.1.0 closeout |
 | 1.0.10 | 2026-05-06 | V1.1.0 `#derive(accessors)` slots 11–13 — ima + tpm + secureboot migrated (8 structs across 3 modules); 13 of 13 struct-bearing modules done; one batch left (pam + netns + update) |
 | 1.0.9 | 2026-05-06 | V1.1.0 `#derive(accessors)` slots 8–10 — udev + journald + audit migrated (7 structs across 3 modules); 10 of ~13 struct-bearing modules done; learned: `syscall` is a reserved field name, asymmetric setter API needs wrappers |

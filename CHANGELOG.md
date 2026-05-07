@@ -10,20 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.12] — 2026-05-06
 
 **Tooling cleanup — `cyrius api-surface` adoption + cyrius pin
-bump to 5.9.13.** All three blockers tracked in the api-surface
+bump to 5.9.14.** All three blockers tracked in the api-surface
 issue resolved upstream; `scripts/check-api-surface.sh` reduced
 from a 70-line awk walker to a four-line wrapper around the
 official command. Snapshot byte-identical (721 fns); no API
 change for consumers.
 
 ### Changed
-- **`cyrius.cyml [package].cyrius`** pinned `5.9.7` → `5.9.13`.
-  cyrius 5.9.13 closes the last open item from
+- **`cyrius.cyml [package].cyrius`** pinned `5.9.7` → `5.9.14`.
+  cyrius 5.9.13 closed the last open item from
   [`docs/development/issues/archive/2026-05-06-cyrius-api-surface-derive-blind.md`](docs/development/issues/archive/2026-05-06-cyrius-api-surface-derive-blind.md):
   `--snapshot=PATH` is now honored. Combined with 5.9.9
   (derive-aware scanner) and 5.9.12 (`--scope=project`), the
   official command produces output byte-identical to agnosys's
-  previous in-script awk walker.
+  previous in-script awk walker. The 5.9.13 release tarball
+  shipped without the `cyrius_api_surface` helper that
+  `cyrius api-surface` shells out to, breaking CI's
+  curl + tar + cp install (locally the helper was masked by an
+  older install lingering in `~/.cyrius/bin/`); cyrius 5.9.14
+  ships the helper in `bin/cyrius_api_surface` so the pin lands
+  there directly.
 - **`scripts/check-api-surface.sh`** — replaced with a thin
   wrapper. The previous awk-based walker (with the
   `#derive(accessors)` extension added in 1.0.6) is gone in
@@ -44,12 +50,16 @@ change for consumers.
 - **`dist/agnosys.cyr`** regenerated.
 
 ### Verified
-- All 10 audit gates pass under cyrius 5.9.13.
+- All 10 audit gates pass under cyrius 5.9.14.
 - `scripts/check-api-surface.sh` (four-line wrapper) reports
   "ok: 721 public fns, surface matches snapshot exactly".
 - `scripts/check-api-surface.sh --update` regenerates the
   snapshot in place at `docs/development/api-surface-1.0.snapshot`;
   byte-identical content to the previous awk-walker output.
+- `tar tzf cyrius-5.9.14-x86_64-linux.tar.gz | grep cyrius_api_surface`
+  lists `cyrius-5.9.14-x86_64-linux/bin/cyrius_api_surface`
+  (absent from the 5.9.13 tarball; that's why this slot pins
+  5.9.14 not 5.9.13).
 
 ## [1.0.11] — 2026-05-06
 
