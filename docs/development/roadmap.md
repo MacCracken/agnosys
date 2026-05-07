@@ -136,30 +136,36 @@ Slot shipped as a verification + audit pass; CHANGELOG `[1.1.1]` documents the f
 
 **Rationale:** exit-path safety; cyrius 5.8.x ships per-defer runtime flags so unreached defers skip cleanly. Today's flag+continue patterns are equivalent in correctness but harder to audit.
 
-#### V1.1.2 — `ct_eq_bytes` in certpin ✅ SHIPPED 2026-05-06 (across 1.1.2 deferral + 1.1.3 reopen)
+#### V1.1.2 — `ct_eq_bytes` deferral (issue filed) ✅ SHIPPED 2026-05-06
 
-Initial filing at 1.1.2 deferred: `ct_eq` was not a builtin,
-`lib/ct.cyr` shipped only `ct_select`, and `secret var` rejected
-scalar declarations (didn't fit cstring-pointer pin storage).
+The slot's premise — `ct_eq` as a cyrius compiler builtin or
+`lib/ct.cyr` helper — turned out incomplete on cyrius 5.9.14:
+`ct_eq` was not a builtin; `lib/ct.cyr` shipped only `ct_select`;
+`secret var` rejected scalar declarations (didn't fit
+cstring-pointer pin storage). The existing
+`src/certpin.cyr:120 fn certpin_ct_streq` was correct as-is
+(canonical XOR-accumulate, no data-dependent branches).
+
 Filed [`docs/development/issues/archive/2026-05-06-cyrius-ct-eq-bytes-stdlib.md`](../issues/archive/2026-05-06-cyrius-ct-eq-bytes-stdlib.md)
-proposing `ct_eq_bytes(a, b, n)` for `lib/ct.cyr`.
+proposing `ct_eq_bytes(a, b, n)` for `lib/ct.cyr`. Slot shipped
+as a deferral — issue + verification + roadmap defer note.
 
-Upstream resolved in cyrius 5.9.18; agnosys 1.1.3 reopened and
-shipped the actual swap:
+**Rationale:** the compiler-backed primitive is the canonical path post-5.8.x (sigil's PQC code uses it). Our hand-rolled version works but isn't the supported pattern.
 
-- [x] cyrius 5.9.18 added `ct_eq_bytes(a, b, n)` to `lib/ct.cyr`
-  (canonical XOR-accumulate; doc-comment credits the agnosys
-  filing).
+#### V1.1.3 — `ct_eq_bytes` reopen ✅ SHIPPED 2026-05-06
+
+cyrius 5.9.18 added `ct_eq_bytes(a, b, n)` to `lib/ct.cyr`
+(canonical XOR-accumulate; doc-comment credits the agnosys
+filing). agnosys-side migration:
+
 - [x] `cyrius.cyml [deps].stdlib` += `"ct"` (auto-prepend).
-- [x] `src/certpin.cyr fn certpin_ct_streq(a, b)` body shrunk
-  from a 16-line hand-roll to a 5-line cstring wrapper that
-  delegates the byte loop into `ct_eq_bytes(a, b, alen)`.
-  Length-mismatch early-return preserved (pin length is
-  non-secret in agnosys — 44-char base64 SHA-256, fixed by
-  spec).
+- [x] `src/certpin.cyr fn certpin_ct_streq` body shrunk from a
+  16-line hand-roll to a 5-line cstring wrapper that delegates
+  the byte loop into `ct_eq_bytes(a, b, alen)`. Length-mismatch
+  early-return preserved (pin length is non-secret in agnosys —
+  44-char base64 SHA-256, fixed by spec).
 - [x] Bench parity verified: `ct_streq_equal` 125→129ns,
-  `ct_streq_diff` 135→140ns (within run-to-run noise; no
-  fn-call overhead measurable over the 16+ byte XOR loop).
+  `ct_streq_diff` 135→140ns (within run-to-run noise).
 
 `secret var` annotation deferred indefinitely — pin storage in
 certpin flows through cstring pointers across struct boundaries,
@@ -167,52 +173,94 @@ which doesn't fit cyrius's array-only `secret var` contract.
 Revisit if/when `secret var` gains a pointer-form or a separate
 `secret_str` annotation.
 
-**Rationale:** the compiler-backed primitive is the canonical path post-5.8.x (sigil's PQC code uses it). Our hand-rolled version works but isn't the supported pattern.
+#### V1.1.4 — `ct_eq_bytes_lens` one-liner + `sys_stat` x86 fix ✅ SHIPPED 2026-05-06
 
-(Note: agnosys VERSION 1.1.3 shipped the V1.1.2 reopen; subsequent
-slot version numbers may drift from slot numbers as deferrals get
-reopened. Slot numbers here are conceptual labels, not version
-tags. Refer to CHANGELOG for the operational version history.)
+cyrius 5.9.20 closed two upstream gaps in one bump:
 
-#### V1.1.3 — Exhaustive `match` coverage ✅ SHIPPED 2026-05-06 (1.1.5)
+- [x] `lib/ct.cyr` added `ct_eq_bytes_lens(a, a_len, b, b_len)`
+  (dual-length variant; sigil-paired consolidation). agnosys's
+  `certpin_ct_streq` body further shrunk to a one-liner full
+  delegation: `return ct_eq_bytes_lens(a, strlen(a), b, strlen(b));`.
+- [x] `lib/syscalls_x86_64_linux.cyr:309` added `fn sys_stat`
+  (peer with the existing aarch64 entry at line 346) — closed
+  the long-open
+  [`docs/development/issues/archive/2026-05-01-sys-stat-x86-portability.md`](../issues/archive/2026-05-01-sys-stat-x86-portability.md)
+  filed by sigil 3.0 against agnosys 1.0.4. No agnosys-side
+  shim needed.
+
+#### V1.1.5 — Exhaustive `match` coverage adoption ✅ SHIPPED 2026-05-06
 
 agnosys's first `match` block — `src/error.cyr fn syserr_print`
-converted from a 7-elif + else chain to a `match kind { ... }` over
-all 8 SysErrorKind variants, with no `_ =>` opt-out so future
-SysErrorKind additions trigger a build-time warning until handled.
-`scripts/audit.sh` gate 4 now greps the build log for
-`non-exhaustive` and fails the gate; verified by regression test
-(deliberately removed an arm; gate fired with the expected message).
+converted from a 7-elif + else chain to a `match kind { ... }`
+over all 8 `SysErrorKind` variants, no `_ =>` opt-out. Future
+`SysErrorKind` additions trigger a build-time warning until
+handled.
 
-The other 14 enum-to-string fns surveyed
-(`update_phase_str`, `pam_service_name`, `tpm_bank_str`, etc.) kept
-as if/elif chains — their catch-all defaults are correct for
-wire-format / debug serializers where missing-variant should
-degrade gracefully rather than fall through silently.
+- [x] `scripts/audit.sh` gate 4 now greps the build log for
+  `non-exhaustive` and fails the gate. Verified by regression
+  test (deliberately removed an arm; gate fired with the
+  expected message).
+- [x] Other 14 enum-to-string fns
+  (`update_phase_str`, `pam_service_name`, `tpm_bank_str`, etc.)
+  kept as if/elif chains — their catch-all defaults are correct
+  for wire-format / debug serializers where missing-variant
+  should degrade gracefully rather than fall through silently.
 
-Compilation-side discovery worth recording: cyrius's exhaustive-
-match check requires the fn to be CALLED (DCE eliminates dead fns
-before the check runs). All enum forms — explicit-value `= N`,
-bare-name auto-incremented, paren'd-variant sum types — trigger
-the check correctly when there's a live caller.
+#### V1.1.6 — Match-coverage corrigendum + cyrius 5.9.25 pin ✅ SHIPPED 2026-05-07
 
-(was the original V1.1.3 entry below; superseded by the above.)
+The match-coverage check on cyrius 5.9.20–5.9.21 was
+fn-name-dependent (hash-bucket dispatch in coverage bookkeeping;
+a roughly 50/50 mix of warning-fires vs warning-skips across fn
+names). agnosys 1.1.5's CHANGELOG attributed the inconsistency
+to DCE-gating; that diagnosis was wrong. Filed
+[`docs/development/issues/archive/2026-05-06-cyrius-match-coverage-fn-name-dependent.md`](../issues/archive/2026-05-06-cyrius-match-coverage-fn-name-dependent.md);
+fix landed in cyrius 5.9.25.
 
-- [ ] Adopt `cyrius lint`'s exhaustive-match warning across every enum dispatch in src/* (audit / security / syscall / mac / pam / luks / dmverity / ima / tpm / secureboot / udev / drm / netns / bootloader / update / fuse / journald).
-- [ ] Add `_ =>` opt-out arms only where catch-all is the genuine intent (e.g. unknown-errno dispatch); explicit variants elsewhere.
-- [ ] Wire `cyrius lint` (already CI-gated) to fail on the new warning class.
+- [x] cyrius pin 5.9.20 → 5.9.25.
+- [x] CHANGELOG corrigendum to 1.1.5: real cause was hash-table
+  indexing, not DCE-gating. The 1.1.5 audit gate is still correct
+  as a CI hook; on 5.9.25 its coverage is now reliable across
+  every fn name.
+- [x] Side-observation also fixed: `cyrius --version` no longer
+  emits the trailing `\xb3` byte.
 
-**Rationale:** catches new audit/syscall/security enum variants that miss handlers — exactly the class of drift that kernel-API tracking is most likely to introduce.
+(`syserr_print` happened to be in a "lucky" hash bucket on
+5.9.20–5.9.21, so the V1.1.5 gate was correct in practice for
+agnosys's one match block — just hash-bucket-dependent for any
+future second match. 5.9.25 makes the gate reliable for new
+matches landing in V1.1.7+.)
 
-#### V1.1.4 — Tagged-union sum types in error.cyr
+#### V1.1.7 — Tagged-union `Result` adoption ✅ SHIPPED 2026-05-07 (verification slot)
 
-- [ ] Replace `lib/tagged.cyr`-backed Result/Option construction in `src/error.cyr` and the 10 modules using it (35 call sites: tagged_new / tag / payload / is_tag) with first-class `enum Result { Ok(v); Err(e); }` from cyrius 5.8.21+.
-- [ ] Public Result-returning fn signatures unchanged — internal representation only.
-- [ ] API surface snapshot: no drift expected; verify with `scripts/check-api-surface.sh`.
+The slot anticipated migrating agnosys's `Result`/`Option`
+construction from `lib/tagged.cyr`'s hand-rolled `tagged_new`/
+`tag`/`is_tag` primitives to cyrius's first-class
+`enum Result<T, E> { Ok(v); Err(e); }` form. Verification
+showed the migration was already complete via stdlib evolution:
 
-**Rationale:** the lib/tagged.cyr API still works but is the pre-5.8.21 hand-rolled pattern. First-class sum types compile to byte-identical layout for arity-1, and exhaustive-match (1.1.3) becomes load-bearing once Result is a real enum.
+- [x] cyrius v5.8.23 migrated `lib/tagged.cyr`'s `Option` to a
+  first-class sum type. v5.8.28 carved `Result<T, E>` out into
+  `lib/result.cyr` as a typed first-class sum type
+  (transitively included by lib/tagged.cyr).
+- [x] agnosys's call sites use only the high-level API (`Ok(...)`,
+  `Err(...)`, `is_ok(res)`, `is_err_result(res)`, `payload(res)`).
+  Zero direct `tagged_new(...)`, `tag(...)`, or `is_tag(...)`
+  calls in src/* (verified across all 24 source files).
+- [x] When agnosys writes `return Ok(value);`, cyrius resolves
+  `Ok` to the derive-emitted constructor in lib/result.cyr —
+  same heap layout as the pre-v5.8.21 hand-rolled
+  `tagged_new(0, value)`, transparently.
 
-#### V1.1.5 — Multi-width struct fields for kernel binary protocols
+Pattern-payload destructuring (`match res { Ok(v) => use(v) }`)
+is NOT yet shipped in cyrius (per vidya `tagged_unions_v58x`:
+"That's a future slot"). When it lands, agnosys's
+`if (is_err_result(res) == 1) { return res; } var v = payload(res);`
+chains become candidates for the cleaner `match` form. Until
+then the if/payload chain stays as the canonical idiom.
+
+**Rationale:** the lib/tagged.cyr API still works but is the pre-5.8.21 hand-rolled pattern. First-class sum types compile to byte-identical layout for arity-1, and exhaustive-match (V1.1.5) becomes load-bearing once Result is a real enum.
+
+#### V1.1.8 — Multi-width struct fields for kernel binary protocols
 
 - [ ] Annotate kernel-protocol structs with per-field widths (`magic: i32`, `version: i16`, `flags: i8`, etc.) — audit_status, audit_rule_data, dm_verity_args, IMA measurement records, TPM cmd headers, ELF/EFI variable layouts.
 - [ ] Replace explicit `store8` / `store16` / `store32` / `load*` calls with named-field reads/writes.
@@ -220,7 +268,7 @@ the check correctly when there's a live caller.
 
 **Rationale:** cyrius 5.8.x ships width-correct codegen — `var x: i32 = …` does the right `mov dword [addr], eax`. Today's hand-rolled mixed-width store/load pattern is correct but loses the type system's ability to catch a `store64` where a `store32` was meant.
 
-#### V1.1.6 — Slice migration for syscall + parser buffers
+#### V1.1.9 — Slice migration for syscall + parser buffers
 
 - [ ] Convert `var buf[N]; pass &buf, N` patterns (35 sites today) to `slice<u8>` where the buffer is consumed within a single fn scope.
 - [ ] Use `slice_set` / `s.ptr` / `s.len` / `s[i]` (bounds-checked) in netlink frame builders, /proc parsers, EFI variable readers, audit nlmsg parsers.
@@ -228,7 +276,7 @@ the check correctly when there's a live caller.
 
 **Rationale:** bounds-checked indexing on the agnosys parsers (audit netlink, fuse mount entries, EFI var bytes, IMA measurement records) closes the off-by-one class without a runtime cost we can't already amortize.
 
-#### V1.1.7 — `#derive(Serialize)` for module status diagnostics
+#### V1.1.10 — `#derive(Serialize)` for module status diagnostics
 
 - [ ] Generate JSON serializers for status structs returned by query fns (mac status, audit status, ima status, secureboot state, tpm caps, drm caps).
 - [ ] Consumer-facing benefit: kavach / sigil / argonaut can dump agnosys state to log without writing per-module formatters.

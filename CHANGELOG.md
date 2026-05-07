@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.7] — 2026-05-07
+
+**V1.1.7 — Tagged-union `Result` adoption verification.**
+The slot anticipated migrating agnosys's `Result`/`Option`
+construction from `lib/tagged.cyr`'s hand-rolled `tagged_new`/
+`tag`/`is_tag` primitives to cyrius's first-class
+`enum Result<T, E> { Ok(v); Err(e); }` form. Verification on
+cyrius 5.9.25 stdlib:
+
+- `lib/result.cyr` (v5.8.28 carve-out from lib/tagged.cyr) defines
+  `Result<T, E>` as a first-class sum type with derive-emitted
+  `Ok(v)` and `Err(e)` constructors.
+- `lib/tagged.cyr` (v5.8.23) defines `Option { None(); Some(v); }`
+  the same way.
+- agnosys's call sites use **only** the high-level API: `Ok(...)`,
+  `Err(...)`, `is_ok(res)`, `is_err_result(res)`, `payload(res)`.
+  Zero direct `tagged_new(...)`, `tag(...)`, or `is_tag(...)`
+  calls in src/* — confirmed via grep across all 24 source files.
+
+Net for agnosys: when `return Ok(value);` is compiled, cyrius
+resolves `Ok` to the first-class sum-type constructor in
+`lib/result.cyr`, which emits the heap-allocated 16-byte pair
+(tag at +0, payload at +8). Same shape as the pre-5.8.21
+hand-rolled `tagged_new(OK, value)`, transparently. agnosys is
+already on first-class tagged unions via the stdlib's transparent
+migration; no source changes needed.
+
+The roadmap slot's "35 call sites" referred to the cumulative
+high-level API usage (`Ok`, `Err`, `is_ok`, `payload`), not
+direct `tagged_new`/`tag`/`is_tag` primitives. These call sites
+already use the first-class form by routing through stdlib;
+they don't need a syntactic migration.
+
+Pattern-payload destructuring (`match res { Ok(v) => use(v) }`)
+is NOT yet shipped in cyrius (per vidya `tagged_unions_v58x`:
+"That's a future slot"). When it lands, agnosys's `if (is_err_result(res) == 1) { return res; } var v = payload(res);` chains
+will become candidates for the cleaner `match` form. Until then,
+the if/payload chain is the canonical idiom and stays.
+
+### Changed
+- **`VERSION`** 1.1.6 → 1.1.7.
+- **`dist/agnosys.cyr`** regenerated (header v1.1.7 — no body
+  changes).
+
+### Verified
+- All 10 audit gates pass.
+- 234 / 234 integration tests pass; Result/Option behavior
+  unchanged.
+- 30 benchmarks across 11 groups; bench parity unchanged.
+- API surface clean: 721 fns, no drift.
+
 ## [1.1.6] — 2026-05-07
 
 **cyrius pin 5.9.20 → 5.9.25 — match-coverage check now
