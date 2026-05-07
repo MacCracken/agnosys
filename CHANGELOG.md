@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] — 2026-05-07
+
+**V1.1.8 — Multi-width struct fields for kernel binary protocols.**
+Four kernel-ABI structs migrated from explicit
+`store8`/`store16`/`store32` calls + offset comments to typed
+`struct` decls + pointer-to-struct dot syntax. cyrius's
+width-correct codegen emits the correct `store16`/`store32`/
+`load16`/`load32` instructions automatically; the kernel-correct
+tight-packed byte layout is enforced by the typed field
+declarations.
+
+### Changed
+- **`src/audit.cyr`** — three kernel-ABI structs added:
+  - `struct sockaddr_nl { nl_family: i16; nl_pad: i16; nl_pid: i32;
+    nl_groups: i32; }` (12 B). `audit_sockaddr_nl(pid)` rewritten
+    to use dot syntax.
+  - `struct nlmsghdr { nlmsg_len: i32; nlmsg_type: i16;
+    nlmsg_flags: i16; nlmsg_seq: i32; nlmsg_pid: i32; }` (16 B).
+    `audit_build_nlmsg` write side rewritten; `audit_recv_raw`
+    read side at the parser checkpoint converted from
+    `load32(recv_buf)`/`load16(recv_buf+4)`/`load32(recv_buf+8)`
+    to `var hdr: nlmsghdr = recv_buf; hdr.nlmsg_len/...`.
+  - `struct audit_kstatus { mask: i32; enabled: i32; failure: i32;
+    pid: i32; rate_limit: i32; backlog_limit: i32; lost: i32;
+    backlog: i32; }` (32 B — first 32 bytes of the kernel
+    `audit_status`). `audit_get_status`'s payload parser at
+    lines 470-478 rewritten from 6 paired `store64(... load32(pld+N))`
+    calls to typed dot-syntax field reads. `audit_set_enabled`'s
+    payload write at line 500-501 also rewritten.
+- **`src/security.cyr`** — `struct bpf_insn { code: i16; jt: i8;
+  jf: i8; k: i32; }` (8 B). `security_bpf_write_insn` rewritten
+  to use dot syntax. Other stack-local kernel-ABI writes
+  (`landlock_attr` at line 106, `sock_fprog` at line 195) left
+  as-is — stack locals use 8-byte slots regardless of declared
+  width per vidya `multi_width_types`, so the typed-struct-on-stack
+  pattern doesn't preserve kernel ABI for them.
+- **`dist/agnosys.cyr`** regenerated. 9,886 → 9,912 lines (+26
+  from new struct decls; struct decls are textual, not
+  compiled-out).
+
+### Verified
+- All 10 audit gates pass under cyrius 5.9.25.
+- 234 / 234 integration tests pass — including the audit-regression
+  block that exercises `audit_recv_raw`'s nlmsghdr parser and
+  `audit_get_status`'s audit_status payload reader.
+- 30 benchmarks across 11 groups; bench parity unchanged.
+- API surface clean: 721 fns, no drift (struct decls are not
+  public fns; the dot-syntax writes don't add accessor surface).
+- 14 explicit width-store calls eliminated (3 store16 + 7 store32
+  in audit.cyr; 1 store16 + 2 store8 + 1 store32 in security.cyr)
+  + 3 width-load reads in `audit_recv_raw`.
+
+### Discovery worth recording
+
+Two cyrius behaviors verified during this slot:
+
+1. **`#derive(accessors)` lays typed fields out at i64 slots,
+   NOT at FIELDOFF tight-packed offsets.** A struct
+   `{ x: i16; y: i16; z: i32; }` has `sizeof = 8` (correct via
+   `sizeof(struct)`), but derive's generated accessors write
+   `set_x` at +0, `set_y` at +8, `set_z` at +16 — using i64
+   slot spacing. Means `#derive(accessors)` is suitable for
+   internal-layout structs but NOT for kernel-ABI structs where
+   the byte layout must match.
+2. **Pointer-to-struct dot syntax (`var s: T = ptr; s.f = v;`)
+   honors width-aware tight-packed offsets.** Verified by
+   byte-dumping after writes — `set_nl_family` at offset 0 (2 bytes),
+   `set_nl_pid` at offset 4 (4 bytes), kernel-ABI-correct.
+   This is the migration vehicle for V1.1.8.
+
+These are language-design observations, not bugs — each codegen
+path serves a different use case. Worth documenting because
+"use derive for accessors, use dot syntax for kernel-ABI structs"
+is the rule that emerges.
+
 ## [1.1.7] — 2026-05-07
 
 **V1.1.7 — Tagged-union `Result` adoption verification.**

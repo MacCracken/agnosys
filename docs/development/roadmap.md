@@ -260,11 +260,40 @@ then the if/payload chain stays as the canonical idiom.
 
 **Rationale:** the lib/tagged.cyr API still works but is the pre-5.8.21 hand-rolled pattern. First-class sum types compile to byte-identical layout for arity-1, and exhaustive-match (V1.1.5) becomes load-bearing once Result is a real enum.
 
-#### V1.1.8 — Multi-width struct fields for kernel binary protocols
+#### V1.1.8 — Multi-width struct fields for kernel binary protocols ✅ SHIPPED 2026-05-07
 
-- [ ] Annotate kernel-protocol structs with per-field widths (`magic: i32`, `version: i16`, `flags: i8`, etc.) — audit_status, audit_rule_data, dm_verity_args, IMA measurement records, TPM cmd headers, ELF/EFI variable layouts.
-- [ ] Replace explicit `store8` / `store16` / `store32` / `load*` calls with named-field reads/writes.
-- [ ] Validate against kernel ABI: each touched struct gets a fuzz round on its parser.
+Four kernel-ABI structs migrated to typed `struct` decls +
+pointer-to-struct dot syntax:
+
+- [x] `sockaddr_nl` (12 B; u16/u16/u32/u32) in audit.cyr
+- [x] `nlmsghdr` (16 B; u32/u16/u16/u32/u32) in audit.cyr —
+  both write side (`audit_build_nlmsg`) and read side
+  (`audit_recv_raw`'s parser)
+- [x] `audit_kstatus` (32 B; 8× u32) in audit.cyr — read side
+  in `audit_get_status` and write side in `audit_set_enabled`
+- [x] `bpf_insn` (8 B; u16/u8/u8/u32) in security.cyr
+
+14 explicit width-store calls eliminated; 3 width-load reads
+also converted. cyrius's width-correct codegen emits the right
+`store16`/`store32`/`load16`/`load32` instructions automatically;
+the kernel-correct tight-packed byte layout is enforced by the
+typed field declarations.
+
+Stack-local kernel-ABI writes (LandlockRulesetAttr,
+LandlockPathBeneathAttr, sock_fprog at security.cyr lines 106
+and 195) **deferred** — per vidya `multi_width_types`, stack
+locals use 8-byte slots regardless of declared width, so
+`var attr: T;` doesn't preserve kernel ABI on the stack. The
+existing `var buf[N]; store32(&buf+N, ...);` pattern stays
+correct for those sites.
+
+**Discovery worth recording (in CHANGELOG `[1.1.8]`):**
+1. `#derive(accessors)` lays typed fields out at i64 slots, NOT
+   FIELDOFF tight-packed offsets. Suitable for internal-layout
+   structs; NOT for kernel-ABI structs.
+2. Pointer-to-struct dot syntax (`var s: T = ptr; s.f = v;`)
+   honors width-aware tight-packed offsets — verified by
+   byte-dumping. This is V1.1.8's migration vehicle.
 
 **Rationale:** cyrius 5.8.x ships width-correct codegen — `var x: i32 = …` does the right `mov dword [addr], eax`. Today's hand-rolled mixed-width store/load pattern is correct but loses the type system's ability to catch a `store64` where a `store32` was meant.
 

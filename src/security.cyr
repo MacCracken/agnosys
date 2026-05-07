@@ -148,13 +148,23 @@ enum BpfConst {
     SECCOMP_MODE_FILTER = 2;
 }
 
+# BPF sock_filter instruction — kernel ABI struct (8 bytes).
+# Layout enforced by per-field widths; pointer-to-struct dot syntax
+# emits store16/store8/store32 at the kernel-correct offsets.
+struct bpf_insn {
+    code: i16;
+    jt: i8;
+    jf: i8;
+    k: i32;
+}
+
 # Write a BPF sock_filter instruction (8 bytes) to buf at offset.
-# Layout: u16 code, u8 jt, u8 jf, u32 k (little-endian)
 fn security_bpf_write_insn(buf, offset, code, jt, jf, k) {
-    store16(buf + offset, code);
-    store8(buf + offset + 2, jt);
-    store8(buf + offset + 3, jf);
-    store32(buf + offset + 4, k);
+    var insn: bpf_insn = buf + offset;
+    insn.code = code;
+    insn.jt = jt;
+    insn.jf = jf;
+    insn.k = k;
     return 0;
 }
 
