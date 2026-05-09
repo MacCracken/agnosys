@@ -1,13 +1,20 @@
 # cyrius `api-surface` scanner desyncs on `str_builder_putc(sb, 125)`
 
+**Status:** RESOLVED — fixed in cyrius 5.10.16. Verified via
+the inline reproducer below: putc(125) and add_cstr("}") now
+both produce 33 fns on the same source. agnosys keeps the
+add_cstr form as a stylistic choice (no churn) but either is
+correct on 5.10.16+.
 **Filed:** 2026-05-09
+**Resolved:** 2026-05-09 (verified at cyrius 5.10.16 in agnosys 1.1.13)
 **Reporter:** agnosys 1.1.13 (during V1.1.12 `#derive(Serialize)`
 migration — found while hand-rolling `_to_json` shims for
 cstring-bearing diagnostic structs)
 **cyrius version observed:** 5.10.15 (verified `cc5_aarch64 5.10.15` stamp)
+**cyrius version with fix:** 5.10.16
 **Severity:** LOW — silent, but surface check stays green so
-the regression is invisible until someone manually verifies
-counts. Workaround is one-line.
+the regression was invisible until someone manually verified
+counts. Workaround was one-line.
 **Related:** none (independent of the
 2026-05-08 multi-derive issue and 2026-05-07 lib-shadow issue).
 
