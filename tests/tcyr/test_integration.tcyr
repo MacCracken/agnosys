@@ -17,6 +17,8 @@ include "lib/process.cyr"
 include "lib/fs.cyr"
 include "lib/ct.cyr"
 include "lib/slice.cyr"
+include "lib/fnptr.cyr"
+include "lib/json.cyr"
 include "lib/assert.cyr"
 
 include "src/error.cyr"
@@ -237,6 +239,12 @@ fn test_audit() {
     var st = audit_status_new();
     assert_eq(audit_status_enabled(st), 0, "as_en");
     assert_eq(audit_status_lost(st), 0, "as_lost");
+    audit_status_set_enabled(st, 1);
+    audit_status_set_pid(st, 42);
+    var sb = str_builder_new();
+    audit_status_to_json(st, sb);
+    var json = str_builder_build(sb);
+    assert(str_eq_cstr(json, "{\"enabled\":1,\"failure_action\":1,\"pid\":42,\"backlog_limit\":8192,\"lost\":0,\"backlog\":0}") == 1, "as_json");
     return 0;
 }
 
@@ -343,6 +351,10 @@ fn test_ima() {
     var st = ima_status_new(1, 42, 1);
     assert_eq(ima_status_active(st), 1, "is_a");
     assert_eq(ima_status_measurement_count(st), 42, "is_mc");
+    var sb = str_builder_new();
+    ima_status_to_json(st, sb);
+    var json = str_builder_build(sb);
+    assert(str_eq_cstr(json, "{\"active\":1,\"measurement_count\":42,\"policy_loaded\":1}") == 1, "is_json");
     return 0;
 }
 

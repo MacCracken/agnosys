@@ -21,7 +21,7 @@ struct Str { data; len; }
 # pointed-to data is NOT copied — the Str shares the cstr's storage
 # (same as the back-compat str_from). For an owning copy, use
 # str_clone_a / str_dup_a.
-fn str_from_a(a, cstr) {
+fn str_from_a(a, cstr): Str {
     var slen = strlen(cstr);
     var s = alloc_via(a, 16);
     if (s == 0) { return 0; }
@@ -32,14 +32,14 @@ fn str_from_a(a, cstr) {
 
 # Create a Str from a C string literal. v5.8.35 wrapper —
 # delegates to str_from_a with default_alloc().
-fn str_from(cstr) {
+fn str_from(cstr): Str {
     return str_from_a(default_alloc(), cstr);
 }
 
 # v5.8.35 — Allocator-as-first-arg variant of str_new. Allocates
 # the 16-byte Str header through `a`. Data buffer is borrowed,
 # not copied. Returns 0 on OOM.
-fn str_new_a(a, data, len) {
+fn str_new_a(a, data, len): Str {
     var s = alloc_via(a, 16);
     if (s == 0) { return 0; }
     store64(s, data);
@@ -48,30 +48,104 @@ fn str_new_a(a, data, len) {
 }
 
 # Create a Str from buffer + length. v5.8.35 wrapper.
-fn str_new(data, len) {
+fn str_new(data, len): Str {
     return str_new_a(default_alloc(), data, len);
 }
 
 # Get length
-fn str_len(s) {
+fn str_len(s: Str) {
     return load64(s + 8);
 }
 
 # Get data pointer
-fn str_data(s) {
+fn str_data(s: Str) {
     return load64(s);
 }
 
 # Print a Str to stdout
-fn str_print(s) {
+fn str_print(s: Str) {
     syscall(1, 1, load64(s), load64(s + 8));
     return 0;
 }
 
 # Print Str + newline
-fn str_println(s) {
+fn str_println(s: Str) {
     str_print(s);
     syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+# v5.10.3 overload-dispatch target: `println(s: Str)` routes
+# here via PARSE_FNCALL's name-mangling lookup. Body is a thin
+# alias for str_println — gives the overload dispatch a
+# concrete symbol to land on without changing str_println's
+# semantics. Consumer-facing: `println(my_str)` Just Works
+# without explicit `str_println(my_str)` boilerplate.
+fn println_str(s: Str) {
+    return str_println(s);
+}
+
+# v5.10.8 — append a Str's contents to a builder as a JSON-
+# quoted string (RFC 8259 §7). Emits the opening `"`, walks
+# the bytes escaping `"` → `\"`, `\` → `\\`, control chars
+# (U+0000..U+001F) as named escapes (`\b \f \n \r \t`) or
+# `\u00XX` for the rest, then emits the closing `"`. Bytes
+# >= 0x20 (other than `"` and `\`) pass through verbatim,
+# which is RFC-compliant for UTF-8 strings (§8.1: JSON text
+# SHALL be encoded in UTF-8 by default).
+#
+# PP_DERIVE Serialize uses this as the canonical Str-field
+# emit target — pre-v5.10.8 the codegen called
+# `str_builder_add_cstr(sb, str_data(load64(...)))` which
+# passes raw bytes through, producing invalid JSON for any
+# string carrying user input or kernel-audit text. Closes
+# the agnosys 1.1.12 follow-up "JSON escaping" item filed
+# at v5.10.7.
+fn str_builder_add_json_str(sb, s: Str) {
+    str_builder_putc(sb, 34);                # opening "
+    var data = str_data(s);
+    var slen = str_len(s);
+    var ji = 0;
+    while (ji < slen) {
+        var bc = load8(data + ji);
+        if (bc == 34) {                      # "  → \"
+            str_builder_putc(sb, 92);
+            str_builder_putc(sb, 34);
+        } else { if (bc == 92) {              # \  → \\
+                str_builder_putc(sb, 92);
+                str_builder_putc(sb, 92);
+            } else { if (bc == 8) {               # \b → \b
+                    str_builder_putc(sb, 92);
+                    str_builder_putc(sb, 98);
+                } else { if (bc == 9) {               # \t → \t
+                        str_builder_putc(sb, 92);
+                        str_builder_putc(sb, 116);
+                    } else { if (bc == 10) {              # \n → \n
+                            str_builder_putc(sb, 92);
+                            str_builder_putc(sb, 110);
+                        } else { if (bc == 12) {              # \f → \f
+                                str_builder_putc(sb, 92);
+                                str_builder_putc(sb, 102);
+                            } else { if (bc == 13) {              # \r → \r
+                                    str_builder_putc(sb, 92);
+                                    str_builder_putc(sb, 114);
+                                } else { if (bc < 32) {               # other ctl → \u00XX
+                                        str_builder_putc(sb, 92);
+                                        str_builder_putc(sb, 117);
+                                        str_builder_putc(sb, 48);
+                                        str_builder_putc(sb, 48);
+                                        var hi = (bc >> 4) & 0xF;
+                                        var lo = bc & 0xF;
+                                        if (hi < 10) { str_builder_putc(sb, 48 + hi); }
+                                        else { str_builder_putc(sb, 87 + hi); }
+                                        if (lo < 10) { str_builder_putc(sb, 48 + lo); }
+                                        else { str_builder_putc(sb, 87 + lo); }
+                                    } else {                              # 0x20..0xFF → verbatim
+                                        str_builder_putc(sb, bc);
+                                    } } } } } } } }
+        ji = ji + 1;
+    }
+    str_builder_putc(sb, 34);                # closing "
     return 0;
 }
 
@@ -87,7 +161,7 @@ fn str_eq(a: Str, b: Str) {
 # both the concatenated data buffer AND the Str header via `alloc`.
 # Returns 0 on OOM (either allocation). The header points into the
 # fresh buffer — caller owns both.
-fn str_cat_a(alloc, x: Str, y: Str) {
+fn str_cat_a(alloc, x: Str, y: Str): Str {
     var la = load64(x + 8);
     var lb = load64(y + 8);
     var newlen = la + lb;
@@ -100,7 +174,7 @@ fn str_cat_a(alloc, x: Str, y: Str) {
 
 # Concatenate two Strs (allocates new). v5.8.35 wrapper —
 # delegates to str_cat_a with default_alloc().
-fn str_cat(a: Str, b: Str) {
+fn str_cat(a: Str, b: Str): Str {
     return str_cat_a(default_alloc(), a, b);
 }
 
@@ -108,20 +182,20 @@ fn str_cat(a: Str, b: Str) {
 # v5.8.43 — Allocator-as-first-arg variant of str_sub. Allocates
 # only the 16-byte Str header via `a` (data ptr is shared with the
 # parent Str — this is a view, not a copy). Returns 0 on OOM.
-fn str_sub_a(a, s, start, len) {
+fn str_sub_a(a, s: Str, start, len): Str {
     return str_new_a(a, load64(s) + start, len);
 }
 
 # Substring (allocates new Str header, shares data with parent).
 # v5.8.43 wrapper — delegates to str_sub_a with default_alloc().
-fn str_sub(s, start, len) {
+fn str_sub(s: Str, start, len): Str {
     return str_new(load64(s) + start, len);
 }
 
 # v5.8.35 — Allocator-as-first-arg variant of str_clone. Allocates
 # a fresh `slen + 1` byte buffer (null-terminated) AND the 16-byte
 # Str header via `a`. Returns 0 on OOM.
-fn str_clone_a(a, s) {
+fn str_clone_a(a, s: Str): Str {
     var slen = str_len(s);
     var buf = alloc_via(a, slen + 1);
     if (buf == 0) { return 0; }
@@ -131,7 +205,7 @@ fn str_clone_a(a, s) {
 }
 
 # Clone a Str (deep copy — new buffer). v5.8.35 wrapper.
-fn str_clone(s) {
+fn str_clone(s: Str): Str {
     return str_clone_a(default_alloc(), s);
 }
 
@@ -166,7 +240,7 @@ fn str_ends_with(s: Str, suffix: Str) {
 }
 
 # Find first occurrence of byte in Str, return index or -1
-fn str_index_of(s, ch) {
+fn str_index_of(s: Str, ch) {
     var slen = str_len(s);
     var sd = str_data(s);
     var fi = 0;
@@ -180,7 +254,7 @@ fn str_index_of(s, ch) {
 # v5.8.35 — Allocator-as-first-arg variant of str_from_int. Allocates
 # a 24-byte format buffer + the 16-byte Str header via `a`. Returns 0
 # on OOM.
-fn str_from_int_a(a, n) {
+fn str_from_int_a(a, n): Str {
     var buf = alloc_via(a, 24);
     if (buf == 0) { return 0; }
     var blen = fmt_int_buf(n, buf);
@@ -188,12 +262,12 @@ fn str_from_int_a(a, n) {
 }
 
 # Convert integer to Str. v5.8.35 wrapper.
-fn str_from_int(n) {
+fn str_from_int(n): Str {
     return str_from_int_a(default_alloc(), n);
 }
 
 # Parse integer from Str (returns 0 on invalid)
-fn str_to_int(s) {
+fn str_to_int(s: Str) {
     var slen = str_len(s);
     var sd = str_data(s);
     var result = 0;
@@ -217,7 +291,7 @@ fn str_to_int(s) {
 
 # v5.8.43 — Allocator-as-first-arg variant of str_trim. Routes the
 # str_sub allocation (Str header) through `a`. Returns 0 on OOM.
-fn str_trim_a(a, s) {
+fn str_trim_a(a, s: Str): Str {
     var slen = str_len(s);
     var sd = str_data(s);
     var start = 0;
@@ -237,7 +311,7 @@ fn str_trim_a(a, s) {
 
 # Trim leading and trailing whitespace (returns new Str). v5.8.43
 # wrapper.
-fn str_trim(s) {
+fn str_trim(s: Str): Str {
     return str_trim_a(default_alloc(), s);
 }
 
@@ -365,6 +439,20 @@ fn str_builder_add_cstr(sb, cstr) {
     return 0;
 }
 
+# v5.9.37: append a single byte to the string builder. Pairs with
+# the new lexer char-literal token (`'X'` → NUMBER X) so consumers
+# can write `str_builder_putc(sb, '[');` instead of needing to
+# stash a one-byte cstring. Required by agnosys 1.1.12 verbatim
+# repro (the original filing's spec uses this shape).
+fn str_builder_putc(sb, ch) {
+    _sb_grow(sb, 1);
+    var buf = load64(sb);
+    var len = load64(sb + 8);
+    store8(buf + len, ch & 0xFF);
+    store64(sb + 8, len + 1);
+    return 0;
+}
+
 # v5.8.43 — Allocator-as-first-arg variant of str_builder_add_int.
 fn str_builder_add_int_a(a, sb, n) {
     var tmp[24];
@@ -393,7 +481,7 @@ fn str_builder_add_int(sb, n) {
 # Allocates the permanent output buffer (`total + 1` bytes,
 # null-terminated) AND the 16-byte Str header via `a`. Returns
 # 0 on OOM.
-fn str_builder_build_a(a, sb) {
+fn str_builder_build_a(a, sb): Str {
     var buf = load64(sb);
     var total = load64(sb + 8);
     if (total == 0) { return str_from_a(a, ""); }
@@ -405,12 +493,12 @@ fn str_builder_build_a(a, sb) {
 }
 
 # Build final Str from the builder's buffer. v5.8.43 wrapper.
-fn str_builder_build(sb) {
+fn str_builder_build(sb): Str {
     return str_builder_build_a(default_alloc(), sb);
 }
 
 # Join a vec of Str with separator
-fn str_join(parts, sep: Str) {
+fn str_join(parts, sep: Str): Str {
     var plen = vec_len(parts);
     if (plen == 0) { return str_from(""); }
     var sb = str_builder_new();
@@ -428,7 +516,7 @@ fn str_join(parts, sep: Str) {
 # ================================================================
 
 # Create Str from raw buffer (copies data, adds null terminator)
-fn str_from_buf(ptr, len) {
+fn str_from_buf(ptr, len): Str {
     var buf = alloc(len + 1);
     memcpy(buf, ptr, len);
     store8(buf + len, 0);
@@ -453,7 +541,7 @@ fn str_cstr(s) {
 }
 
 # Substring by start and end index (returns new Str, shares data)
-fn str_substr(s, start, end) {
+fn str_substr(s: Str, start, end): Str {
     if (start < 0) { start = 0; }
     if (end > str_len(s)) { end = str_len(s); }
     if (start >= end) { return str_from(""); }

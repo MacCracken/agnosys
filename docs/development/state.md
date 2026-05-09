@@ -9,9 +9,9 @@
 | Item | Value |
 |---|---|
 | `VERSION` | **1.1.12** |
-| `cyrius.cyml [package].cyrius` | **5.9.27** |
-| Min Cyrius (consumer) | 5.9.27 |
-| Last cyrius bump | 5.9.25 → 5.9.27 (1.1.10; aarch64 backend now implements sub-8-byte struct field loads — unblocks V1.1.8 reopen) |
+| `cyrius.cyml [package].cyrius` | **5.10.9** |
+| Min Cyrius (consumer) | 5.10.9 |
+| Last cyrius bump | 5.9.27 → 5.10.9 (2026-05-08; bumped during V1.1.12 reopen attempt — see in-flight slots below). The 5.10.x series introduced the version-pinned cc5_aarch64 lib resolution (kills cross-version contamination per [`2026-05-07-cyrius-derive-serialize-incomplete.md`](../audit/../development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md)) and full RFC 8259 §7 Serialize-side JSON escaping. |
 
 ## Build Metrics
 
@@ -161,7 +161,7 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 - [x] V1.1.9 — V1.1.8 revert (aarch64 sub-8-byte struct field load gap); upstream issue filed; `scripts/audit.sh` gate 4 extended with permanent `cyrius build --aarch64` cross-build
 - [x] V1.1.10 — V1.1.8 reopen (cyrius pin 5.9.25 → 5.9.27); both arches clean
 - [x] V1.1.11 — slice migration — most agnosys `var buf[N]` sites aren't real slice candidates (verification finding); one representative site migrated as the canonical pattern (`ima_get_status` rbuf newline counter)
-- [~] V1.1.12 — `#derive(Serialize)` — DEFERRED. cyrius 5.9.27 ships the directive but the generated `_to_json` body is non-functional (empty for untyped fields, references nonexistent helpers for typed fields). Filed upstream issue `cyrius-derive-serialize-incomplete`; slot reopens when primitive Serialize helpers (`i64_to_json_sb`, `Str_to_json_sb`, etc.) ship in stdlib.
+- [~] V1.1.12 — `#derive(Serialize)` — DEFERRED (twice). Original 2026-05-07 file (`cyrius-derive-serialize-incomplete`) **resolved** 2026-05-08 — root cause was agnosys's vendored `./lib/fnptr.cyr` and `./lib/json.cyr` stubs (5.7.6-era) shadowing v5.10.9 stdlib; cyrius's PP_DERIVE Serialize codegen at v5.10.6+ is correct on both arches. Reopen attempt then surfaced a fresh upstream blocker (`2026-05-08-cyrius-derive-multi-stacking`): cyrius PP_DERIVE doesn't honor stacked `#derive(...)` directives, so `#derive(Serialize)` cannot layer on top of agnosys's existing `#derive(accessors)` structs. Slot stays deferred until cyrius supports multi-derive. cyrius pin held at 5.10.9 (the pin bump arc through 5.10.6 → 5.10.7 → 5.10.8 → 5.10.9 is durable; only the slot work was reverted).
 
 Slot # = agnosys VERSION # for this minor cycle. Multi-version
 shipping arcs (1.1.2-1.1.4 ct_eq_bytes; 1.1.5-1.1.6 exhaustive

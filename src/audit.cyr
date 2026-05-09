@@ -104,6 +104,7 @@ fn audit_handle_new(fd, config) {
 # ================================================================
 
 #derive(accessors)
+#derive(Serialize)
 struct audit_status { enabled; failure_action; pid; backlog_limit; lost; backlog; }
 
 fn audit_status_new() {

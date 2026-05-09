@@ -235,6 +235,7 @@ fn ima_rule_to_policy_line(rule) {
 # ================================================================
 
 #derive(accessors)
+#derive(Serialize)
 struct ima_status { active; measurement_count; policy_loaded; }
 
 fn ima_status_new(active, measurement_count, policy_loaded) {
