@@ -170,7 +170,10 @@ fn test_certpin() {
     var sb = str_builder_new();
     certpin_info_to_json(ci, sb);
     var json = str_builder_build(sb);
-    assert(str_eq_cstr(json, "{\"subject\":\"CN=test\",\"issuer\":null,\"serial\":null,\"not_before\":0,\"not_after\":0,\"sha256_fp\":null,\"spki_sha256\":null}") == 1, "ci_json");
+    var sb_exp = str_builder_new();
+    str_builder_add_cstr(sb_exp, "{\"subject\":\"CN=test\",\"issuer\":null,\"serial\":null,");
+    str_builder_add_cstr(sb_exp, "\"not_before\":0,\"not_after\":0,\"sha256_fp\":null,\"spki_sha256\":null}");
+    assert(str_eq(json, str_builder_build(sb_exp)) == 1, "ci_json");
     return 0;
 }
 
@@ -197,7 +200,10 @@ fn test_update() {
     var sb = str_builder_new();
     update_state_to_json(us, sb);
     var json = str_builder_build(sb);
-    assert(str_eq_cstr(json, "{\"slot\":1,\"version\":\"2026.5.1\",\"pending\":0,\"rollback_available\":0,\"boot_count\":7}") == 1, "us_json");
+    var sb_exp = str_builder_new();
+    str_builder_add_cstr(sb_exp, "{\"slot\":1,\"version\":\"2026.5.1\",\"pending\":0,");
+    str_builder_add_cstr(sb_exp, "\"rollback_available\":0,\"boot_count\":7}");
+    assert(str_eq(json, str_builder_build(sb_exp)) == 1, "us_json");
     return 0;
 }
 
@@ -254,7 +260,10 @@ fn test_audit() {
     var sb = str_builder_new();
     audit_status_to_json(st, sb);
     var json = str_builder_build(sb);
-    assert(str_eq_cstr(json, "{\"enabled\":1,\"failure_action\":1,\"pid\":42,\"backlog_limit\":8192,\"lost\":0,\"backlog\":0}") == 1, "as_json");
+    var sb_exp = str_builder_new();
+    str_builder_add_cstr(sb_exp, "{\"enabled\":1,\"failure_action\":1,\"pid\":42,");
+    str_builder_add_cstr(sb_exp, "\"backlog_limit\":8192,\"lost\":0,\"backlog\":0}");
+    assert(str_eq(json, str_builder_build(sb_exp)) == 1, "as_json");
     return 0;
 }
 
@@ -302,12 +311,18 @@ fn test_mac() {
     var sb = str_builder_new();
     mac_profile_to_json(p2, sb);
     var json = str_builder_build(sb);
-    assert(str_eq_cstr(json, "{\"agent_type\":\"test\",\"selinux_ctx\":\"user:role:type:level\",\"apparmor_name\":\"test-profile\"}") == 1, "mp_json");
+    var sb_exp = str_builder_new();
+    str_builder_add_cstr(sb_exp, "{\"agent_type\":\"test\",\"selinux_ctx\":\"user:role:type:level\",");
+    str_builder_add_cstr(sb_exp, "\"apparmor_name\":\"test-profile\"}");
+    assert(str_eq(json, str_builder_build(sb_exp)) == 1, "mp_json");
     var p3 = mac_profile_new("min");
     var sb3 = str_builder_new();
     mac_profile_to_json(p3, sb3);
     var json3 = str_builder_build(sb3);
-    assert(str_eq_cstr(json3, "{\"agent_type\":\"min\",\"selinux_ctx\":null,\"apparmor_name\":null}") == 1, "mp_json_null");
+    var sb3_exp = str_builder_new();
+    str_builder_add_cstr(sb3_exp, "{\"agent_type\":\"min\",\"selinux_ctx\":null,");
+    str_builder_add_cstr(sb3_exp, "\"apparmor_name\":null}");
+    assert(str_eq(json3, str_builder_build(sb3_exp)) == 1, "mp_json_null");
     return 0;
 }
 
@@ -330,7 +345,11 @@ fn test_dmverity() {
     var sb = str_builder_new();
     dmverity_status_to_json(st, sb);
     var json = str_builder_build(sb);
-    assert(str_eq_cstr(json, "{\"name\":\"test-vol\",\"is_active\":1,\"is_verified\":1,\"corruption_detected\":0,\"root_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}") == 1, "vs_json");
+    var sb_exp = str_builder_new();
+    str_builder_add_cstr(sb_exp, "{\"name\":\"test-vol\",\"is_active\":1,\"is_verified\":1,");
+    str_builder_add_cstr(sb_exp, "\"corruption_detected\":0,\"root_hash\":\"");
+    str_builder_add_cstr(sb_exp, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}");
+    assert(str_eq(json, str_builder_build(sb_exp)) == 1, "vs_json");
     return 0;
 }
 
@@ -464,7 +483,10 @@ fn test_drm() {
     var sb = str_builder_new();
     drm_verinfo_to_json(v, sb);
     var json = str_builder_build(sb);
-    assert(str_eq_cstr(json, "{\"major\":1,\"minor\":2,\"patch\":3,\"name\":\"amdgpu\",\"date\":\"20230101\",\"desc\":\"AMD GPU\"}") == 1, "dv_json");
+    var sb_exp = str_builder_new();
+    str_builder_add_cstr(sb_exp, "{\"major\":1,\"minor\":2,\"patch\":3,");
+    str_builder_add_cstr(sb_exp, "\"name\":\"amdgpu\",\"date\":\"20230101\",\"desc\":\"AMD GPU\"}");
+    assert(str_eq(json, str_builder_build(sb_exp)) == 1, "dv_json");
     return 0;
 }
 
