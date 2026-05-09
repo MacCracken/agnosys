@@ -2,28 +2,28 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-07 (1.1.12)
+**Last refresh:** 2026-05-09 (1.1.13)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.1.12** |
-| `cyrius.cyml [package].cyrius` | **5.10.9** |
-| Min Cyrius (consumer) | 5.10.9 |
-| Last cyrius bump | 5.9.27 → 5.10.9 (2026-05-08; bumped during V1.1.12 reopen attempt — see in-flight slots below). The 5.10.x series introduced the version-pinned cc5_aarch64 lib resolution (kills cross-version contamination per [`archive/2026-05-07-cyrius-derive-serialize-incomplete.md`](issues/archive/2026-05-07-cyrius-derive-serialize-incomplete.md)) and full RFC 8259 §7 Serialize-side JSON escaping. |
+| `VERSION` | **1.1.13** |
+| `cyrius.cyml [package].cyrius` | **5.10.16** |
+| Min Cyrius (consumer) | 5.10.16 |
+| Last cyrius bump | 5.10.15 → 5.10.16 (2026-05-09; closes the api-surface scanner desync — [`archive/2026-05-09-cyrius-api-surface-putc-brace-desync.md`](issues/archive/2026-05-09-cyrius-api-surface-putc-brace-desync.md)). Multi-step bump arc 5.9.27 → 5.10.16 covered the 5.10.6→.9 lib version-pinning + RFC 8259 §7 escaping + 5.10.14 stacked-derive fix + 5.10.16 scanner fix. |
 
 ## Build Metrics
 
 | Metric | Value | Notes |
 |---|---|---|
-| Binary size (DCE) | **85,592 B** | unchanged across V1.1 (pure refactor; no behavior change) |
-| `dist/agnosys.cyr` size | ~330 KB / 9,886 lines | bundled distlib (full library); -68 lines vs 1.0.5 from removing hand-written accessor fns |
-| Fn-table utilization | 289 / 4,096 (7%) | from `cyrius capacity --check` |
-| Var-table | 302 / 8,192 | |
-| Fixup-table | 724 / 262,144 | |
-| String-data | 1,376 / 262,144 | |
-| Code-size | 67,552 / 1,048,576 | |
+| Binary size (DCE) | **132,952 B** | +47,360 B vs 1.1.12 (85,592 B) — `[deps] stdlib` adds `fnptr` (33 KB src) + `json` (49 KB src) + `tagged` (3.9 KB src) for `#derive(Serialize)` helper resolution. DCE drops 66 of those fns but global JTAG_* constants persist. |
+| `dist/agnosys.cyr` size | ~326 KB / 10,051 lines | +165 lines vs 1.1.12 — adds 7 `_to_json` fns (2 derived + 5 hand-rolled) and a private `_<mod>_emit_cstr_or_null` helper per cstring-bearing module. |
+| Fn-table utilization | 390 / 4,096 (10%) | +101 fns since 1.1.12; #derive(Serialize)-emitted to_json + from_json + from_json_str + hand-rolled shims |
+| Var-table | 319 / 8,192 | |
+| Fixup-table | 826 / 262,144 | |
+| String-data | 1,400 / 2,097,152 | |
+| Code-size | 85,200 / 1,048,576 | |
 | Compile time | ~460 ms | recorded at 1.0.0 closeout |
 
 ## Module Count
@@ -59,15 +59,15 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 
 | Category | Count | Where |
 |---|---|---|
-| Integration tests passed | **234 / 234** | `cyrius test` |
-| Integration assertions | 257 | `tests/tcyr/test_integration.tcyr` (audit-regression block added 1.0.2) |
+| Integration tests passed | **242 / 242** | `cyrius test` |
+| Integration assertions | 265 | `tests/tcyr/test_integration.tcyr` (audit-regression block added 1.0.2; 1.1.13 added 8 to_json round-trip assertions) |
 | Fuzz harnesses | 6 | `fuzz/audit_nlmsg.fcyr`, `fuzz/audit_reply.fcyr`, `fuzz/certpin_pin.fcyr`, `fuzz/journald_filter.fcyr`, `fuzz/luks_cipher.fcyr`, `fuzz/pam_config.fcyr` |
 | Benchmarks | 30 (11 groups) | `tests/bcyr/bench_all.bcyr` |
 | Bench file (compare) | 1 | `tests/bcyr/bench_compare.bcyr` (Cyrius vs Rust port baseline) |
 
 ## Local Audit Gates (`scripts/audit.sh`)
 
-10 gates, all green at 1.0.5: syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
+10 gates, all green at 1.1.13: syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
 
 ## CI Workflow Status
 
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.1.12** | 2026-05-07 | V1.1.12 `#derive(Serialize)` — DEFERRED. cyrius 5.9.27 ships the `#derive(Serialize)` syntax but generated `_to_json` body is either empty (untyped fields) or references nonexistent stdlib helpers (`i64_to_json_sb`, etc. for typed fields). Filed upstream issue; slot reopens when primitive Serialize helpers land |
+| **1.1.13** | 2026-05-09 | V1.1.12 reopen — `#derive(Serialize)` lands. Two derived serializers (`audit_status_to_json`, `ima_status_to_json` — all-numeric structs); five hand-rolled `_to_json` shims for cstring-bearing diagnostic structs (`mac_profile`, `dmverity_status`, `update_state`, `certpin_info`, `drm_verinfo`). Closes a two-week investigation arc: original SIGILL was agnosys-side `./lib/` shadow (resolved 2026-05-08); two follow-on cyrius bugs (multi-derive, api-surface scanner) fixed at 5.10.14 + 5.10.16. Pin 5.9.27 → 5.10.16. Hand-rolls unwind cleanly when cyrius adds cstring `#derive(Serialize)` support |
+| 1.1.12 | 2026-05-07 | V1.1.12 `#derive(Serialize)` — DEFERRED. cyrius 5.9.27 ships the `#derive(Serialize)` syntax but generated `_to_json` body is either empty (untyped fields) or references nonexistent stdlib helpers (`i64_to_json_sb`, etc. for typed fields). Filed upstream issue; slot reopens when primitive Serialize helpers land |
 | 1.1.11 | 2026-05-07 | V1.1.11 slice migration — survey shows most `var buf[N]` sites aren't real slice candidates (tiny fmt bufs, kernel-ABI stack structs, one-shot syscall args, length-bounded `memeq`/`memcpy` walks). One representative site (`ima_get_status` rbuf newline counter) migrated to `slice<u8>` with bounds-checked indexing as the canonical pattern for future scalar-subscript parsers |
 | 1.1.10 | 2026-05-07 | V1.1.8 reopens — cyrius 5.9.27 implements aarch64 sub-8-byte struct field load codegen; the 1.1.9 revert is now itself reverted. Typed kernel-ABI structs + pointer-to-struct dot syntax build clean on both arches; resolved issue archived |
 | 1.1.9 | 2026-05-07 | V1.1.8 reverted — cyrius aarch64 backend rejected sub-8-byte struct field loads (`error:1610`). x86_64 build clean; aarch64 CI broke. `scripts/audit.sh` gate 4 extended to also cross-build aarch64 so regression class is caught locally. Upstream issue filed; V1.1.8 re-entered queue |
@@ -161,7 +162,8 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 - [x] V1.1.9 — V1.1.8 revert (aarch64 sub-8-byte struct field load gap); upstream issue filed; `scripts/audit.sh` gate 4 extended with permanent `cyrius build --aarch64` cross-build
 - [x] V1.1.10 — V1.1.8 reopen (cyrius pin 5.9.25 → 5.9.27); both arches clean
 - [x] V1.1.11 — slice migration — most agnosys `var buf[N]` sites aren't real slice candidates (verification finding); one representative site migrated as the canonical pattern (`ima_get_status` rbuf newline counter)
-- [~] V1.1.12 — `#derive(Serialize)` — DEFERRED (twice). Original 2026-05-07 file (`cyrius-derive-serialize-incomplete`) **resolved** 2026-05-08 — root cause was agnosys's vendored `./lib/fnptr.cyr` and `./lib/json.cyr` stubs (5.7.6-era) shadowing v5.10.9 stdlib; cyrius's PP_DERIVE Serialize codegen at v5.10.6+ is correct on both arches. Reopen attempt then surfaced a fresh upstream blocker (`2026-05-08-cyrius-derive-multi-stacking`): cyrius PP_DERIVE doesn't honor stacked `#derive(...)` directives, so `#derive(Serialize)` cannot layer on top of agnosys's existing `#derive(accessors)` structs. Slot stays deferred until cyrius supports multi-derive. cyrius pin held at 5.10.9 (the pin bump arc through 5.10.6 → 5.10.7 → 5.10.8 → 5.10.9 is durable; only the slot work was reverted).
+- [~] V1.1.12 — `#derive(Serialize)` — DEFERRED (initial slot). Original 2026-05-07 issue (`cyrius-derive-serialize-incomplete`, archived) — root cause was agnosys's vendored `./lib/fnptr.cyr` and `./lib/json.cyr` stubs (5.7.6-era) shadowing v5.10.9+ stdlib. cyrius's PP_DERIVE Serialize codegen at v5.10.6+ is correct on both arches.
+- [x] V1.1.13 — V1.1.12 reopen, ships. 2 derived serializers (`audit_status`, `ima_status` — both all-numeric) using stacked `#derive(accessors)` + `#derive(Serialize)` (cyrius 5.10.14+). 5 hand-rolled `_to_json` shims for cstring-bearing structs (`mac_profile`, `dmverity_status`, `update_state`, `certpin_info`, `drm_verinfo`) — pattern: per-module `_<mod>_emit_cstr_or_null` helper handles null-or-quoted, mixed with `str_builder_add_int` for numeric fields. Two follow-on cyrius issues filed and resolved during the arc: `2026-05-08-cyrius-derive-multi-stacking` (fixed 5.10.14), `2026-05-09-cyrius-api-surface-putc-brace-desync` (fixed 5.10.16). Pin arc: 5.9.27 → 5.10.6 → 5.10.7 → 5.10.8 → 5.10.9 → 5.10.14 → 5.10.15 → 5.10.16. Issues directory now empty; 9 issues total in archive. Hand-rolls unwind cleanly when cyrius adds cstring `#derive(Serialize)` support.
 
 Slot # = agnosys VERSION # for this minor cycle. Multi-version
 shipping arcs (1.1.2-1.1.4 ct_eq_bytes; 1.1.5-1.1.6 exhaustive

@@ -345,30 +345,47 @@ stay as-is since their bounds are already explicit.
 
 **Rationale:** bounds-checked indexing on the agnosys parsers (audit netlink, fuse mount entries, EFI var bytes, IMA measurement records) closes the off-by-one class without a runtime cost we can't already amortize.
 
-#### V1.1.12 — `#derive(Serialize)` — DEFERRED 2026-05-07 (upstream gap)
+#### V1.1.12 / V1.1.13 — `#derive(Serialize)` — SHIPPED 2026-05-09
 
 The slot's premise — `#derive(Serialize)` auto-generates a
 working `<struct>_to_json(ptr, sb)` per vidya
-`derive_str_fields` — turned out incomplete on cyrius 5.9.27:
-generated body is either empty (untyped fields) or references
-nonexistent stdlib helpers (`i64_to_json_sb`,
-`Str_to_json_sb` — not shipped) for typed fields.
+`derive_str_fields` — initially deferred 2026-05-07 due to
+an apparent SIGILL on aarch64. Root cause discovered
+2026-05-08 (cyrius team's `pwd && ls -la lib/` diagnostic):
+agnosys's vendored `./lib/fnptr.cyr` and `./lib/json.cyr`
+stubs (5.7.6-era) were shadowing v5.10.x stdlib's full
+versions; PP_DERIVE Serialize codegen referenced helpers
+absent from the stubs. cyrius's PP_DERIVE was correct on
+both arches the entire time.
 
-Filed
-[`docs/development/issues/archive/2026-05-07-cyrius-derive-serialize-incomplete.md`](../issues/archive/2026-05-07-cyrius-derive-serialize-incomplete.md)
-(now resolved — root cause was agnosys-side `./lib/` shadow,
-not cyrius). agnosys 1.1.13 ships V1.1.12 with two derived
-serializers (`audit_status`, `ima_status`, all-numeric) plus
-five hand-rolled `_to_json` shims for cstring-bearing
-diagnostic structs (`mac_profile`, `dmverity_status`,
-`update_state`, `certpin_info`, `drm_verinfo`). Hand-rolls
-unwind cleanly when cyrius adds cstring `#derive(Serialize)`
-support.
+agnosys 1.1.13 ships:
 
-Hand-rolling the JSON serializers is the alternative (yukti/
-sigil pattern), but defeats the slot's auto-generate intent
-and a future re-migration to working `#derive(Serialize)`
-would just unwind the hand-rolls.
+- **2 derived serializers** via stacked `#derive`
+  (cyrius 5.10.14+): `audit_status_to_json`,
+  `ima_status_to_json` — both all-numeric structs, both
+  arches verified on real Pi.
+- **5 hand-rolled `_to_json` shims** for cstring-bearing
+  diagnostic structs (`mac_profile`, `dmverity_status`,
+  `update_state`, `certpin_info`, `drm_verinfo`). Pattern:
+  per-module `_<mod>_emit_cstr_or_null` helper handles
+  null-or-quoted cstring emission, mixed with
+  `str_builder_add_int` for numeric fields.
+
+Hand-rolls unwind cleanly when cyrius adds cstring
+`#derive(Serialize)` support — the future migration is
+mechanical (delete the shim + helper, add
+`#derive(Serialize)` directive line, regenerate snapshot).
+
+Three issues filed and resolved during the arc:
+- `archive/2026-05-07-cyrius-derive-serialize-incomplete`
+  — agnosys-side `./lib/` shadow, not cyrius.
+- `archive/2026-05-08-cyrius-derive-multi-stacking` —
+  fixed cyrius 5.10.14.
+- `archive/2026-05-09-cyrius-api-surface-putc-brace-desync`
+  — fixed cyrius 5.10.16.
+
+cyrius pin arc: 5.9.27 → 5.10.16. Min consumer cyrius is
+now 5.10.16 (multi-derive + scanner fixes baked in).
 
 **Rationale:** consumer ergonomics. Today every consumer that wants to log agnosys state writes its own formatter. `#derive(Serialize)` ships the canonical one with the module.
 
