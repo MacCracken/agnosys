@@ -1,12 +1,18 @@
 # cyrius PP_DERIVE doesn't honor stacked `#derive(...)` directives
 
+**Status:** RESOLVED — fixed in cyrius 5.10.14. agnosys V1.1.13
+shipped #derive(Serialize) on audit_status + ima_status using
+the stacked-line form; verified working on x86_64 + real Pi
+aarch64. The multi-arg `#derive(A, B)` form remains a held-
+forward upstream item but isn't on agnosys's path.
 **Filed:** 2026-05-08
+**Resolved:** 2026-05-09 (verified at cyrius 5.10.15 in agnosys 1.1.13)
 **Reporter:** agnosys 1.1.12 (during V1.1.12 reopen attempt
 after the 2026-05-07 ./lib/ shadow issue resolved)
 **cyrius version observed:** 5.10.9 (verified `cc5_aarch64 5.10.9` stamp)
 **cyrius version with fix:** 5.10.14 — stacked-line form fixed; agnosys can bump pin and reopen V1.1.12. Multi-arg `#derive(A, B)` form held forward.
 **Severity:** MEDIUM — re-blocks agnosys's V1.1.12 slot.
-**Related:** [`2026-05-07-cyrius-derive-serialize-incomplete.md`](2026-05-07-cyrius-derive-serialize-incomplete.md) (now resolved; this is the fresh follow-on blocker)
+**Related:** [`2026-05-07-cyrius-derive-serialize-incomplete.md`](2026-05-07-cyrius-derive-serialize-incomplete.md) (resolved — fresh follow-on of that arc)
 
 ## 2026-05-08 — fixed at cyrius v5.10.14 (stacked-line form)
 

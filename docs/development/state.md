@@ -11,7 +11,7 @@
 | `VERSION` | **1.1.12** |
 | `cyrius.cyml [package].cyrius` | **5.10.9** |
 | Min Cyrius (consumer) | 5.10.9 |
-| Last cyrius bump | 5.9.27 → 5.10.9 (2026-05-08; bumped during V1.1.12 reopen attempt — see in-flight slots below). The 5.10.x series introduced the version-pinned cc5_aarch64 lib resolution (kills cross-version contamination per [`2026-05-07-cyrius-derive-serialize-incomplete.md`](../audit/../development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md)) and full RFC 8259 §7 Serialize-side JSON escaping. |
+| Last cyrius bump | 5.9.27 → 5.10.9 (2026-05-08; bumped during V1.1.12 reopen attempt — see in-flight slots below). The 5.10.x series introduced the version-pinned cc5_aarch64 lib resolution (kills cross-version contamination per [`archive/2026-05-07-cyrius-derive-serialize-incomplete.md`](issues/archive/2026-05-07-cyrius-derive-serialize-incomplete.md)) and full RFC 8259 §7 Serialize-side JSON escaping. |
 
 ## Build Metrics
 

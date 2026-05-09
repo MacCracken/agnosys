@@ -1,14 +1,24 @@
 # cyrius `#derive(Serialize)` doesn't ship working primitive-field codegen
 
+**Status:** RESOLVED — bug was never in cyrius codegen.
+Root cause was agnosys's vendored `./lib/fnptr.cyr` (1,207 B
+stub) and `./lib/json.cyr` (4,389 B stub) shadowing the proper
+stdlib (33,590 B and 49,537 B respectively) when `cyrius build`
+runs from agnosys's CWD. cyrius's PP_DERIVE Serialize codegen
+is correct on both arches at v5.10.6+; agnosys 1.1.13 ships
+audit_status + ima_status `#derive(Serialize)` after refreshing
+the vendored stubs and adding fnptr/json/tagged to
+`[deps] stdlib`.
 **Filed:** 2026-05-07
+**Resolved:** 2026-05-08 (lib-shadow root cause identified by cyrius
+team's `pwd && ls -la lib/` diagnostic question)
 **Reporter:** agnosys 1.1.12 (during V1.1.12 evaluation —
 `#derive(Serialize)` for module status diagnostics).
 **agnosys version observed:** 1.1.11
-**Status (2026-05-08, late):** **RESOLVED — bug was never in cyrius codegen.** Every aarch64 SIGILL across this entire investigation arc traces to agnosys's vendored `./lib/fnptr.cyr` (1,207 B stub) and `./lib/json.cyr` (4,389 B stub) shadowing the proper stdlib (33,590 B and 49,537 B respectively) when `cyrius build` runs from agnosys's CWD. cyrius's PP_DERIVE Serialize codegen is correct on both arches at v5.10.9 (verified via fresh `/tmp` builds → all five struct shapes emit valid JSON on real Pi hardware). The "x86 instructions in aarch64 body" disasm was fixup-slot sentinel bytes from unresolved references to helpers (`fncall4`, `i64_from_json`, etc.) that don't exist in agnosys's stale stubs — exactly what cyrius's counter-debug suggested.
 **cyrius version at last verification:** 5.10.9 — verified `cc5_aarch64 5.10.9`, working on both arches
 **Last verified:** 2026-05-08
-**agnosys cyrius pin (active):** 5.10.9 (bumped 5.9.27 → 5.10.6 → 5.10.8 → 5.10.9 on 2026-05-08)
-**V1.1.12 status:** ~~**REOPENED**~~ — **DEFERRED AGAIN 2026-05-08** by a fresh upstream blocker: cyrius PP_DERIVE doesn't honor stacked `#derive(...)` directives. agnosys's diagnostic structs all use `#derive(accessors)` (V1.1.0), so `#derive(Serialize)` can't layer on top. See [`2026-05-08-cyrius-derive-multi-stacking.md`](2026-05-08-cyrius-derive-multi-stacking.md) for the new issue.
+**agnosys cyrius pin (when resolved):** 5.10.9 (later bumped to 5.10.15 in 1.1.13)
+**Follow-on issue:** [`2026-05-08-cyrius-derive-multi-stacking.md`](2026-05-08-cyrius-derive-multi-stacking.md) — surfaced during the failed reopen attempt; also resolved at cyrius 5.10.14.
 
 ## 2026-05-08 — cyrius v5.10.9 hypothesis: lib version-pinning
 

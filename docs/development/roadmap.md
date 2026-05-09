@@ -355,11 +355,15 @@ nonexistent stdlib helpers (`i64_to_json_sb`,
 `Str_to_json_sb` — not shipped) for typed fields.
 
 Filed
-[`docs/development/issues/2026-05-07-cyrius-derive-serialize-incomplete.md`](../issues/2026-05-07-cyrius-derive-serialize-incomplete.md)
-proposing primitive-type Serialize helpers in stdlib. When
-they ship, V1.1.12 re-opens with the actual derive-driven
-implementation across 4-6 status structs (mac/audit/ima/
-secureboot/tpm/drm).
+[`docs/development/issues/archive/2026-05-07-cyrius-derive-serialize-incomplete.md`](../issues/archive/2026-05-07-cyrius-derive-serialize-incomplete.md)
+(now resolved — root cause was agnosys-side `./lib/` shadow,
+not cyrius). agnosys 1.1.13 ships V1.1.12 with two derived
+serializers (`audit_status`, `ima_status`, all-numeric) plus
+five hand-rolled `_to_json` shims for cstring-bearing
+diagnostic structs (`mac_profile`, `dmverity_status`,
+`update_state`, `certpin_info`, `drm_verinfo`). Hand-rolls
+unwind cleanly when cyrius adds cstring `#derive(Serialize)`
+support.
 
 Hand-rolling the JSON serializers is the alternative (yukti/
 sigil pattern), but defeats the slot's auto-generate intent
