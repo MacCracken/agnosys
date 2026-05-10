@@ -1,0 +1,226 @@
+name: Consumer Integration
+
+# V1.2.3 — Nightly downstream rebuild + drift detection. Each scheduled
+# run vendors agnosys main into each consumer's `lib/agnosys.cyr` and
+# runs the consumer's audit/test suite. Failures open a `consumer-break`
+# issue here so an agnosys patch that breaks (e.g.) sigil's TPM caller
+# is noticed before that consumer notices.
+#
+# **Deliberately separate from .github/workflows/ci.yml** — this is
+# nightly + workflow_dispatch only, never on push or PR. It does not
+# gate the primary build/test pipeline. Failures here are signal, not
+# blocker — agnosys's own audit gates remain authoritative for the tag.
+
+on:
+  schedule:
+    # 06:00 UTC nightly = 23:00 PT / 02:00 ET. Off-peak; gives most of
+    # the day for triage if a fail rolls in.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      consumer:
+        description: "Single consumer to test (default: all)"
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - kavach
+          - sigil
+
+# This workflow doesn't share a concurrency key with ci.yml — agnosys
+# CI on push and a nightly consumer run can overlap freely.
+concurrency:
+  group: consumer-integration-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write   # for the consumer-break issue creation step
+
+jobs:
+  integrate:
+    name: ${{ matrix.consumer }} (agnosys main)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Don't fail-fast — let every consumer report independently so a
+    # single break doesn't mask a second one.
+    strategy:
+      fail-fast: false
+      matrix:
+        # Start with the two highest-module-surface consumers per the
+        # V1.2.3 spec. Expand the list as confidence grows.
+        # `modules_used` and `audit_cmd` declared per-consumer via
+        # `include`; the workflow reads agnosys's cyrius pin in step 2
+        # and force-sets the consumer's pin to match before building
+        # (tests "what happens if the consumer bumped their pin to
+        # match agnosys main").
+        consumer:
+          - kavach
+          - sigil
+        include:
+          - consumer: kavach
+            modules_used: "security"
+            audit_cmd: "cyrius test"   # kavach has no scripts/audit.sh today; tests are the canonical signal
+          - consumer: sigil
+            modules_used: "trust (tpm + ima + secureboot + certpin)"
+            audit_cmd: "scripts/check.sh"
+
+    steps:
+      - name: Checkout agnosys (this repo)
+        uses: actions/checkout@v4
+        with:
+          path: agnosys
+
+      - name: Read agnosys cyrius pin
+        id: pin
+        working-directory: agnosys
+        run: |
+          PIN=$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)
+          echo "Pin from agnosys/cyrius.cyml: $PIN"
+          echo "cyrius=$PIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cyrius toolchain (agnosys's pin)
+        run: |
+          CYRIUS_VERSION="${{ steps.pin.outputs.cyrius }}"
+          echo "Installing Cyrius $CYRIUS_VERSION"
+          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
+          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib" "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+
+      - name: Build agnosys main (full + 5 profile bundles)
+        working-directory: agnosys
+        run: |
+          cyrius deps
+          cyrius distlib
+          for profile in core security storage trust system; do
+            cyrius distlib "$profile"
+          done
+          ls -la dist/
+
+      - name: Checkout consumer (${{ matrix.consumer }} main)
+        uses: actions/checkout@v4
+        with:
+          repository: MacCracken/${{ matrix.consumer }}
+          path: ${{ matrix.consumer }}
+
+      - name: Vendor agnosys main into consumer
+        run: |
+          # Replace the consumer's lib/agnosys.cyr with the freshly-built
+          # bundle. Consumers normally vendor via cyrius's deps cache
+          # (~/.cyrius/deps/agnosys/X.Y.Z/...) and a symlink into their
+          # lib/. We bypass the cache entirely by overwriting the file
+          # directly — this is what tests "agnosys main against this
+          # consumer" rather than "the published version they pin".
+          mkdir -p ${{ matrix.consumer }}/lib
+          cp agnosys/dist/agnosys.cyr ${{ matrix.consumer }}/lib/agnosys.cyr
+          # Also drop the profile bundles in case the consumer has
+          # migrated to a slim profile (V1.2.0+ pattern; harmless if
+          # they haven't).
+          for profile in core security storage trust system; do
+            cp "agnosys/dist/agnosys-${profile}.cyr" "${{ matrix.consumer }}/lib/agnosys-${profile}.cyr"
+          done
+          # Override the consumer's cyrius pin to match agnosys's, so
+          # this tests "consumer + agnosys-main + a synced cyrius
+          # toolchain". Some consumers use cyrius.cyml, some use
+          # cyrius.toml — handle both.
+          for f in ${{ matrix.consumer }}/cyrius.cyml ${{ matrix.consumer }}/cyrius.toml; do
+            [ -f "$f" ] || continue
+            sed -i "s|^cyrius = \".*\"|cyrius = \"${{ steps.pin.outputs.cyrius }}\"|" "$f"
+            grep "^cyrius = " "$f"
+          done
+
+      - name: Resolve consumer dependencies
+        working-directory: ${{ matrix.consumer }}
+        run: cyrius deps
+
+      - name: Run consumer audit (${{ matrix.audit_cmd }})
+        id: consumer_audit
+        working-directory: ${{ matrix.consumer }}
+        run: |
+          # Some consumers have a custom audit script; others fall back
+          # to `cyrius test`. The matrix declares the right entry for
+          # each.
+          ${{ matrix.audit_cmd }}
+
+      - name: File consumer-break issue on failure
+        if: failure() && steps.consumer_audit.conclusion == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const consumer = '${{ matrix.consumer }}';
+            const modules = '${{ matrix.modules_used }}';
+            const sha = '${{ github.sha }}';
+            const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+
+            const title = `consumer-break: ${consumer} fails against agnosys main (${sha.slice(0, 7)})`;
+
+            const body = [
+              `### Consumer integration failure`,
+              ``,
+              `**Consumer:** \`${consumer}\` (uses agnosys ${modules})`,
+              `**Agnosys commit:** ${sha}`,
+              `**Cyrius pin tested:** ${{ steps.pin.outputs.cyrius }}`,
+              `**Audit command:** \`${{ matrix.audit_cmd }}\``,
+              `**Run log:** ${runUrl}`,
+              ``,
+              `### What to check`,
+              ``,
+              `1. Did this commit add/remove a public fn the consumer relies on?`,
+              `   Check the consumer's source for refs to recently-changed`,
+              `   agnosys fns: \`grep -rn "<changed-fn-name>" path/to/${consumer}/src/\``,
+              `2. Did this commit change struct layout? Consumer-vendored bundles`,
+              `   compile against agnosys's struct shape; field reorder = break.`,
+              `3. Did this commit bump the cyrius pin past what the consumer's`,
+              `   own source can compile? Consumer pin gets force-set to agnosys's`,
+              `   pin in this workflow — a real downstream-side fix is for the`,
+              `   consumer to bump their own pin too.`,
+              ``,
+              `### Triage`,
+              ``,
+              `- If this is a real regression in agnosys main: revert / fix`,
+              `  forward in agnosys.`,
+              `- If the consumer needs a coordinated update: open a PR on the`,
+              `  consumer side with the migration; close this issue when it`,
+              `  merges.`,
+              `- If this is a flake (toolchain install timeout, etc.): close`,
+              `  with \`flake\` label and watch the next nightly.`,
+              ``,
+              `_Filed automatically by .github/workflows/consumer-integration.yml._`,
+            ].join('\n');
+
+            // Don't dupe-file: search for an open issue with the same title prefix.
+            const titlePrefix = `consumer-break: ${consumer} fails against agnosys main`;
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'consumer-break',
+              per_page: 50,
+            });
+            const dupe = existing.data.find(i => i.title.startsWith(titlePrefix));
+
+            if (dupe) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dupe.number,
+                body: `Re-fired on ${new Date().toISOString()} at agnosys ${sha.slice(0, 7)}.\nRun: ${runUrl}`,
+              });
+              console.log(`Commented on existing issue #${dupe.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['consumer-break', `consumer:${consumer}`],
+              });
+              console.log(`Filed new issue #${created.data.number}`);
+            }

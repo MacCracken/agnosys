@@ -426,11 +426,13 @@ language-feature surface — these are durable infrastructure improvements.
 
 #### V1.2.3 — Consumer integration CI (was 8.4)
 
-- [ ] Nightly GitHub Actions job per consumer: clone, vendor agnosys main, build, run consumer's tests
-- [ ] Failures open an issue tagged `consumer-break` (linked to consumer + agnosys commit)
-- [ ] 13 consumers in scope (see `state.md` consumer table); start with sigil + kavach (highest module surface), expand
+- [x] Nightly GitHub Actions job per consumer: clone, vendor agnosys main, build, run consumer's audit. Workflow at [`.github/workflows/consumer-integration.yml`](../../.github/workflows/consumer-integration.yml) (separate file, NOT part of the primary build/test pipeline).
+- [x] Failures open an issue tagged `consumer-break` (linked to consumer + agnosys commit). Dedup by title prefix — re-fires comment on the existing issue rather than duplicating.
+- [x] Initial matrix: kavach + sigil (highest module surface per the spec). 13 consumers in scope per [`state.md`](state.md); expand the matrix once the initial pair runs cleanly for a few cycles.
 
-**Rationale:** v1.0 deferred this to "tracked on consumer crates" — i.e., manual. Automated drift detection means an agnosys patch that breaks sigil's TPM caller fails before that consumer notices.
+**Rationale:** v1.0 deferred this to "tracked on consumer crates" — i.e., manual. Automated drift detection means an agnosys patch that breaks sigil's TPM caller fails before that consumer notices. Notification channel is GitHub Issues (the `consumer-break`-tagged issue the workflow auto-files); no Slack / Discord wiring — repo Issues is the canonical inbox.
+
+**Mechanics:** Nightly @ 06:00 UTC + workflow_dispatch. Workflow reads agnosys's cyrius pin from `cyrius.cyml`, force-sets each consumer's pin to match (tests "consumer + agnosys-main + a synced cyrius toolchain"), copies all 6 dist bundles into the consumer's `lib/`, runs the consumer's declared audit command. Doesn't share concurrency with `ci.yml`.
 
 #### V1.2.4 — `#deprecated` adoption channel
 
