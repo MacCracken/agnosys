@@ -42,5 +42,53 @@ modules = [
     "src/fuse.cyr"
 ]
 
+# V1.2.0 profile bundles. `cyrius distlib <profile>` reads the
+# matching `[lib.<profile>]` section and writes
+# `dist/agnosys-<profile>.cyr`. Consumers pulling a single domain
+# include core + their profile (e.g. kavach: core + security).
+# Yukti uses the same pattern — `cyrius distlib core`.
+
+[lib.core]
+modules = [
+    "src/syscall_x86_64_linux.cyr",
+    "src/syscall_aarch64_linux.cyr",
+    "src/error.cyr",
+    "src/syscall.cyr",
+    "src/logging.cyr",
+]
+
+[lib.security]
+modules = [
+    "src/security.cyr",
+    "src/mac.cyr",
+    "src/audit.cyr",
+    "src/pam.cyr",
+]
+
+[lib.storage]
+modules = [
+    "src/luks.cyr",
+    "src/dmverity.cyr",
+    "src/fuse.cyr",
+]
+
+[lib.trust]
+modules = [
+    "src/tpm.cyr",
+    "src/ima.cyr",
+    "src/secureboot.cyr",
+    "src/certpin.cyr",
+]
+
+[lib.system]
+modules = [
+    "src/journald.cyr",
+    "src/bootloader.cyr",
+    "src/udev.cyr",
+    "src/drm.cyr",
+    "src/netns.cyr",
+    "src/update.cyr",
+]
+
 [deps]
 stdlib = ["syscalls", "string", "alloc", "fmt", "vec", "str", "io", "ct", "slice", "fnptr", "json", "tagged", "assert", "bench", "fs", "hashmap", "net", "process"]

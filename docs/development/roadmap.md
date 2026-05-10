@@ -394,15 +394,15 @@ now 5.10.16 (multi-derive + scanner fixes baked in).
 Theme: consumer-facing wiring and platform discipline. Independent of the 1.1.x
 language-feature surface — these are durable infrastructure improvements.
 
-#### V1.2.0 — Multi-profile `cyrius distlib` (was 8.2)
+#### V1.2.0 — Multi-profile `cyrius distlib` ✅ SHIPPED 2026-05-09
 
-- [ ] Add `[lib.security]` (security + mac + audit + pam) → `dist/agnosys-security.cyr`
-- [ ] Add `[lib.storage]` (luks + dmverity + fuse) → `dist/agnosys-storage.cyr`
-- [ ] Add `[lib.trust]` (tpm + ima + secureboot + certpin) → `dist/agnosys-trust.cyr`
-- [ ] Add `[lib.system]` (journald + bootloader + udev + drm + netns + update) → `dist/agnosys-system.cyr`
-- [ ] Add `[lib.core]` (error + syscall + logging) → `dist/agnosys-core.cyr` — kernel-safe subset for AGNOS-kernel direct consumption (no alloc, no syscall, pure enums/types)
-- [ ] CI dist-staleness gate extended to all five profiles
-- [ ] Release archive ships every profile bundle alongside the full `dist/agnosys.cyr`
+- [x] Add `[lib.security]` (security + mac + audit + pam) → `dist/agnosys-security.cyr` (76 KB)
+- [x] Add `[lib.storage]` (luks + dmverity + fuse) → `dist/agnosys-storage.cyr` (49 KB)
+- [x] Add `[lib.trust]` (tpm + ima + secureboot + certpin) → `dist/agnosys-trust.cyr` (70 KB)
+- [x] Add `[lib.system]` (journald + bootloader + udev + drm + netns + update) → `dist/agnosys-system.cyr` (111 KB)
+- [x] Add `[lib.core]` (error + syscall + logging + arch peers) → `dist/agnosys-core.cyr` (23 KB). The "kernel-safe subset for AGNOS-kernel direct consumption (no alloc, no syscall, pure enums/types)" is a future refinement on top of this V1.2.0 deliverable — current `[lib.core]` ships the listed modules as-is; trimming alloc/syscall paths to a pure-enum form is a follow-up slot if/when AGNOS-kernel direct consumption lands.
+- [x] CI dist-staleness gate extended to all five profiles + the full bundle (6 total).
+- [x] Release archive ships every profile bundle alongside the full `dist/agnosys.cyr`.
 
 **Rationale:** kavach pulls 324 KB today for what it actually uses (~50 KB security surface). Profile bundles cut consumer binary size and clarify the agnosys → consumer wiring. Headline 1.2 cycle because it changes the consumer-facing distribution shape — gets its own minor cycle.
 

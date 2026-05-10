@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-09 (1.1.14)
+**Last refresh:** 2026-05-09 (1.2.0)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.1.14** |
+| `VERSION` | **1.2.0** |
 | `cyrius.cyml [package].cyrius` | **5.10.19** |
 | Min Cyrius (consumer) | 5.10.19 |
 | Last cyrius bump | 5.10.18 → 5.10.19 (2026-05-09; closes the lib/process.cyr O_WRONLY syntax-check blocker that survived 5.10.18). Multi-step bump arc 5.9.27 → 5.10.19 covered: 5.10.6→.9 lib version-pinning + RFC 8259 §7 escaping; 5.10.14 stacked `#derive` fix; 5.10.16 api-surface scanner desync fix; 5.10.18 + 5.10.19 lib/process.cyr O_WRONLY fix. |
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.1.14** | 2026-05-09 | P(-1) hardening pass — security audit findings landed. 0 critical / 0 high / 0 medium severity; 3 LOW + 1 informational, all closed. F-7 (`fuse_extract_field` octal-escape unescape), F-8 (bootloader cmdline danger-flag list extended with lockdown/sig_enforce/LSM-disable/heap-hardening flags), F-9 (`dmverity` outbuf explicit null-terminator). H-2 smoke + new `fuse_parse` fuzz harness. 247 tests (+5), 7 fuzz harnesses (+1). Adds `docs/audit/2026-05-09-cve-landscape.md` + `docs/audit/2026-05-09-audit.md` + `docs/development/reviews/2026-05-09-internal-review.md`. |
+| **1.2.0** | 2026-05-09 | V1.2.0 multi-profile `cyrius distlib` shipped — 5 profile bundles (`core`, `security`, `storage`, `trust`, `system`) ship alongside the full bundle. Consumer-facing distribution-shape change: kavach 324 KB → ~99 KB (70% cut), stiva → ~72 KB (78%), sigil → ~92 KB (72%). `[lib.<profile>]` sections in `cyrius.cyml`; CI dist-staleness gate covers all 6 bundles; release archive ships every profile per tag. No source changes; no API surface drift. Yukti pattern; proven primitive. |
+| 1.1.14 | 2026-05-09 | P(-1) hardening pass — security audit findings landed. 0 critical / 0 high / 0 medium severity; 3 LOW + 1 informational, all closed. F-7 (`fuse_extract_field` octal-escape unescape), F-8 (bootloader cmdline danger-flag list extended with lockdown/sig_enforce/LSM-disable/heap-hardening flags), F-9 (`dmverity` outbuf explicit null-terminator). H-2 smoke + new `fuse_parse` fuzz harness. 247 tests (+5), 7 fuzz harnesses (+1). Adds `docs/audit/2026-05-09-cve-landscape.md` + `docs/audit/2026-05-09-audit.md` + `docs/development/reviews/2026-05-09-internal-review.md`. |
 | 1.1.13 | 2026-05-09 | Doc reconciliation post-1.1.12 ship + P(-1) hardening pass kicked off (audit clean baseline + bench-history baseline at commit `9ec6063`). CHANGELOG/state.md/roadmap.md cleaned up of stray 1.1.13-placeholder refs that never tagged; the actual 1.1.12 ship narrative folded back into `[1.1.12]`. No source changes since 1.1.12; tests + API surface unchanged. |
 | 1.1.12 | 2026-05-09 | V1.1.12 `#derive(Serialize)` — SHIPPED. Two derived serializers (`audit_status_to_json`, `ima_status_to_json` — all-numeric structs) using stacked `#derive(accessors)` + `#derive(Serialize)`. Five hand-rolled `_to_json` shims for cstring-bearing diagnostic structs (`mac_profile`, `dmverity_status`, `update_state`, `certpin_info`, `drm_verinfo`) — pattern: per-module `_<mod>_emit_cstr_or_null` helper handles null-or-quoted, mixed with `str_builder_add_int` for numerics. Closes a two-week investigation arc: original SIGILL was agnosys-side `./lib/` shadow (resolved 2026-05-08); three cyrius bugs filed and fixed during the arc — multi-derive (5.10.14), api-surface scanner (5.10.16), lib/process.cyr O_WRONLY (5.10.18 + 5.10.19). cyrius pin arc: 5.9.27 → 5.10.19. `./lib/` gitignored + `cyrius deps` moved before syntax check in CI (matches yukti/patra). Hand-rolls unwind cleanly when cyrius adds cstring `#derive(Serialize)` support |
 | 1.1.11 | 2026-05-07 | V1.1.11 slice migration — survey shows most `var buf[N]` sites aren't real slice candidates (tiny fmt bufs, kernel-ABI stack structs, one-shot syscall args, length-bounded `memeq`/`memcpy` walks). One representative site (`ima_get_status` rbuf newline counter) migrated to `slice<u8>` with bounds-checked indexing as the canonical pattern for future scalar-subscript parsers |
@@ -167,6 +168,9 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 - [x] V1.1.13 — Doc reconciliation + P(-1) hardening kicked off. CHANGELOG/state.md/roadmap.md cleaned up of stray 1.1.13-placeholder refs that never tagged (folded back into the actual `[1.1.12]` ship narrative). P(-1) steps 1+2 done: audit clean baseline (10/10 gates, 242 tests, 152,880 B build) + bench-history baseline at commit `9ec6063` (33 timings recorded via `scripts/bench-history.sh`).
 - [x] V1.1.14 — P(-1) hardening pass completed (steps 3-8). Internal deep review filed (3 hotspots — H-1/H-2/H-3 — all resolved or downgraded). CVE landscape doc filed for the 17 module-bound kernel interfaces. Security audit produced 4 findings (F-7 INFO, F-8/F-9/F-10 LOW); F-7/F-8/F-9 closed by source changes in this release, F-10 verified clean (no code change). New `fuse_parse.fcyr` fuzz harness (7 total). 247 integration tests (+5: 3 fuse escape + 2 security smoke). Post-review bench rerun: 30 benches stable, no regressions. No new ADRs earned (changes were mechanical, not architectural). Cyrius pin held at 5.10.19.
 
+**V1.2.x — ecosystem (consumer-facing)**
+- [x] V1.2.0 — multi-profile `cyrius distlib`. 5 profile bundles (`core`, `security`, `storage`, `trust`, `system`) ship alongside the full bundle (`dist/agnosys-<profile>.cyr`). Consumer-facing distribution-shape change: kavach 324 KB → ~99 KB (70% cut), stiva → ~72 KB (78%), sigil → ~92 KB (72%), argonaut/yukti/soorat/nein → ~134 KB (59%). `[lib.<profile>]` sections in `cyrius.cyml`; CI dist-staleness gate extended to all 6 bundles; `release.yml` archive ships every profile per tag. Yukti pattern (`cyrius distlib core`); proven primitive — no new cyrius language features. No source changes; 247 tests / API surface unchanged.
+
 Slot # = agnosys VERSION # for this minor cycle. Multi-version
 shipping arcs (1.1.2-1.1.4 ct_eq_bytes; 1.1.5-1.1.6 exhaustive
 match; 1.1.8-1.1.10 multi-width struct fields) get one slot per
@@ -176,7 +180,7 @@ shipped patch.
 - [ ] 1.1.6 — slice migration for syscall + parser buffers
 - [ ] 1.1.7 — `#derive(Serialize)` for diagnostic JSON output
 
-V1.2.0 (multi-profile `cyrius distlib`) follows. See [`roadmap.md`](roadmap.md) for the full plan.
+V1.2.0 (multi-profile `cyrius distlib`) shipped 2026-05-09. V1.2.1 (`#ifplat` cosmetic migration — held pending upstream codegen fix per the cyrius-side note in `lib/syscalls.cyr` v5.4.19+) and V1.2.2 (capability map per public fn) follow next. See [`roadmap.md`](roadmap.md) for the full plan.
 
 ## Last Security Audit
 

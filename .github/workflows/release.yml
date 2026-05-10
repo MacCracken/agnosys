@@ -102,8 +102,14 @@ jobs:
             echo "  $name: ok"
           done
 
-      - name: Regenerate dist bundle
-        run: cyrius distlib
+      - name: Regenerate dist bundles
+        # V1.2.0+: full bundle + 5 profile bundles (core / security
+        # / storage / trust / system).
+        run: |
+          cyrius distlib
+          for profile in core security storage trust system; do
+            cyrius distlib "$profile"
+          done
 
       - name: Clean toolchain artifacts
         run: rm -f cyrius-*.tar.gz
@@ -113,6 +119,10 @@ jobs:
           TAG="${GITHUB_REF_NAME#v}"
           git archive --format=tar.gz --prefix="agnosys-${TAG}/" -o "agnosys-${TAG}-src.tar.gz" HEAD
           cp dist/agnosys.cyr "agnosys-${TAG}.cyr"
+          # V1.2.0+: ship every profile bundle alongside the full one.
+          for profile in core security storage trust system; do
+            cp "dist/agnosys-${profile}.cyr" "agnosys-${TAG}-${profile}.cyr"
+          done
           # Ship prebuilt binaries alongside source + bundle so
           # consumers can grab a statically-linked ELF per arch.
           if [ -f build/agnosys ]; then

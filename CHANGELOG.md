@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-05-09
+
+**V1.2.0 — multi-profile `cyrius distlib`. Five profile bundles
+ship alongside the full bundle; consumers cut ~60-78% of
+distribution size by including only the domain they wire to.**
+
+The consumer-facing distribution shape changes in 1.2.0: instead
+of the single `dist/agnosys.cyr` bundle (329 KB / 10,182 lines),
+agnosys now ships five additional profile bundles, each scoped
+to a domain. Consumers include `dist/agnosys-core.cyr` plus the
+profile that matches their use, e.g. kavach pulls
+core (23 KB) + security (76 KB) = ~99 KB instead of the full
+324 KB — a 70% reduction.
+
+Closes the V1.2.0 roadmap slot. Headline 1.2 cycle because it
+changes the consumer-facing distribution shape; gets its own
+minor cycle per the roadmap.
+
+### Added
+- **`[lib.core]`** profile (`dist/agnosys-core.cyr`, 23 KB,
+  779 lines) — error, syscall, logging + per-arch syscall peers.
+  Foundational for every other profile.
+- **`[lib.security]`** profile
+  (`dist/agnosys-security.cyr`, 76 KB, 2,355 lines) —
+  security, mac, audit, pam. Consumed by kavach + aegis +
+  shakti + libro.
+- **`[lib.storage]`** profile
+  (`dist/agnosys-storage.cyr`, 49 KB, 1,526 lines) —
+  luks, dmverity, fuse. Consumed by stiva + ark.
+- **`[lib.trust]`** profile
+  (`dist/agnosys-trust.cyr`, 70 KB, 2,157 lines) —
+  tpm, ima, secureboot, certpin. Consumed by sigil + daimon
+  + hoosh.
+- **`[lib.system]`** profile
+  (`dist/agnosys-system.cyr`, 111 KB, 3,390 lines) —
+  journald, bootloader, udev, drm, netns, update. Consumed
+  by argonaut + yukti + soorat + nein.
+
+### Changed
+- **`cyrius.cyml`** — added 5 `[lib.<profile>]` sections.
+  `[lib]` (full bundle) unchanged. Yukti pattern.
+- **`.github/workflows/ci.yml`** — dist-staleness gate
+  extended from 1 bundle to 6. CI runs `cyrius distlib`
+  + 5 `cyrius distlib <profile>` invocations and asserts
+  no diff against committed bundles.
+- **`.github/workflows/release.yml`** — release archive
+  ships every profile bundle alongside the full one
+  (`agnosys-<TAG>-<profile>.cyr` × 5 + `agnosys-<TAG>.cyr`).
+
+### Consumer-side wins (vs 1.1.x's full-bundle-only model)
+
+| Consumer | Profiles needed | 1.1.x size | 1.2.0 size | Cut |
+|---|---|---|---|---|
+| kavach | core + security | 324 KB | ~99 KB | 70% |
+| stiva | core + storage | 324 KB | ~72 KB | 78% |
+| sigil / daimon / hoosh | core + trust | 324 KB | ~92 KB | 72% |
+| argonaut / yukti / soorat / nein | core + system | 324 KB | ~134 KB | 59% |
+| aegis / shakti / libro | core + security | 324 KB | ~99 KB | 70% |
+| ark | core + storage | 324 KB | ~72 KB | 78% |
+
+### Verified
+- All 10 audit gates pass under cyrius 5.10.19.
+- 247 / 247 integration tests pass (no test changes).
+- 30 benchmarks across 11 groups; bench parity unchanged.
+- 7 fuzz harnesses.
+- Smoke-tested core profile in isolated `/tmp/core_test/`
+  consumer (cyrius.cyml + main.cyr + `cyrius deps`):
+  `err_invalid_argument`, `is_err_result`,
+  `agnosys_getpid` all work standalone against the
+  23 KB core bundle.
+- API surface: ~733 public fns, no drift since 1.1.14
+  (purely additive distribution shape change; no source
+  changes).
+- No new cyrius language features used — proven primitive
+  (`cyrius distlib <profile>` is what yukti has shipped
+  in production with).
+
 ## [1.1.14] — 2026-05-09
 
 **P(-1) hardening pass — security audit findings landed.**

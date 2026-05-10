@@ -100,15 +100,26 @@ jobs:
       - name: Vet (include-graph audit)
         run: cyrius vet src/main.cyr
 
-      - name: Verify dist bundle is in sync with src/
+      - name: Verify dist bundles are in sync with src/
+        # V1.2.0+: full bundle + 5 profile bundles (core / security
+        # / storage / trust / system). Each `cyrius distlib <profile>`
+        # invocation reads the matching `[lib.<profile>]` section in
+        # cyrius.cyml. Yukti uses the same pattern (`cyrius distlib core`).
         run: |
           cyrius distlib
-          if ! git diff --quiet dist/agnosys.cyr; then
-            echo "ERROR: dist/agnosys.cyr is stale. Run 'cyrius distlib' and commit the result."
-            git --no-pager diff dist/agnosys.cyr | head -40
-            exit 1
-          fi
-          echo "dist/agnosys.cyr matches src/"
+          for profile in core security storage trust system; do
+            cyrius distlib "$profile"
+          done
+          fail=0
+          for bundle in dist/agnosys.cyr dist/agnosys-core.cyr dist/agnosys-security.cyr dist/agnosys-storage.cyr dist/agnosys-trust.cyr dist/agnosys-system.cyr; do
+            if ! git diff --quiet "$bundle"; then
+              echo "ERROR: $bundle is stale. Run 'cyrius distlib [<profile>]' and commit the result."
+              git --no-pager diff "$bundle" | head -40
+              fail=1
+            fi
+          done
+          [ $fail -eq 0 ] || exit 1
+          echo "all 6 dist bundles match src/"
 
       - name: Build (DCE)
         run: |
