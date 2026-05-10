@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-09 (1.2.0)
+**Last refresh:** 2026-05-09 (1.2.1)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.2.0** |
+| `VERSION` | **1.2.1** |
 | `cyrius.cyml [package].cyrius` | **5.10.19** |
 | Min Cyrius (consumer) | 5.10.19 |
 | Last cyrius bump | 5.10.18 → 5.10.19 (2026-05-09; closes the lib/process.cyr O_WRONLY syntax-check blocker that survived 5.10.18). Multi-step bump arc 5.9.27 → 5.10.19 covered: 5.10.6→.9 lib version-pinning + RFC 8259 §7 escaping; 5.10.14 stacked `#derive` fix; 5.10.16 api-surface scanner desync fix; 5.10.18 + 5.10.19 lib/process.cyr O_WRONLY fix. |
@@ -67,7 +67,7 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 
 ## Local Audit Gates (`scripts/audit.sh`)
 
-10 gates, all green at 1.1.14: syntax → API surface → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
+11 gates, all green at 1.2.1: syntax → API surface (snapshot + prose) → capability map → capacity → build → smoke → tests → lint → vet → fuzz → benchmarks. Mirrors CI.
 
 ## CI Workflow Status
 
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.2.0** | 2026-05-09 | V1.2.0 multi-profile `cyrius distlib` shipped — 5 profile bundles (`core`, `security`, `storage`, `trust`, `system`) ship alongside the full bundle. Consumer-facing distribution-shape change: kavach 324 KB → ~99 KB (70% cut), stiva → ~72 KB (78%), sigil → ~92 KB (72%). `[lib.<profile>]` sections in `cyrius.cyml`; CI dist-staleness gate covers all 6 bundles; release archive ships every profile per tag. No source changes; no API surface drift. Yukti pattern; proven primitive. |
+| **1.2.1** | 2026-05-09 | V1.2.2 capability map (per-module kernel surface — syscalls, sys_*, exec paths, sysfs/procfs/devfs paths) shipped via auto-generator (`scripts/gen-capability-map.sh`). Phase 8 doc-tooling: api-surface prose generator (`scripts/gen-api-surface-prose.sh`) closes the D-3 deferral from 1.1.13; `api-surface-1.0.md` regen now covers all 730 fns. 3 upstream-blocker tickets filed internally (passive — `#derive(Serialize)` cstring gap, `#ifplat` codegen regression, `#deprecated` unproven). audit.sh tightened: 10 → 11 gates (+capability-map, prose-doc check folded into API surface). No source changes. |
+| 1.2.0 | 2026-05-09 | V1.2.0 multi-profile `cyrius distlib` shipped — 5 profile bundles (`core`, `security`, `storage`, `trust`, `system`) ship alongside the full bundle. Consumer-facing distribution-shape change: kavach 324 KB → ~99 KB (70% cut), stiva → ~72 KB (78%), sigil → ~92 KB (72%). `[lib.<profile>]` sections in `cyrius.cyml`; CI dist-staleness gate covers all 6 bundles; release archive ships every profile per tag. No source changes; no API surface drift. Yukti pattern; proven primitive. |
 | 1.1.14 | 2026-05-09 | P(-1) hardening pass — security audit findings landed. 0 critical / 0 high / 0 medium severity; 3 LOW + 1 informational, all closed. F-7 (`fuse_extract_field` octal-escape unescape), F-8 (bootloader cmdline danger-flag list extended with lockdown/sig_enforce/LSM-disable/heap-hardening flags), F-9 (`dmverity` outbuf explicit null-terminator). H-2 smoke + new `fuse_parse` fuzz harness. 247 tests (+5), 7 fuzz harnesses (+1). Adds `docs/audit/2026-05-09-cve-landscape.md` + `docs/audit/2026-05-09-audit.md` + `docs/development/reviews/2026-05-09-internal-review.md`. |
 | 1.1.13 | 2026-05-09 | Doc reconciliation post-1.1.12 ship + P(-1) hardening pass kicked off (audit clean baseline + bench-history baseline at commit `9ec6063`). CHANGELOG/state.md/roadmap.md cleaned up of stray 1.1.13-placeholder refs that never tagged; the actual 1.1.12 ship narrative folded back into `[1.1.12]`. No source changes since 1.1.12; tests + API surface unchanged. |
 | 1.1.12 | 2026-05-09 | V1.1.12 `#derive(Serialize)` — SHIPPED. Two derived serializers (`audit_status_to_json`, `ima_status_to_json` — all-numeric structs) using stacked `#derive(accessors)` + `#derive(Serialize)`. Five hand-rolled `_to_json` shims for cstring-bearing diagnostic structs (`mac_profile`, `dmverity_status`, `update_state`, `certpin_info`, `drm_verinfo`) — pattern: per-module `_<mod>_emit_cstr_or_null` helper handles null-or-quoted, mixed with `str_builder_add_int` for numerics. Closes a two-week investigation arc: original SIGILL was agnosys-side `./lib/` shadow (resolved 2026-05-08); three cyrius bugs filed and fixed during the arc — multi-derive (5.10.14), api-surface scanner (5.10.16), lib/process.cyr O_WRONLY (5.10.18 + 5.10.19). cyrius pin arc: 5.9.27 → 5.10.19. `./lib/` gitignored + `cyrius deps` moved before syntax check in CI (matches yukti/patra). Hand-rolls unwind cleanly when cyrius adds cstring `#derive(Serialize)` support |
@@ -170,6 +171,8 @@ Full narrative in [`CHANGELOG.md`](../../CHANGELOG.md).
 
 **V1.2.x — ecosystem (consumer-facing)**
 - [x] V1.2.0 — multi-profile `cyrius distlib`. 5 profile bundles (`core`, `security`, `storage`, `trust`, `system`) ship alongside the full bundle (`dist/agnosys-<profile>.cyr`). Consumer-facing distribution-shape change: kavach 324 KB → ~99 KB (70% cut), stiva → ~72 KB (78%), sigil → ~92 KB (72%), argonaut/yukti/soorat/nein → ~134 KB (59%). `[lib.<profile>]` sections in `cyrius.cyml`; CI dist-staleness gate extended to all 6 bundles; `release.yml` archive ships every profile per tag. Yukti pattern (`cyrius distlib core`); proven primitive — no new cyrius language features. No source changes; 247 tests / API surface unchanged.
+- [x] V1.2.1 — V1.2.2 capability map (per-module kernel-surface map: syscalls, sys_* wrappers, exec paths, sysfs/procfs/devfs paths) + Phase 8 doc-tooling (api-surface prose generator) + 3 upstream-blocker tickets filed internally (passive: cstring `#derive(Serialize)`, `#ifplat` codegen, `#deprecated` unproven — all "don't refile" framing). audit.sh tightened from 10 → 11 gates: stage 2 covers snapshot + prose, stage 3 added for capability-map staleness. New scripts: `gen-capability-map.sh`, `gen-api-surface-prose.sh`, both with `--check` mode. Closes V1.2.2 + Phase 8 doc-tooling slots; defers V1.2.1 (`#ifplat`) and V1.2.4 (`#deprecated`) to upstream-blocker tracking. No source changes; no API surface drift.
+- [x] V1.2.2 — capability map per public fn — shipped as part of V1.2.1 (per-module granularity; per-fn would require a real cyrius AST walker for transitive call resolution and is deferred).
 
 Slot # = agnosys VERSION # for this minor cycle. Multi-version
 shipping arcs (1.1.2-1.1.4 ct_eq_bytes; 1.1.5-1.1.6 exhaustive
@@ -180,7 +183,7 @@ shipped patch.
 - [ ] 1.1.6 — slice migration for syscall + parser buffers
 - [ ] 1.1.7 — `#derive(Serialize)` for diagnostic JSON output
 
-V1.2.0 (multi-profile `cyrius distlib`) shipped 2026-05-09. V1.2.1 (`#ifplat` cosmetic migration — held pending upstream codegen fix per the cyrius-side note in `lib/syscalls.cyr` v5.4.19+) and V1.2.2 (capability map per public fn) follow next. See [`roadmap.md`](roadmap.md) for the full plan.
+V1.2.0 (multi-profile `cyrius distlib`) shipped 2026-05-09. V1.2.1 ship batched V1.2.2 capability map + Phase 8 prose generator + audit-gate tightening + 3 upstream-blocker tickets (passive). V1.2.3 (consumer integration CI — nightly downstream rebuild + drift detection across the 13 consumers) is the next concrete slot. V1.2.1 (`#ifplat` cosmetic migration) and V1.2.4 (`#deprecated` adoption) remain held in the upstream-blocker tickets. See [`roadmap.md`](roadmap.md) for the full plan.
 
 ## Last Security Audit
 

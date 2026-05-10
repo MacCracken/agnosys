@@ -416,11 +416,11 @@ language-feature surface — these are durable infrastructure improvements.
 
 **Rationale:** purely cosmetic syntactic uplift on the arch-gated code, plus documentation discipline so accidental Linux-isms in portable modules get caught early.
 
-#### V1.2.2 — Capability map per public fn (was 8.5)
+#### V1.2.2 — Capability map per public fn ✅ SHIPPED 2026-05-09 (in 1.2.1)
 
-- [ ] `docs/development/capability-map.md` listing every public fn → set of syscalls it can invoke
-- [ ] `scripts/check-capabilities.sh` parses module source, derives the actual syscall set, diffs against the doc — fails CI on drift
-- [ ] Consumers can map fn → syscall → seccomp filter without reading source
+- [x] `docs/development/capability-map.md` — auto-generated, per-module granularity (638 lines). Per-fn rows would need a real cyrius AST walker for transitive call resolution — deferred to a future slot if downstream demand surfaces.
+- [x] `scripts/gen-capability-map.sh` — parses each module's source, extracts direct syscalls + sys_* wrappers + exec paths + filesystem paths. `--check` mode wired into audit.sh as gate 3/11 (fails CI on drift).
+- [x] Per-profile rollup added: `dist/agnosys-<profile>.cyr` bundles map cleanly to module sets, so kavach (security profile) etc. derive their seccomp/Landlock allowlist by aggregating the modules in their profile.
 
 **Rationale:** `docs/SECURITY-NOTES.md` covers per-module concerns at prose level. A machine-checkable surface gives kavach/daimon a programmatic basis for seccomp policy generation.
 
