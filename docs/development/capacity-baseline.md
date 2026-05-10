@@ -1,8 +1,9 @@
 # Capacity Baseline
 
 > Snapshot of Cyrius compiler table utilization across representative agnosys
-> builds. Captured at **1.2.3** with **Cyrius 5.10.19** (initial 1.2.1 capture
-> still holds — no source changes between 1.2.1 and 1.2.3). Refreshed each
+> builds. Captured at **1.2.4** with **Cyrius 5.10.34** (initial 1.2.1 capture
+> still holds — no agnosys source changes between 1.2.1 and 1.2.4; the cyrius
+> 5.10.19 → 5.10.34 toolchain refresh is the only delta). Refreshed each
 > minor bump. The 85% gate (`cyrius capacity --check`) is enforced on every
 > CI build.
 >

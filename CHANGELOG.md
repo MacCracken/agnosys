@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] — 2026-05-10
+
+**Cyrius pin bump 5.10.19 → 5.10.34.**
+
+Toolchain refresh; no agnosys source changes. cyrius 5.10.20 →
+5.10.34 covers fifteen patch releases of upstream improvements
+(parser/codegen polish, stdlib additions); agnosys's audit gates
+all pass clean against the new toolchain.
+
+### Changed
+- **`cyrius.cyml`** — pin 5.10.19 → 5.10.34.
+- **`./lib/`** — refreshed via `cyrius deps` (gitignored;
+  populated from the v5.10.34 stdlib snapshot).
+- **`docs/development/capability-map.md`** — regenerated header
+  (version + source-commit refresh).
+- **`docs/development/api-surface-1.0.md`** — regenerated header.
+- **`dist/agnosys.cyr` + 5 profile bundles** — regenerated at
+  1.2.4 header.
+
+### Verified
+- All 11 audit gates pass under cyrius 5.10.34.
+- 247 / 247 integration tests pass (no test changes).
+- 30 benchmarks across 11 groups; bench parity unchanged.
+- 7 fuzz harnesses.
+- API surface: 730 public fns, no drift since 1.2.3 (pure
+  toolchain bump).
+
 ## [1.2.3] — 2026-05-10
 
 **V1.2.3 consumer integration CI + 1.2.1 doc cleanup carry-forward.**

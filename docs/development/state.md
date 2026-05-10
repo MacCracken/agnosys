@@ -2,16 +2,16 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-10 (1.2.3)
+**Last refresh:** 2026-05-10 (1.2.4)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.2.3** |
-| `cyrius.cyml [package].cyrius` | **5.10.19** |
-| Min Cyrius (consumer) | 5.10.19 |
-| Last cyrius bump | 5.10.18 → 5.10.19 (2026-05-09; closes the lib/process.cyr O_WRONLY syntax-check blocker that survived 5.10.18). Multi-step bump arc 5.9.27 → 5.10.19 covered: 5.10.6→.9 lib version-pinning + RFC 8259 §7 escaping; 5.10.14 stacked `#derive` fix; 5.10.16 api-surface scanner desync fix; 5.10.18 + 5.10.19 lib/process.cyr O_WRONLY fix. |
+| `VERSION` | **1.2.4** |
+| `cyrius.cyml [package].cyrius` | **5.10.34** |
+| Min Cyrius (consumer) | 5.10.34 |
+| Last cyrius bump | 5.10.19 → 5.10.34 (2026-05-10; toolchain refresh, 15 upstream patch releases — parser / codegen polish + stdlib additions). Audit clean against the new pin; no agnosys source changes. |
 
 ## Build Metrics
 
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.2.3** | 2026-05-10 | V1.2.3 consumer integration CI shipped — nightly GitHub Actions workflow ([`.github/workflows/consumer-integration.yml`](../../.github/workflows/consumer-integration.yml)) builds kavach + sigil against agnosys main; vendors freshly-built dist bundles into the consumer's `lib/`, force-syncs cyrius pin, runs the consumer's audit. Failures auto-file `consumer-break` issues here (with dedup). Separate from primary build/test pipeline — schedule + workflow_dispatch only. Plus the 1.2.1 doc-cleanup carry-forward: `docs/doc-health.md` ledger added; README/CONTRIBUTING/capacity-baseline refreshed at 1.2.3 numbers; `version-bump.sh` no longer suggests git ops to agents. Skipped 1.2.2 (folded into 1.2.1 ship per slot rhythm). |
+| **1.2.4** | 2026-05-10 | Cyrius pin bump 5.10.19 → 5.10.34. Toolchain refresh (15 upstream patch releases — parser/codegen polish + stdlib additions); no agnosys source changes. Audit clean against the new pin. 6 dist bundles + capability-map + api-surface prose regenerated at 1.2.4 headers. |
+| 1.2.3 | 2026-05-10 | V1.2.3 consumer integration CI shipped — nightly GitHub Actions workflow ([`.github/workflows/consumer-integration.yml`](../../.github/workflows/consumer-integration.yml)) builds kavach + sigil against agnosys main; vendors freshly-built dist bundles into the consumer's `lib/`, force-syncs cyrius pin, runs the consumer's audit. Failures auto-file `consumer-break` issues here (with dedup). Separate from primary build/test pipeline — schedule + workflow_dispatch only. Plus the 1.2.1 doc-cleanup carry-forward: `docs/doc-health.md` ledger added; README/CONTRIBUTING/capacity-baseline refreshed at 1.2.3 numbers; `version-bump.sh` no longer suggests git ops to agents. Skipped 1.2.2 (folded into 1.2.1 ship per slot rhythm). |
 | 1.2.1 | 2026-05-09 | V1.2.2 capability map (per-module kernel surface — syscalls, sys_*, exec paths, sysfs/procfs/devfs paths) shipped via auto-generator (`scripts/gen-capability-map.sh`). Phase 8 doc-tooling: api-surface prose generator (`scripts/gen-api-surface-prose.sh`) closes the D-3 deferral from 1.1.13; `api-surface-1.0.md` regen now covers all 730 fns. 3 upstream-blocker tickets filed internally (passive — `#derive(Serialize)` cstring gap, `#ifplat` codegen regression, `#deprecated` unproven). audit.sh tightened: 10 → 11 gates (+capability-map, prose-doc check folded into API surface). No source changes. |
 | 1.2.0 | 2026-05-09 | V1.2.0 multi-profile `cyrius distlib` shipped — 5 profile bundles (`core`, `security`, `storage`, `trust`, `system`) ship alongside the full bundle. Consumer-facing distribution-shape change: kavach 324 KB → ~99 KB (70% cut), stiva → ~72 KB (78%), sigil → ~92 KB (72%). `[lib.<profile>]` sections in `cyrius.cyml`; CI dist-staleness gate covers all 6 bundles; release archive ships every profile per tag. No source changes; no API surface drift. Yukti pattern; proven primitive. |
 | 1.1.14 | 2026-05-09 | P(-1) hardening pass — security audit findings landed. 0 critical / 0 high / 0 medium severity; 3 LOW + 1 informational, all closed. F-7 (`fuse_extract_field` octal-escape unescape), F-8 (bootloader cmdline danger-flag list extended with lockdown/sig_enforce/LSM-disable/heap-hardening flags), F-9 (`dmverity` outbuf explicit null-terminator). H-2 smoke + new `fuse_parse` fuzz harness. 247 tests (+5), 7 fuzz harnesses (+1). Adds `docs/audit/2026-05-09-cve-landscape.md` + `docs/audit/2026-05-09-audit.md` + `docs/development/reviews/2026-05-09-internal-review.md`. |
