@@ -2,16 +2,16 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-10 (1.2.4)
+**Last refresh:** 2026-05-11 (1.2.5)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.2.4** |
-| `cyrius.cyml [package].cyrius` | **5.10.34** |
-| Min Cyrius (consumer) | 5.10.34 |
-| Last cyrius bump | 5.10.19 → 5.10.34 (2026-05-10; toolchain refresh, 15 upstream patch releases — parser / codegen polish + stdlib additions). Audit clean against the new pin; no agnosys source changes. |
+| `VERSION` | **1.2.5** |
+| `cyrius.cyml [package].cyrius` | **5.10.44** |
+| Min Cyrius (consumer) | 5.10.44 |
+| Last cyrius bump | 5.10.34 → 5.10.44 (2026-05-11; toolchain refresh, 10 upstream patch releases — parser / codegen polish + stdlib additions). Audit clean against the new pin; no agnosys source changes. |
 
 ## Build Metrics
 
@@ -113,7 +113,8 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
-| **1.2.4** | 2026-05-10 | Cyrius pin bump 5.10.19 → 5.10.34. Toolchain refresh (15 upstream patch releases — parser/codegen polish + stdlib additions); no agnosys source changes. Audit clean against the new pin. 6 dist bundles + capability-map + api-surface prose regenerated at 1.2.4 headers. |
+| **1.2.5** | 2026-05-11 | Cyrius pin bump 5.10.34 → 5.10.44. Toolchain refresh (10 upstream patch releases — parser/codegen polish + stdlib additions); no agnosys source changes. Audit clean against the new pin. 6 dist bundles + capability-map + api-surface prose regenerated at 1.2.5 headers. |
+| 1.2.4 | 2026-05-10 | Cyrius pin bump 5.10.19 → 5.10.34. Toolchain refresh (15 upstream patch releases — parser/codegen polish + stdlib additions); no agnosys source changes. Audit clean against the new pin. 6 dist bundles + capability-map + api-surface prose regenerated at 1.2.4 headers. |
 | 1.2.3 | 2026-05-10 | V1.2.3 consumer integration CI shipped — nightly GitHub Actions workflow ([`.github/workflows/consumer-integration.yml`](../../.github/workflows/consumer-integration.yml)) builds kavach + sigil against agnosys main; vendors freshly-built dist bundles into the consumer's `lib/`, force-syncs cyrius pin, runs the consumer's audit. Failures auto-file `consumer-break` issues here (with dedup). Separate from primary build/test pipeline — schedule + workflow_dispatch only. Plus the 1.2.1 doc-cleanup carry-forward: `docs/doc-health.md` ledger added; README/CONTRIBUTING/capacity-baseline refreshed at 1.2.3 numbers; `version-bump.sh` no longer suggests git ops to agents. Skipped 1.2.2 (folded into 1.2.1 ship per slot rhythm). |
 | 1.2.1 | 2026-05-09 | V1.2.2 capability map (per-module kernel surface — syscalls, sys_*, exec paths, sysfs/procfs/devfs paths) shipped via auto-generator (`scripts/gen-capability-map.sh`). Phase 8 doc-tooling: api-surface prose generator (`scripts/gen-api-surface-prose.sh`) closes the D-3 deferral from 1.1.13; `api-surface-1.0.md` regen now covers all 730 fns. 3 upstream-blocker tickets filed internally (passive — `#derive(Serialize)` cstring gap, `#ifplat` codegen regression, `#deprecated` unproven). audit.sh tightened: 10 → 11 gates (+capability-map, prose-doc check folded into API surface). No source changes. |
 | 1.2.0 | 2026-05-09 | V1.2.0 multi-profile `cyrius distlib` shipped — 5 profile bundles (`core`, `security`, `storage`, `trust`, `system`) ship alongside the full bundle. Consumer-facing distribution-shape change: kavach 324 KB → ~99 KB (70% cut), stiva → ~72 KB (78%), sigil → ~92 KB (72%). `[lib.<profile>]` sections in `cyrius.cyml`; CI dist-staleness gate covers all 6 bundles; release archive ships every profile per tag. No source changes; no API surface drift. Yukti pattern; proven primitive. |

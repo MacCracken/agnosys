@@ -4,7 +4,7 @@
 
 Cyrius bindings for Linux kernel syscalls and security primitives. Consumers include only the modules they need, or include the single `dist/agnosys.cyr` bundle for the full surface area. The foundation layer that every AGNOS program depends on.
 
-**1.2.4 · Cyrius 5.10.34 · 20 modules · 730 public fns · ~10 300 src lines · 153 KB binary (DCE) · ~170 ms compile · 0 runtime deps**
+**1.2.5 · Cyrius 5.10.44 · 20 modules · 730 public fns · ~10 300 src lines · 153 KB binary (DCE) · ~170 ms compile · 0 runtime deps**
 
 ## Architecture
 
@@ -141,7 +141,7 @@ build → smoke → tests → lint → vet → fuzz → benchmarks
 - [`docs/SECURITY-NOTES.md`](docs/SECURITY-NOTES.md) — per-module security considerations
 - [`docs/development/state.md`](docs/development/state.md) — live state snapshot (refreshed every release)
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — completed phases, V1.0 / V1.1 / V1.2 cycles + forward plan
-- [`docs/development/api-surface-1.0.md`](docs/development/api-surface-1.0.md) — auto-generated public API prose (730 fns at 1.2.4, 20 modules)
+- [`docs/development/api-surface-1.0.md`](docs/development/api-surface-1.0.md) — auto-generated public API prose (730 fns at 1.2.5, 20 modules)
 - [`docs/development/capability-map.md`](docs/development/capability-map.md) — per-module kernel-surface map (syscalls, sys_*, exec paths, fs paths) for downstream sandbox-policy authoring
 - [`docs/development/capacity-baseline.md`](docs/development/capacity-baseline.md) — compiler-table utilization
 - [`docs/doc-health.md`](docs/doc-health.md) — documentation currency ledger (fresh / stale / archive buckets)
