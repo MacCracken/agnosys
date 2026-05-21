@@ -28,6 +28,11 @@ jobs:
           mkdir -p "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
           cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/" 2>/dev/null || true
           cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib/" 2>/dev/null || true
+          # cycc_aarch64 (renamed from cc5_aarch64 in Cyrius 6.0) may
+          # ship under bin/ (picked up by the bin/* copy above) or at
+          # the tarball top-level depending on the release. Cover both.
+          # Same workaround sankoch / yukti carry.
+          [ -f "$CYRIUS_DIR/cycc_aarch64" ] && cp "$CYRIUS_DIR/cycc_aarch64" "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"
           chmod +x "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"* 2>/dev/null || true
           ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/bin"
           ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib" "$HOME/.cyrius/lib"
@@ -36,7 +41,7 @@ jobs:
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
       - name: Verify toolchain
-        run: cc5 --version
+        run: cyrius --version
 
       - name: Resolve dependencies
         # Must run before any step that resolves `include "lib/..."`
@@ -136,12 +141,13 @@ jobs:
       - name: Cross-build aarch64
         # The toolchain translates x86_64 syscall numbers to aarch64
         # at codegen — no agnosys source changes needed. Requires
-        # cc5_aarch64 in the toolchain bin dir. If the toolchain
-        # release didn't bundle it, skip with a warning rather than
-        # fail the whole build.
+        # cycc_aarch64 (renamed from cc5_aarch64 in Cyrius 6.0) in
+        # the toolchain bin dir; tarball location is covered in the
+        # install step above. If the toolchain release didn't bundle
+        # it, skip with a warning rather than fail the whole build.
         run: |
-          if [ ! -x "$HOME/.cyrius/bin/cc5_aarch64" ]; then
-            echo "::warning::cc5_aarch64 not shipped with Cyrius $CYRIUS_VERSION — skipping aarch64 cross-build"
+          if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ]; then
+            echo "::warning::cycc_aarch64 not shipped with Cyrius $CYRIUS_VERSION — skipping aarch64 cross-build"
             exit 0
           fi
           CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/agnosys-aarch64

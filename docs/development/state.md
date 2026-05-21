@@ -106,7 +106,7 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 ## Verification Hosts
 
 - **Linux x86_64** — primary; `cyrius build` + `cyrius test` self-host.
-- **Linux aarch64** — best-effort; CI cross-builds when `cc5_aarch64` is bundled in the toolchain release.
+- **Linux aarch64** — best-effort; CI cross-builds when `cycc_aarch64` (renamed from `cc5_aarch64` in Cyrius 6.0) is bundled in the toolchain release.
 - **macOS / Windows** — not supported. Most modules are kernel-Linux-only by definition (audit netlink, PAM, journald, dm-verity, IMA, secureboot). See roadmap Phase 8 (item 3).
 
 ## Recent Releases

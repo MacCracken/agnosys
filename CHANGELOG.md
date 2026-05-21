@@ -30,6 +30,17 @@ gates green).
   concatenation of `src/*.cyr`).
 - **`docs/development/state.md`** — full refresh (pin, version,
   binary metrics, capacity table, stdlib list, recent releases).
+- **`.github/workflows/ci.yml` + `.github/workflows/release.yml`**
+  — `cc5_aarch64` → `cycc_aarch64` (renamed in Cyrius 6.0);
+  `cc5 --version` verify step swapped for `cyrius --version`
+  (wrapper-stable across compiler renames); install step gains
+  the tarball-top-level `cycc_aarch64` fallback that
+  sankoch / yukti already carry (some 6.0 release shapes ship
+  it outside `bin/`).
+- **`scripts/audit.sh`** — aarch64 cross-build guard updated
+  to `cycc_aarch64`.
+- **`CONTRIBUTING.md`** — Prerequisites refreshed (`6.0.1` /
+  `cycc_aarch64`).
 
 ### Notable cyrius 6.0 deltas affecting agnosys
 
