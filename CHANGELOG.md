@@ -26,8 +26,9 @@ gates green).
   (carry-forward of the 1.2.6 source-commit / version refresh
   that landed after the tag).
 - **`dist/agnosys.cyr` + 5 profile bundles** — regenerated at
-  1.2.7 (byte-identical to 1.2.6 content; distlib is pure
-  concatenation of `src/*.cyr`).
+  1.2.7. Content is identical to 1.2.6 (distlib is pure
+  concatenation of `src/*.cyr`); only the embedded
+  `# Version: 1.2.7` header line changes per bundle.
 - **`docs/development/state.md`** — full refresh (pin, version,
   binary metrics, capacity table, stdlib list, recent releases).
 - **`.github/workflows/ci.yml` + `.github/workflows/release.yml`**
