@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.7] — 2026-05-21
+
+**Cyrius pin bump 5.11.4 → 6.0.1 — first major upstream release.**
+
+Toolchain refresh across a major version boundary. No agnosys
+source changes; full audit clean against the new pin (11/11
+gates green).
+
+### Changed
+- **`cyrius.cyml`** — pin 5.11.4 → 6.0.1.
+- **`./lib/`** — refreshed via `cyrius deps` (gitignored;
+  repopulated from the v6.0.1 stdlib snapshot — 24 files).
+  Upstream renamed `cc5` → `cycc` throughout stdlib comments;
+  new `syscalls_linux_common.cyr` peer (not pulled by agnosys's
+  `[deps] stdlib` list).
+- **`docs/development/capability-map.md`** — regenerated header
+  (carry-forward of the 1.2.6 source-commit / version refresh
+  that landed after the tag).
+- **`dist/agnosys.cyr` + 5 profile bundles** — regenerated at
+  1.2.7 (byte-identical to 1.2.6 content; distlib is pure
+  concatenation of `src/*.cyr`).
+- **`docs/development/state.md`** — full refresh (pin, version,
+  binary metrics, capacity table, stdlib list, recent releases).
+
+### Notable cyrius 6.0 deltas affecting agnosys
+
+- **Fn-table capacity doubled** 4,096 → 8,192. Current
+  utilization 424 / 8,192 (5%), down from 390 / 4,096 (10%).
+- **DCE strategy** — switched from full elimination to in-place
+  NOP. `CYRIUS_DCE=1` build now reports "478 unreachable fns
+  (106,230 bytes NOPed)"; binary size identical to non-DCE
+  build (156,768 B). The dead bytes are still in the file but
+  unreachable; `CYRIUS_DCE_VERBOSE=1` lists them.
+- **Binary size** — 132,952 B (1.2.5, DCE) → 156,768 B (1.2.7,
+  DCE-aware). +23,816 B from cyrius 6.0 codegen + stdlib growth
+  across 5.11 → 6.0.
+
+### Verified
+
+- `cyrius build src/main.cyr build/agnosys`: green (x86_64).
+- `scripts/audit.sh`: 11/11 gates pass.
+- 247 / 247 integration tests pass.
+- 7 / 7 fuzz harnesses pass (10s timeout each).
+- 30 / 30 benchmarks (11 groups) run to completion.
+
 ## [1.2.6] — 2026-05-11
 
 **Stdlib annotation pass + cyrius pin 5.10.44 → 5.11.4.**
