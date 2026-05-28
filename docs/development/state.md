@@ -2,28 +2,28 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-05-21 (1.2.7)
+**Last refresh:** 2026-05-28 (1.2.8)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.2.7** |
-| `cyrius.cyml [package].cyrius` | **6.0.1** |
-| Min Cyrius (consumer) | 6.0.1 |
-| Last cyrius bump | 5.11.4 → 6.0.1 (2026-05-21; first major upstream release — `cc5` → `cycc` rename across stdlib, new `syscalls_linux_common.cyr` peer for shared Linux syscall numbers, fn-table capacity doubled 4,096 → 8,192). Audit clean against the new pin; no agnosys source changes. Prior bump 5.10.44 → 5.11.4 at 1.2.6 (stdlib annotation pass — every public fn gains `: i64` return-type annotation). |
+| `VERSION` | **1.2.8** |
+| `cyrius.cyml [package].cyrius` | **6.0.14** |
+| Min Cyrius (consumer) | 6.0.14 |
+| Last cyrius bump | 6.0.1 → 6.0.14 (2026-05-28; 6.0 patch series — native-TLS arc + 3 toolchain fixes (6.0.3 `str_from` overload misroute, 6.0.9 aarch64 raw-syscall + distlib blank-line residue, 6.0.2 empty-lock). No agnosys source changes; `syscalls_linux_common.cyr` now pulled transitively (24 → 25 stdlib files). All 3 in-tree workarounds re-verified still required against the new pin. Audit clean (11/11). Prior bump 5.11.4 → 6.0.1 at 1.2.7 (first major upstream release — `cc5` → `cycc` rename, fn-table capacity doubled 4,096 → 8,192, DCE switched to in-place NOP). |
 
 ## Build Metrics
 
 | Metric | Value | Notes |
 |---|---|---|
-| Binary size (DCE) | **156,768 B** | +23,816 B vs 1.2.5 (132,952 B) — cyrius 6.0 codegen + stdlib growth (478 unreachable fns NOPed under DCE; 106,230 dead bytes). DCE strategy changed in 6.0 from full elimination to in-place NOP, so DCE and non-DCE builds size identically. |
-| `dist/agnosys.cyr` size | ~323 KB / 10,182 lines | +131 lines vs 1.2.5 — annotation-pass effects (1.2.6) carried forward; src/* unchanged at 1.2.7. |
-| Fn-table utilization | 424 / 8,192 (5%) | +34 fns since 1.2.5; capacity doubled 4,096 → 8,192 in cyrius 6.0 |
-| Var-table | 335 / 8,192 | |
-| Fixup-table | 854 / 262,144 | |
+| Binary size (DCE) | **159,024 B** | +2,256 B vs 1.2.7 (156,768 B) — cyrius 6.0.1 → 6.0.14 codegen + stdlib growth (488 unreachable fns NOPed under DCE; 108,443 dead bytes). DCE strategy is in-place NOP since 6.0, so DCE and non-DCE builds size identically. |
+| `dist/agnosys.cyr` size | ~323 KB / 10,110 lines | −72 lines vs 1.2.7 — cyrius 6.0.9 distlib blank-line residue fix (double-blank collapse); src/* content unchanged at 1.2.8. |
+| Fn-table utilization | 433 / 8,192 (5%) | +9 fns since 1.2.7 (stdlib snapshot growth pulled into the include graph) |
+| Var-table | 342 / 8,192 | |
+| Fixup-table | 865 / 262,144 | |
 | String-data | 1,494 / 2,097,152 | |
-| Code-size | 96,096 / 1,048,576 | |
+| Code-size | 97,928 / 1,048,576 | |
 | Compile time | ~460 ms | recorded at 1.0.0 closeout |
 
 ## Module Count
@@ -79,7 +79,7 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 - **Runtime**: 0
 - **Stdlib via `[deps] stdlib`**: `syscalls`, `string`, `alloc`, `fmt`, `vec`, `str`, `io`, `ct`, `slice`, `fnptr`, `json`, `tagged`, `assert`, `bench`, `fs`, `hashmap`, `net`, `process` (18 — `ct` added 1.1.3 for `ct_eq_bytes`; `slice` added 1.1.11 for `slice<u8>` indexing; `fnptr`/`json`/`tagged` added 1.1.12 for `#derive(Serialize)`; `assert`/`bench`/`fs`/`hashmap`/`net`/`process` added across 1.2.x for downstream-bundle completeness)
 - **Git-pinned**: 0 (no `[deps.<name>]` stanzas; no `cyrius.lock` needed today)
-- **Vendored stdlib refresh** (last): 2026-05-21 to cyrius 6.0.1 snapshot (full `./lib/` re-populated via `cyrius deps`; 24 stdlib files). cyrius 6.0 renames `cc5` → `cycc` throughout stdlib comments + adds new `syscalls_linux_common.cyr` peer (not pulled by agnosys's deps list).
+- **Vendored stdlib refresh** (last): 2026-05-28 to cyrius 6.0.14 snapshot (full `./lib/` re-populated via `cyrius deps` after `rm -rf lib`; 25 stdlib files). `syscalls_linux_common.cyr` is now pulled transitively (was a not-pulled peer at the 6.0.1 snapshot), taking the count 24 → 25.
 
 ## Consumer Status
 
@@ -113,6 +113,7 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
+| **1.2.8** | 2026-05-28 | Cyrius pin bump 6.0.1 → 6.0.14 (6.0 patch series — native-TLS arc + toolchain fixes). No agnosys source changes. Stdlib snapshot 24 → 25 files (`syscalls_linux_common.cyr` now transitive). 6 dist bundles regenerated; full bundle −72 lines (cyrius 6.0.9 distlib blank-line fix). Binary 156,768 → 159,024 B. **Workaround audit:** all 3 in-tree workarounds (hand-rolled JSON serializers, CI fmt diff-gate, CI cycc_aarch64 fallback) re-verified still required against 6.0.14 — none repairable yet. capability-map header refresh. Audit clean (11/11). |
 | **1.2.7** | 2026-05-21 | Cyrius pin bump 5.11.4 → 6.0.1. First major upstream release — `cc5` → `cycc` rename across stdlib, new `syscalls_linux_common.cyr` peer, fn-table capacity doubled 4,096 → 8,192, DCE switched to in-place NOP (478 unreachable fns NOPed, 106,230 dead bytes). No agnosys source changes. 6 dist bundles regenerated; capability-map header refresh (carry-forward from 1.2.6 — prior tag committed before regen). Audit clean (11/11). |
 | 1.2.6 | 2026-05-11 | Stdlib annotation pass + cyrius pin 5.10.44 → 5.11.4. Every public fn in `src/*.cyr` (351 fns) gains `: i64` return-type annotation matching cyrius v5.11.x annotation arc (Phases 1-6); parse-only, zero runtime / codegen change. All 6 dist bundles regenerated. |
 | 1.2.5 | 2026-05-11 | Cyrius pin bump 5.10.34 → 5.10.44. Toolchain refresh (10 upstream patch releases — parser/codegen polish + stdlib additions); no agnosys source changes. Audit clean against the new pin. 6 dist bundles + capability-map + api-surface prose regenerated at 1.2.5 headers. |

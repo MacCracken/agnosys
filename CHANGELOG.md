@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.8] — 2026-05-28
+
+**Cyrius pin bump 6.0.1 → 6.0.14 + workaround audit.**
+
+Toolchain refresh across the 6.0 patch series. No agnosys source
+changes. The 6.0.2 → 6.0.14 work upstream is the native-TLS arc
+(sigil/stdlib-internal) plus three toolchain fixes; none touch the
+kernel-interface surface agnosys binds. Full audit clean against the
+new pin (11/11 gates green).
+
+### Changed
+
+- **`cyrius.cyml`** — pin 6.0.1 → 6.0.14.
+- **`./lib/`** — refreshed via `cyrius deps` (gitignored; repopulated
+  from the 6.0.14 stdlib snapshot — 24 → 25 files). The new file is
+  `syscalls_linux_common.cyr` (shared Linux syscall numbers), now
+  pulled transitively where it was a not-pulled peer at 6.0.1.
+- **`dist/agnosys.cyr` + 5 profile bundles** — regenerated at 1.2.8.
+  src content is byte-identical to 1.2.7 (distlib is pure
+  concatenation of `src/*.cyr`); two changes per bundle: the embedded
+  `# Version: 1.2.8` header, and the **cyrius 6.0.9 distlib blank-line
+  residue fix** collapsing the double blank line after the header and
+  between modules. Net −72 lines on the full bundle (10,182 → 10,110);
+  formatting only.
+- **`docs/development/capability-map.md`** — regenerated header
+  (timestamp / source commit / version).
+- **`docs/development/state.md`** — full refresh (pin, version, binary
+  metrics, stdlib list, recent releases).
+- **`CONTRIBUTING.md`** — Prerequisites refreshed (`6.0.14` at 1.2.8).
+
+### Workaround audit — none repairable yet
+
+Reviewed every in-tree workaround left from prior cyrius bugs against
+6.0.14; all three are **still required** (verified empirically, not
+from the changelog narrative):
+
+- **Hand-rolled JSON serializers** (`mac`, `certpin`, `drm`,
+  `dmverity`, `update`). `#derive(Serialize)` still emits a
+  cstr-pointer field as its **pointer decimal** in 6.0.14 (tested: a
+  two-cstr-field struct serialized to `849649872` instead of the
+  string). The hand-rolled serializers stay; `#derive(Serialize)`
+  adoption remains a post-1.0 Phase 8 follow-up gated on cstr-field
+  support landing upstream.
+- **CI fmt diff-gate** (`.github/workflows/ci.yml`). `cyrius fmt
+  --check <file>` still errors to `Usage: cyrfmt --check <file.cyr>`
+  in 6.0.14 (no gating behavior), so the per-file `diff` against
+  `cyrius fmt` stdout remains the drift gate.
+- **CI `cycc_aarch64` top-level fallback** — defensive cross-shape
+  coverage (release tarballs ship the aarch64 cross compiler under
+  `bin/` or top-level depending on shape); harmless, retained.
+
+### Notable cyrius 6.0.2 → 6.0.14 deltas
+
+- **6.0.9 aarch64 syscall correctness** — `lib/args.cyr` raw x86-only
+  syscall numbers and the compiler's own `syscall(60, ...)` exit fixed
+  to arch-dispatched forms. **agnosys unaffected**: `src/main.cyr`
+  already exits via `syscall(SYS_EXIT, r)` (the arch enum), not raw
+  `syscall(60)`.
+- **6.0.3 `str_from` overload misroute** — `str_from(<i64-returning
+  call>)` no longer silently routes to `str_from_int`. agnosys's
+  cstr-emit paths pass through `_emit_cstr_or_null` helpers; no
+  affected call sites.
+- **6.0.2 `cyrius deps` empty-lock fix** — N/A; agnosys ships no
+  `cyrius.lock` (zero non-stdlib deps).
+
+### Build metrics
+
+- Binary (DCE-aware): 156,768 B (1.2.7) → **159,024 B** (+2,256 B from
+  6.0.1 → 6.0.14 codegen + stdlib growth). 488 unreachable fns NOPed
+  (108,443 bytes).
+
+### Verified
+
+- `cyrius build src/main.cyr build/agnosys`: green (x86_64).
+- `scripts/audit.sh`: 11/11 gates pass.
+- 247 / 247 integration tests pass.
+- 7 / 7 fuzz harnesses pass.
+- 30 / 30 benchmarks (11 groups) run to completion.
+
 ## [1.2.7] — 2026-05-21
 
 **Cyrius pin bump 5.11.4 → 6.0.1 — first major upstream release.**
