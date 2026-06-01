@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-06-01
+
+**`src/util.cyr` consolidation closeout.** Two non-breaking dedups deferred from
+1.3.0, both folding into the shared helpers. Audit clean (11/11).
+
+### Added
+
+- `agnosys_is_name_char` — shared dm-name allowlist (alphanumeric + `-`/`_`);
+  `dmverity_is_name_char` / `luks_is_name_char` are now thin wrappers.
+- `agnosys_read_fd_to_str(fd, cap)` — drains a fd into a NUL-terminated `Str`,
+  replacing 3 byte-identical loops in pam (`pam_read_service_config`,
+  `pam_list_users`, `pam_get_user_info`). The shared helper allocates `cap + 1`,
+  closing a **latent 1-byte overflow** the per-module copies carried (they
+  alloc'd exactly `cap` and wrote the terminator at offset `cap` — same class as
+  F-11, but bounded to ≥8KB PAM configs / ≥64KB `/etc/passwd`).
+- Regression test `readfd_cap`. Test count 251 → 252.
+- +2 public fns (additive, non-breaking; 735 → 737).
+
+### Deprecated
+
+Doc-only notices (cyrius `#deprecated` is still unproven — see roadmap V1.2.4),
+scheduled for removal in **2.0.0** (roadmap V2.0):
+
+- `agnosys_checked_syscall` — public but 0 callers and byte-redundant with
+  `wrap_syscall`. *Migration:* use `wrap_syscall`.
+- The `label` parameter of `dmverity_validate_hex` (currently ignored) — the
+  function drops to arity 1 in 2.0.0. *Migration:* drop the second argument.
+
+### Changed
+
+- **`dist/agnosys.cyr` + 5 profile bundles** — regenerated at 1.3.1.
+
 ## [1.3.0] — 2026-06-01
 
 **Cyrius pin 6.0.14 → 6.0.24 + correctness/security pass + refactor &

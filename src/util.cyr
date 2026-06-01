@@ -29,6 +29,17 @@ fn agnosys_is_hex_char(ch): i64 {
     return 0;
 }
 
+# Is `ch` valid in a device-mapper / volume name (alphanumeric, `-`, `_`)?
+# Single source for the dm-name allowlist shared by dmverity and luks.
+fn agnosys_is_name_char(ch): i64 {
+    if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
+    if (ch >= 65 && ch <= 90) { return 1; }   # A-Z
+    if (ch >= 97 && ch <= 122) { return 1; }  # a-z
+    if (ch == 45) { return 1; }               # -
+    if (ch == 95) { return 1; }               # _
+    return 0;
+}
+
 # Does C string `str` start with C string `prefix`? Single-pass: walks
 # `prefix` and compares, stopping at the first mismatch, the prefix
 # terminator, or the str terminator — no up-front strlen of either side
@@ -66,4 +77,27 @@ fn agnosys_run_checked(args, errmsg): i64 {
         return err_unknown(errmsg);
     }
     return Ok(0);
+}
+
+# Read up to `cap` bytes from `fd` into a fresh heap buffer, NUL-terminate,
+# and return it as a Str (also valid as a cstr). Drains short reads. The
+# buffer is `cap + 1` bytes so the terminator never writes past the end
+# even at a full read (the per-module copies alloc'd exactly `cap`, a
+# latent 1-byte overflow when the file filled the buffer). Shared by the
+# pam config / passwd readers.
+fn agnosys_read_fd_to_str(fd, cap): i64 {
+    var buf = alloc(cap + 1);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(fd, buf + total, cap - total);
+        if (n <= 0) {
+            rgo = 0;
+        } else {
+            total = total + n;
+            if (total >= cap) { rgo = 0; }
+        }
+    }
+    store8(buf + total, 0);
+    return str_new(buf, total);
 }

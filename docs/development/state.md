@@ -2,13 +2,13 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-06-01 (1.3.0)
+**Last refresh:** 2026-06-01 (1.3.1)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.3.0** |
+| `VERSION` | **1.3.1** |
 | `cyrius.cyml [package].cyrius` | **6.0.24** |
 | Min Cyrius (consumer) | 6.0.24 |
 | Last cyrius bump | 6.0.14 → 6.0.24 (2026-06-01; entirely the native-TLS arc — `lib/tls_native.cyr`, sigil 3.5.6 → 3.5.9, "no compiler change" each release; cycc self-host byte-identical at 885,024 B across the window). No language modernization applicable; agnosys binary unchanged at 159,024 B. Unlike prior pin bumps this shipped as a **real minor (1.3.0)** carrying the correctness + refactor + optimization pass below. Prior bump 6.0.1 → 6.0.14 at 1.2.8. |
@@ -18,7 +18,7 @@
 | Metric | Value | Notes |
 |---|---|---|
 | Binary size (DCE) | **159,024 B** | Unchanged vs 1.2.8 — `main.cyr` builds only error/syscall/security + stdlib, none of which the 1.3.0 src changes touch; the 6.0.14 → 6.0.24 window is TLS-arc only (no codegen change). 488 unreachable fns NOPed under DCE; 108,443 dead bytes. |
-| `dist/agnosys.cyr` size | ~322 KB / 10,062 lines | −48 lines vs 1.2.8 — Tier-1 cross-module dedup (5 JSON shims, hex/starts_with/run wrappers) outweighs the new `src/util.cyr`. |
+| `dist/agnosys.cyr` size | ~321 KB / 10,046 lines | −16 lines vs 1.3.0 — 1.3.1 `util.cyr` dedup (name_char wrappers + the shared pam read-fd-to-Str helper replacing 3 loops). |
 | Fn-table utilization | 433 / 8,192 (5%) | +9 fns since 1.2.7 (stdlib snapshot growth pulled into the include graph) |
 | Var-table | 342 / 8,192 | |
 | Fixup-table | 865 / 262,144 | |
@@ -53,14 +53,14 @@
 | update | (snapshot) | Atomic file ops, version comparison |
 | fuse | (snapshot) | FUSE mount parsing, mount/unmount |
 
-Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surface-1.0.snapshot) (machine-checkable; CI-gated via `scripts/check-api-surface.sh`). 735 public fns total (+5 additive `agnosys_*` helpers at 1.3.0; 0 removed — non-breaking).
+Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surface-1.0.snapshot) (machine-checkable; CI-gated via `scripts/check-api-surface.sh`). 737 public fns total (+5 `agnosys_*` at 1.3.0, +2 at 1.3.1 — additive; 0 removed, non-breaking).
 
 ## Test / Fuzz / Bench Coverage
 
 | Category | Count | Where |
 |---|---|---|
-| Integration tests passed | **251 / 251** | `cyrius test` |
-| Integration assertions | 274 | `tests/tcyr/test_integration.tcyr` (1.3.0 added 4 — 3 `big_check_*` for the update_check overflow regression + 1 `exec_vec_multiarg` for the netns exec fix) |
+| Integration tests passed | **252 / 252** | `cyrius test` |
+| Integration assertions | 275 | `tests/tcyr/test_integration.tcyr` (1.3.0 added 4 — 3 `big_check_*` + 1 `exec_vec_multiarg`; 1.3.1 added 1 — `readfd_cap` for the shared read-fd helper) |
 | Fuzz harnesses | 7 | `fuzz/audit_nlmsg.fcyr`, `fuzz/audit_reply.fcyr`, `fuzz/certpin_pin.fcyr`, `fuzz/fuse_parse.fcyr` (1.1.14), `fuzz/journald_filter.fcyr`, `fuzz/luks_cipher.fcyr`, `fuzz/pam_config.fcyr` |
 | Benchmarks | 30 (11 groups) | `tests/bcyr/bench_all.bcyr` |
 | Bench file (compare) | 1 | `tests/bcyr/bench_compare.bcyr` (Cyrius vs Rust port baseline) |
@@ -113,6 +113,7 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
+| **1.3.1** | 2026-06-01 | **`util.cyr` consolidation closeout** (deferred non-breaking items from 1.3.0). New `agnosys_is_name_char` (dmverity/luks wrappers) + `agnosys_read_fd_to_str` replacing 3 byte-identical pam drain loops — the shared helper allocs `cap+1`, closing a latent 1-byte overflow the per-module copies carried (F-11 class, ≥8KB/≥64KB files). +2 public fns (735 → 737, non-breaking). Regression test `readfd_cap` (251 → 252). 6 dist bundles regenerated (−16 lines). Deprecation notices (doc-only) for `agnosys_checked_syscall` + `dmverity_validate_hex` `label` param → 2.0.0. Audit clean (11/11). |
 | **1.3.0** | 2026-06-01 | **Real minor: cyrius pin 6.0.14 → 6.0.24 + correctness/security + refactor/optimization closeout.** 4 buffer/exec defects fixed — F-11 (HIGH) `update_check` 1-byte heap overflow, F-12 `update_save_state` fixed-buffer overflow, F-13 `ima_read_measurements` silent 64KB truncation, F-14 netns exec non-functional + bare command names (rewritten onto `exec_vec` + absolute paths). New `src/util.cyr` consolidates 5 JSON shims + hex/starts_with/run-wrapper duplication (+5 `agnosys_*`, public names kept as wrappers; 730 → 735 fns, non-breaking). Bench wins: `starts_with` −68%/−77%, `mac_default_profile` 324 → 239ns (−26%). Tier-3 hygiene (break-in-var-loops, journald accessors, audit log_warn). Tests 247 → 251; 6 dist bundles regenerated (10,110 → 10,062 lines). CLAUDE.md: per-version benchmarking now mandatory. Audit clean (11/11). See `docs/audit/2026-06-01-audit.md`. |
 | **1.2.8** | 2026-05-28 | Cyrius pin bump 6.0.1 → 6.0.14 (6.0 patch series — native-TLS arc + toolchain fixes). No agnosys source changes. Stdlib snapshot 24 → 25 files (`syscalls_linux_common.cyr` now transitive). 6 dist bundles regenerated; full bundle −72 lines (cyrius 6.0.9 distlib blank-line fix). Binary 156,768 → 159,024 B. **Workaround audit:** all 3 in-tree workarounds (hand-rolled JSON serializers, CI fmt diff-gate, CI cycc_aarch64 fallback) re-verified still required against 6.0.14 — none repairable yet. capability-map header refresh. Audit clean (11/11). |
 | **1.2.7** | 2026-05-21 | Cyrius pin bump 5.11.4 → 6.0.1. First major upstream release — `cc5` → `cycc` rename across stdlib, new `syscalls_linux_common.cyr` peer, fn-table capacity doubled 4,096 → 8,192, DCE switched to in-place NOP (478 unreachable fns NOPed, 106,230 dead bytes). No agnosys source changes. 6 dist bundles regenerated; capability-map header refresh (carry-forward from 1.2.6 — prior tag committed before regen). Audit clean (11/11). |

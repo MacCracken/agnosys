@@ -471,21 +471,7 @@ fn pam_read_service_config(service_name): i64 {
     }
     defer { sys_close(fd); }
 
-    var buf = alloc(8192);
-    var total = 0;
-    var rgo = 1;
-    while (rgo == 1) {
-        var n = sys_read(fd, buf + total, 8192 - total);
-        if (n <= 0) { rgo = 0; }
-        else {
-            total = total + n;
-            if (total >= 8192) { rgo = 0; }
-        }
-    }
-
-    # Null-terminate and wrap as Str
-    store8(buf + total, 0);
-    var content = str_new(buf, total);
+    var content = agnosys_read_fd_to_str(fd, 8192);
 
     return pam_parse_config(content);
 }
@@ -503,20 +489,7 @@ fn pam_list_users(): i64 {
     }
     defer { sys_close(fd); }
 
-    var buf = alloc(65536);
-    var total = 0;
-    var rgo = 1;
-    while (rgo == 1) {
-        var n = sys_read(fd, buf + total, 65536 - total);
-        if (n <= 0) { rgo = 0; }
-        else {
-            total = total + n;
-            if (total >= 65536) { rgo = 0; }
-        }
-    }
-
-    store8(buf + total, 0);
-    var content = str_new(buf, total);
+    var content = agnosys_read_fd_to_str(fd, 65536);
     var lines = str_split(content, 10);  # '\n'
     var users = vec_new();
 
@@ -723,20 +696,7 @@ fn pam_get_user_info(username): i64 {
     }
     defer { sys_close(fd); }
 
-    var buf = alloc(65536);
-    var total = 0;
-    var rgo = 1;
-    while (rgo == 1) {
-        var n = sys_read(fd, buf + total, 65536 - total);
-        if (n <= 0) { rgo = 0; }
-        else {
-            total = total + n;
-            if (total >= 65536) { rgo = 0; }
-        }
-    }
-
-    store8(buf + total, 0);
-    var content = str_new(buf, total);
+    var content = agnosys_read_fd_to_str(fd, 65536);
     var lines = str_split(content, 10);
     var name_str = str_from(username);
 

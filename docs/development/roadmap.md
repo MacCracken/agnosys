@@ -452,6 +452,13 @@ defects fixed (F-11 HIGH heap overflow, F-12/F-13 MEDIUM, F-14 LOW netns exec);
 hot-path wins (`starts_with` −68%/−77%, `mac_default_profile` −26%); Tier-3
 hygiene. See CHANGELOG `[1.3.0]` and `docs/audit/2026-06-01-audit.md`.
 
+#### V1.3.1 — ✅ SHIPPED 2026-06-01 — `src/util.cyr` consolidation closeout
+
+- [x] Folded the dm-name allowlist (`dmverity_is_name_char`, `luks_is_name_char`) into a shared `agnosys_is_name_char` — both kept as thin wrappers (done opportunistically per the "or alongside other util.cyr work" path; 2 instances).
+- [x] `agnosys_read_fd_to_str` replaces 3 byte-identical pam drain loops (`pam_read_service_config`, `pam_list_users`, `pam_get_user_info`) — a clean 3-instance dedup deferred from the 1.3.0 audit. The shared helper allocs `cap + 1`, closing a **latent 1-byte overflow** the per-module copies carried (F-11 class). Regression test `readfd_cap`.
+
++2 public fns (additive, non-breaking; 735 → 737). See CHANGELOG `[1.3.1]`.
+
 #### V1.4.0 — `state.md` release post-hook (was 8.6)
 
 - [x] state.md created at 1.0.1
@@ -460,6 +467,20 @@ hygiene. See CHANGELOG `[1.3.0]` and `docs/audit/2026-06-01-audit.md`.
 
 **Rationale:** template's "release post-hook bumps state.md. If the hook doesn't, fix the hook — don't hand-maintain state." Lands when agnosticos meta-tooling supports it (cross-repo concern — hook lives in agnosticos toolchain, not this repo).
 
+### V2.0 — Breaking API cleanup
+
+The first major bump folds the API-breaking removals deferred from the 1.3.0
+audit (Tier-3 hygiene). **Deprecated as of 1.3.0** — noted here and in
+CHANGELOG `[Unreleased] Deprecated`; no code `#deprecated` annotation (cyrius's
+attribute is still unproven, see V1.2.4), so the notice lives in docs. Consumers
+should migrate before 2.0.0.
+
+- [ ] **Remove `agnosys_checked_syscall`** — public but 0 callers and byte-redundant with `wrap_syscall` (`src/error.cyr`). *Migration:* use `wrap_syscall`.
+- [ ] **Remove the unused `label` parameter of `dmverity_validate_hex`** (arity 2 → 1) — the argument is ignored today; the error message is fixed. *Migration:* drop the second argument.
+- [ ] Sweep for any other `src/util.cyr` consolidation candidates whose extraction would be API-breaking, and fold them in the same major.
+
+Each removal gets a `Breaking` section in CHANGELOG with a migration note and an `api-surface` snapshot bump at the 2.0.0 tag.
+
 ## V1.0+ Verification
 
 - [x] **1.1.0** shipped 2026-05-06 — V1.1.0 (`#derive(accessors)`) complete; closeout patch (1.0.13) clean; 16 of 16 struct-bearing modules migrated. See CHANGELOG `[1.1.0]` for the consumer banner and `[1.0.13]` for the cumulative baseline.
@@ -467,6 +488,7 @@ hygiene. See CHANGELOG `[1.3.0]` and `docs/audit/2026-06-01-audit.md`.
 - [ ] **1.2.0** ships when V1.2.0 (multi-profile distlib) is complete; closeout against the consumer set.
 - [ ] V1.2.x slots may ship in any order; gate is bench parity + audit clean.
 - [x] **1.3.0** shipped 2026-06-01 — correctness + refactor/optimization minor (re-scoped from the post-hook plan; pin 6.0.24, 4 buffer/exec fixes, `src/util.cyr` dedup, bench wins). See CHANGELOG `[1.3.0]`.
+- [x] **1.3.1** shipped 2026-06-01 — `src/util.cyr` consolidation closeout (name_char + the shared pam read-fd helper, closing a latent overflow). Non-breaking; see CHANGELOG `[1.3.1]`.
 - [ ] V1.4.0 ships when the agnosticos meta-tooling supports the state.md release post-hook.
 
 ## Consumer Map (durable)

@@ -86,7 +86,7 @@ scripts/check-api-surface.sh                # diff public API vs. 1.0 snapshot
 - Do not add runtime dependencies — agnosys is a kernel interface, keep it lean (zero non-stdlib deps today)
 - Do not skip `scripts/audit.sh` before claiming a change is ready
 - Do not skip benchmarks before claiming performance improvements
-- Do not tag a version (patch, minor, or major — pin-only refreshes included) without a recorded `bench-history.csv` row from `./scripts/bench-history.sh` and a delta/regression check vs. the prior version
+- Do not tag a version (patch, minor, or major — pin-only refreshes included) without running `./scripts/bench-history.sh` (local gitignored history) and a delta/regression check vs. the prior version; record material perf changes in the CHANGELOG `Performance` section
 - Do not skip fuzz verification before claiming a parser change works
 - Do not commit `build/`
 - Do not edit `dist/agnosys.cyr` by hand — regenerate via `cyrius distlib`
@@ -122,7 +122,7 @@ scripts/check-api-surface.sh                # diff public API vs. 1.0 snapshot
 6. **Local audit** — `scripts/audit.sh` clean
 7. **Documentation** — CHANGELOG, roadmap, `docs/development/state.md`, any ADR the change earned
 8. **Version check** — `VERSION`, `cyrius.cyml`, CHANGELOG header in sync (`cyrius.cyml` reads VERSION via `${file:VERSION}`, so `./scripts/version-bump.sh <new>` is enough)
-9. **Benchmark every version** — run `./scripts/bench-history.sh` on **every** version bump (patch, minor, major — including pin-only refreshes), commit the appended `bench-history.csv` row + regenerated `BENCHMARKS.md`, and diff against the prior version's row. Any regression beyond run-to-run noise is called out in the CHANGELOG; an unexplained regression blocks the bump. This is how we track deltas across the whole version history — never tag a version without a recorded bench row
+9. **Benchmark every version** — run `./scripts/bench-history.sh` on **every** version bump (patch, minor, major — including pin-only refreshes). It appends a row to `bench-history.csv` and regenerates `BENCHMARKS.md` — **both gitignored** (local history, not committed). Diff against the prior version's row; any regression beyond run-to-run noise is called out in the CHANGELOG `Performance` section, and an unexplained regression blocks the bump. The **committed** record of a version's perf is the CHANGELOG entry, not the CSV — never tag a version without having run the bench + delta check
 10. **Regenerate `dist/agnosys.cyr`** if any `src/*.cyr` changed
 11. **Return to step 1**
 

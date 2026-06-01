@@ -297,7 +297,7 @@ fn test_audit() {
 }
 
 # ================================================================
-# pam (15 assertions)
+# pam (16 assertions)
 # ================================================================
 
 fn test_pam() {
@@ -319,6 +319,19 @@ fn test_pam() {
     pam_user_set(u, "alice", 1000, 1000, "/home/alice", "/bin/bash");
     assert_eq(pam_user_uid(u), 1000, "pu_uid");
     assert(streq(pam_user_username(u), "alice") == 1, "pu_n");
+
+    # Regression (1.3.1): agnosys_read_fd_to_str (shared by the pam readers)
+    # must not overflow when the file fills the buffer — the per-module copies
+    # alloc'd `cap` and wrote the NUL at offset `cap`, one byte past the end.
+    var rfpath = "/tmp/agnos-readfd-test";
+    var rfbuf = alloc(100);
+    memset(rfbuf, 65, 100);
+    file_write_all(rfpath, rfbuf, 100);
+    var rfd = sys_open(rfpath, 0, 0);
+    var rfs = agnosys_read_fd_to_str(rfd, 50);
+    sys_close(rfd);
+    assert(str_len(rfs) == 50, "readfd_cap");
+    sys_unlink(rfpath);
     return 0;
 }
 

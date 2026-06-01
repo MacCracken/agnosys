@@ -126,12 +126,7 @@ fn luks_pbkdf_as_str(pbkdf): i64 {
 
 # Check if a byte is alphanumeric, dash, or underscore
 fn luks_is_name_char(ch): i64 {
-    if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
-    if (ch >= 65 && ch <= 90) { return 1; }   # A-Z
-    if (ch >= 97 && ch <= 122) { return 1; }  # a-z
-    if (ch == 45) { return 1; }                # -
-    if (ch == 95) { return 1; }                # _
-    return 0;
+    return agnosys_is_name_char(ch);
 }
 
 # Validate a LuksConfig. Returns Ok(0) or Err.
