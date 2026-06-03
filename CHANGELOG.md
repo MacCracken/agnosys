@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-06-03
+
+**Cyrius pin 6.0.24 → 6.0.52 — toolchain refresh with a real codegen win.** No
+agnosys source changes. Unlike the pure-TLS 6.0.14 → 6.0.24 window, the
+6.0.25–6.0.52 arc carries a codegen change: the agnosys binary moves 159,024 →
+159,392 B (+368) and every hot path measures faster. Audit clean (11/11);
+252 tests, 7 fuzz harnesses; API surface unchanged (no drift).
+
+### Performance
+
+Broad hot-path improvements from the 6.0.25–6.0.52 codegen window — 30
+benchmarks, **zero regressions**, reproduced on a second run (so not run-to-run
+noise). Representative deltas vs 1.3.1:
+
+- `update_compare_versions` 229 → 171 ns (−25%)
+- `certpin_ct_streq` (equal) 170 → 129 ns (−24%), (diff) 176 → 129 ns (−27%)
+- `validate_pin_valid` 288 → 236 ns (−18%), `validate_ver_good` 129 → 105 ns (−19%)
+- `bootloader` `validate_cmdline_safe` 582 → 487 ns (−16%)
+- `wrap_syscall_ok` 344 → 300 ns (−13%), `map_get_miss` 53 → 39 ns (−26%)
+- `memeq_16` 36 → 29 ns (−19%), `syserr_pack` 4 → 3 ns
+
+New `bench-history.csv` row appended; `BENCHMARKS.md` regenerated (derived).
+
+### Changed
+
+- **`cyrius.cyml [package].cyrius`** — pin 6.0.24 → 6.0.52.
+- **Vendored stdlib snapshot** — 25 → 29 files. The 6.0.x AGNOS-target peers
+  (`alloc_agnos.cyr`, `syscalls_x86_64_agnos.cyr`) plus the macOS/Windows
+  syscall + process peers (`syscalls_macos.cyr`, `syscalls_windows.cyr`,
+  `process_win.cyr`) are now pulled transitively by `cyrius deps`. None affect
+  the Linux x86_64/aarch64 build.
+- **DCE floor** — 490 unreachable fns NOPed (108,466 dead bytes), vs 488 /
+  108,443 at 1.3.1 (+2 fns, +23 bytes).
+- **`dist/agnosys.cyr` + 5 profile bundles** — regenerated at 1.3.2 (version
+  header only; line counts unchanged from 1.3.1).
+
 ## [1.3.1] — 2026-06-01
 
 **`src/util.cyr` consolidation closeout.** Two non-breaking dedups deferred from

@@ -2,23 +2,23 @@
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-06-01 (1.3.1)
+**Last refresh:** 2026-06-03 (1.3.2)
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.3.1** |
-| `cyrius.cyml [package].cyrius` | **6.0.24** |
-| Min Cyrius (consumer) | 6.0.24 |
-| Last cyrius bump | 6.0.14 → 6.0.24 (2026-06-01; entirely the native-TLS arc — `lib/tls_native.cyr`, sigil 3.5.6 → 3.5.9, "no compiler change" each release; cycc self-host byte-identical at 885,024 B across the window). No language modernization applicable; agnosys binary unchanged at 159,024 B. Unlike prior pin bumps this shipped as a **real minor (1.3.0)** carrying the correctness + refactor + optimization pass below. Prior bump 6.0.1 → 6.0.14 at 1.2.8. |
+| `VERSION` | **1.3.2** |
+| `cyrius.cyml [package].cyrius` | **6.0.52** |
+| Min Cyrius (consumer) | 6.0.52 |
+| Last cyrius bump | 6.0.24 → 6.0.52 (2026-06-03; toolchain refresh, no agnosys source changes). Unlike the pure-TLS 6.0.14 → 6.0.24 window, the 6.0.25–6.0.52 arc carries a **codegen change**: binary 159,024 → 159,392 B (+368) and broad hot-path wins across all 30 benches (zero regressions, reproduced on a second run — e.g. `update_compare_versions` −25%, `certpin_ct_streq` −24%, `validate_cmdline_safe` −16%, `wrap_syscall_ok` −13%). Stdlib snapshot 25 → 29 files (AGNOS-target + macOS/Windows peers now transitive). Prior bump 6.0.14 → 6.0.24 at 1.3.0 (TLS-arc only, binary unchanged). |
 
 ## Build Metrics
 
 | Metric | Value | Notes |
 |---|---|---|
-| Binary size (DCE) | **159,024 B** | Unchanged vs 1.2.8 — `main.cyr` builds only error/syscall/security + stdlib, none of which the 1.3.0 src changes touch; the 6.0.14 → 6.0.24 window is TLS-arc only (no codegen change). 488 unreachable fns NOPed under DCE; 108,443 dead bytes. |
-| `dist/agnosys.cyr` size | ~321 KB / 10,046 lines | −16 lines vs 1.3.0 — 1.3.1 `util.cyr` dedup (name_char wrappers + the shared pam read-fd-to-Str helper replacing 3 loops). |
+| Binary size (DCE) | **159,392 B** | +368 B vs 1.3.1 — codegen change in the 6.0.25–6.0.52 toolchain window (no agnosys source changes). 490 unreachable fns NOPed under DCE; 108,466 dead bytes. |
+| `dist/agnosys.cyr` size | ~325 KB / 10,046 lines | Unchanged vs 1.3.1 (version header only at 1.3.2; no source changes). |
 | Fn-table utilization | 433 / 8,192 (5%) | +9 fns since 1.2.7 (stdlib snapshot growth pulled into the include graph) |
 | Var-table | 342 / 8,192 | |
 | Fixup-table | 865 / 262,144 | |
@@ -79,7 +79,7 @@ Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surfac
 - **Runtime**: 0
 - **Stdlib via `[deps] stdlib`**: `syscalls`, `string`, `alloc`, `fmt`, `vec`, `str`, `io`, `ct`, `slice`, `fnptr`, `json`, `tagged`, `assert`, `bench`, `fs`, `hashmap`, `net`, `process` (18 — `ct` added 1.1.3 for `ct_eq_bytes`; `slice` added 1.1.11 for `slice<u8>` indexing; `fnptr`/`json`/`tagged` added 1.1.12 for `#derive(Serialize)`; `assert`/`bench`/`fs`/`hashmap`/`net`/`process` added across 1.2.x for downstream-bundle completeness)
 - **Git-pinned**: 0 (no `[deps.<name>]` stanzas; no `cyrius.lock` needed today)
-- **Vendored stdlib refresh** (last): 2026-05-28 to cyrius 6.0.14 snapshot (full `./lib/` re-populated via `cyrius deps` after `rm -rf lib`; 25 stdlib files). `syscalls_linux_common.cyr` is now pulled transitively (was a not-pulled peer at the 6.0.1 snapshot), taking the count 24 → 25.
+- **Vendored stdlib refresh** (last): 2026-06-03 to cyrius 6.0.52 snapshot (full `./lib/` re-populated via `cyrius deps` after `rm -rf lib`; 29 stdlib files). Count 25 → 29: the AGNOS-target peers `alloc_agnos.cyr` + `syscalls_x86_64_agnos.cyr` and the macOS/Windows peers `syscalls_macos.cyr` / `syscalls_windows.cyr` / `process_win.cyr` are now pulled transitively. None affect the Linux build.
 
 ## Consumer Status
 
@@ -113,6 +113,7 @@ Automated consumer-integration CI is roadmap Phase 8 (item 5).
 
 | Tag | Date | Headline |
 |---|---|---|
+| **1.3.2** | 2026-06-03 | **Cyrius pin 6.0.24 → 6.0.52 — toolchain refresh with a real codegen win.** No agnosys source changes. Unlike the pure-TLS 6.0.14 → 6.0.24 window, the 6.0.25–6.0.52 arc carries a codegen change: binary 159,024 → 159,392 B (+368), 490 fns NOPed (108,466 dead bytes). Broad hot-path wins across all 30 benches, **zero regressions**, reproduced on a second run (`update_compare_versions` −25%, `certpin_ct_streq` −24%, `validate_pin_valid` −18%, `validate_cmdline_safe` −16%, `wrap_syscall_ok` −13%). Stdlib snapshot 25 → 29 files (AGNOS-target + macOS/Windows peers now transitive). 6 dist bundles regenerated (version header only). Audit clean (11/11); 252 tests. |
 | **1.3.1** | 2026-06-01 | **`util.cyr` consolidation closeout** (deferred non-breaking items from 1.3.0). New `agnosys_is_name_char` (dmverity/luks wrappers) + `agnosys_read_fd_to_str` replacing 3 byte-identical pam drain loops — the shared helper allocs `cap+1`, closing a latent 1-byte overflow the per-module copies carried (F-11 class, ≥8KB/≥64KB files). +2 public fns (735 → 737, non-breaking). Regression test `readfd_cap` (251 → 252). 6 dist bundles regenerated (−16 lines). Deprecation notices (doc-only) for `agnosys_checked_syscall` + `dmverity_validate_hex` `label` param → 2.0.0. Audit clean (11/11). |
 | **1.3.0** | 2026-06-01 | **Real minor: cyrius pin 6.0.14 → 6.0.24 + correctness/security + refactor/optimization closeout.** 4 buffer/exec defects fixed — F-11 (HIGH) `update_check` 1-byte heap overflow, F-12 `update_save_state` fixed-buffer overflow, F-13 `ima_read_measurements` silent 64KB truncation, F-14 netns exec non-functional + bare command names (rewritten onto `exec_vec` + absolute paths). New `src/util.cyr` consolidates 5 JSON shims + hex/starts_with/run-wrapper duplication (+5 `agnosys_*`, public names kept as wrappers; 730 → 735 fns, non-breaking). Bench wins: `starts_with` −68%/−77%, `mac_default_profile` 324 → 239ns (−26%). Tier-3 hygiene (break-in-var-loops, journald accessors, audit log_warn). Tests 247 → 251; 6 dist bundles regenerated (10,110 → 10,062 lines). CLAUDE.md: per-version benchmarking now mandatory. Audit clean (11/11). See `docs/audit/2026-06-01-audit.md`. |
 | **1.2.8** | 2026-05-28 | Cyrius pin bump 6.0.1 → 6.0.14 (6.0 patch series — native-TLS arc + toolchain fixes). No agnosys source changes. Stdlib snapshot 24 → 25 files (`syscalls_linux_common.cyr` now transitive). 6 dist bundles regenerated; full bundle −72 lines (cyrius 6.0.9 distlib blank-line fix). Binary 156,768 → 159,024 B. **Workaround audit:** all 3 in-tree workarounds (hand-rolled JSON serializers, CI fmt diff-gate, CI cycc_aarch64 fallback) re-verified still required against 6.0.14 — none repairable yet. capability-map header refresh. Audit clean (11/11). |
