@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-06 (AGNOS as a build target — the core syscall layer now supports both Linux and agnos)
+
+### Added
+
+- **AGNOS platform support in `agnosys-core`** (`src/syscall.cyr`). The kernel-interface wrappers consumed by userland tools (mihi/iam/chakshu) now compile and run under `cyrius build --agnos`, gated inline with `#ifdef CYRIUS_TARGET_AGNOS`:
+  - `agnosys_uname` → AGNOS `uname` syscall #34 + the sovereign 64-byte identity struct (4 × 16-byte NUL-padded fields: sysname/nodename/release/machine) vs Linux's 390-byte `utsname`. `UtsOffset`/`UTS_SIZE` gated accordingly.
+  - `query_sysinfo` → AGNOS `sysinfo` syscall #35 + the sovereign 40-byte all-u64 struct (uptime_secs/totalram/freeram/procs/cpus, byte counts direct — no `mem_unit`) vs Linux's 112-byte struct. `SysInfoOffset`/accessors gated (the memory accessors skip the unit multiply on agnos; `sysinfo_procs` reads u64 not u16).
+  - `agnosys_gettid` → `getpid` on agnos (single-threaded single-core; no `gettid`), `agnosys_geteuid` → `getuid` (no separate effective-uid surface). The literal syscall numbers 34/35 are used because the agnos cyrius peer doesn't define `SYS_UNAME`/`SYS_SYSINFO`/`SYS_GETTID`/`SYS_GETEUID`, and the x86 Linux peer wrongly defines `SYS_SYSINFO=99` on the agnos x86 target (peers self-gate by arch, not OS).
+- The Linux path is unchanged (additive gating). The `security`/`storage`/`trust`/`system` profiles remain Linux-only (Landlock/seccomp/LUKS/TPM have no agnos equivalent yet); only `agnosys-core` is agnos-portable — consumers needing the kernel-interface on agnos pull the `core` bundle.
+
+### Changed
+
+- cyrius pin `6.0.52` → `6.0.56` (the agnos-target toolchain; matches agnoshi + the agnos kernel). `dist/agnosys.cyr` + `dist/agnosys-core.cyr` regenerated at v1.4.0.
+
+### Validated
+
+- `cyrius distlib core` → `dist/agnosys-core.cyr`; a `--agnos` compile-test (`agnosys_uname` + `query_sysinfo`) builds **OK** (both reachable; the `sys_fork`/`sys_dup2`/`WIF*` warnings are Linux-only process helpers in `logging`/`util`, unreachable + DCE'd). Linux build unaffected.
+
 ## [1.3.2] — 2026-06-03
 
 **Cyrius pin 6.0.24 → 6.0.52 — toolchain refresh with a real codegen win.** No
