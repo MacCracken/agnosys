@@ -18,7 +18,6 @@ include "lib/fs.cyr"
 include "lib/ct.cyr"
 include "lib/slice.cyr"
 include "lib/fnptr.cyr"
-include "lib/json.cyr"
 include "lib/assert.cyr"
 
 include "src/error.cyr"
