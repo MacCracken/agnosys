@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.4.2] — 2026-06-12
 
-**Daimon-class buffer fix (pin unchanged — 6.1.23).**
+**Daimon-class buffer fix + cyrius pin → 6.2.1.**
 
 ### Fixed
 - **`update_save_state` `bc_buf` boot-count scratch overflow.** The JSON writer
@@ -18,10 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (≥ 10,000,000) overran the buffer into adjacent stack/static memory. Bumped to
   `var bc_buf[24]`. Surfaced by the cyrius v6.2.1 address-taken-local-array audit
   (the daimon byte-vs-slot class). Latent (layout-masked) until now. Plain
-  byte-buffer resize — toolchain-agnostic, **pin stays 6.1.23** (6.2.x dropped
-  the standalone `json` stdlib module — carved into bayan at 6.1.25 — which
-  agnosys's `[deps]` still resolves, so bumping the pin would break `cyrius
-  deps`).
+  byte-buffer resize — toolchain-agnostic.
+
+### Changed
+- **cyrius pin `6.1.23` → `6.2.1`**, as part of the ecosystem-wide stdlib pin
+  sweep onto the current toolchain. Required dropping the stale **`"json"`**
+  entry from `[deps] stdlib`: the standalone `json` stdlib module was carved into
+  **bayan** at cyrius 6.1.25, so 6.2.x ships no `lib/json.cyr` and resolving it
+  broke `cyrius deps`. agnosys rolls its own JSON helpers (`journald_parse_json`,
+  `agnosys_json_emit_cstr_or_null`, `drm_verinfo_to_json`) and calls no stdlib
+  `json_*` symbols, so the entry was dead weight. Verified green on 6.2.1:
+  `cyrius deps` resolves cleanly, build + tests pass, dist regenerated.
 
 ## [1.4.1] — 2026-06-10
 
