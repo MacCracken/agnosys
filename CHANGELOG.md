@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.4] — 2026-06-19
+
+**Renamed `agnosys` → `agnodrm`; decomposed to the device / DRM model.** The
+library narrows from "AGNOS kernel interface" to its device-access core (udev +
+DRM/KMS) on a small error + util support layer. Its other subsystems folded to
+their proper homes in the agnosys → agnodrm decomposition (see the agnosticos
+decomposition plan).
+
+### Breaking
+- **Repository + package renamed `agnosys` → `agnodrm`.** The bundle is now
+  `dist/agnodrm.cyr` (+ `dist/agnodrm-core.cyr`). GitHub redirects the old repo
+  URL, so consumers pinned to existing tags keep resolving until they bump.
+- **Removed 15 modules** (moved to their proper homes):
+  - trust: `tpm` / `ima` / `secureboot` / `certpin` / `dmverity` / `luks` → **sigil**
+  - security: `security` (Landlock/seccomp) / `mac` / `audit` → **kavach**
+  - `pam` → **aegis**
+  - `logging` → **sakshi**
+  - `syscall` / `syscall_arch` / `syscall_x86_64_linux` / `syscall_aarch64_linux`
+    → **cyrius** (stdlib `syscalls_*.cyr` is canonical)
+- **Profiles**: the `security` / `storage` / `trust` / `system` profile bundles
+  were removed with their modules. Only `[lib.core]` (error/util/udev/drm) remains
+  alongside the full `dist/agnodrm.cyr`.
+
+### Changed
+- **Survivors**: `error`, `util`, `udev`, `drm` (the device-access core) + the
+  deferred Linux-eccentric group `journald` / `netns` / `bootloader` / `update` /
+  `fuse` (parked here post-v1 — no agnos story yet, revisit then).
+- Made the deferred survivors self-contained after the syscall-layer move:
+  `journald` inlines its socket-syscall numbers; `util.cyr` provides the two
+  wrappers `update.cyr` needs (`agnosys_fsync` / `agnosys_rename`) via
+  `UTIL_SYS_*` constants (distinct names to avoid an `lib/syscalls.cyr` collision).
+- `main.cyr` rewritten as a device-model build smoke.
+- Test suite trimmed to the survivors: `test_integration.tcyr` (22 → 9 module
+  tests, 93/0), `bench_all.bcyr` (11 → 6 groups); obsolete fuzzers (pam / audit /
+  certpin / luks) + `bench_compare` removed; fuse + journald fuzzers kept.
+- CI swept to `agnodrm` + the `core` profile (`ci.yml` / `release.yml`);
+  `consumer-integration.yml` paused until downstream consumers rewire.
+- api-surface snapshot regenerated (730 → 315 public fns); capability-map
+  regenerated. Full `scripts/audit.sh` clean (11/11).
+
 ## [1.4.3] — 2026-06-15
 
 **cyrius pin → 6.2.11.**
