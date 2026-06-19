@@ -1,14 +1,16 @@
-# Agnosys — Live State
+# Agnodrm — Live State
 
 > Volatile snapshot. Refreshed every release. Durable rules live in [`CLAUDE.md`](../../CLAUDE.md). Historical release narrative is in [`CHANGELOG.md`](../../CHANGELOG.md). Future work is in [`roadmap.md`](roadmap.md).
 
-**Last refresh:** 2026-06-15 (1.4.3)
+**Last refresh:** 2026-06-19 (1.4.4)
+
+> **Renamed `agnosys` → `agnodrm` at 1.4.4** — decomposed from the AGNOS kernel-interface library to the **device / DRM model** (udev + DRM/KMS on error/util support). 15 modules moved to their proper homes (trust→sigil, security/mac/audit→kavach, pam→aegis, logging→sakshi, syscall layer→cyrius). See the [decomposition plan](2026-06-18-agnosys-to-agnodrm-decomposition-plan.md). Metrics below predating 1.4.4 describe the old 20-module surface and are being refreshed as touched.
 
 ## Version & Toolchain
 
 | Item | Value |
 |---|---|
-| `VERSION` | **1.4.3** |
+| `VERSION` | **1.4.4** |
 | `cyrius.cyml [package].cyrius` | **6.2.11** |
 | Min Cyrius (consumer) | 6.2.11 |
 | Last cyrius bump | 6.2.1 → 6.2.11 (2026-06-15; 6.2.x maintenance line, bug-fix/optimization patches only). Pure pin refresh — no `src/*.cyr` edits; validated green from clean deps. Prior: 6.1.23 → 6.2.1 at 1.4.2 (stdlib pin sweep; dropped stale `"json"` dep — carved into bayan at 6.1.25), 6.0.56 → 6.1.23 (2026-06-10; first 6.1.x adoption). Absorbs the **v6.0.64 thread-safe allocator** (`lib/alloc.cyr` global CAS spinlock + vtable). Required: `[deps] stdlib += atomic` (transitive include not auto-resolved), and removing `alloc_reset()`-between-groups from the integration test + benches (incompatible with the new memoized default allocator — dangling cache → SIGSEGV/spin). Binary **159,392 → 162,784 B (+3,392)** from the lock/vtable code. **Perf regression** on alloc-bound paths (`ok_create` +321%, `from_errno` +210%) — single-threaded agnosys pays for the lock; confined to cold/diagnostic heap paths (zero-alloc `syserr_pack` hot path unchanged at 3 ns). Prior bumps: 6.0.52 → 6.0.56 at 1.4.0 (AGNOS-target work), 6.0.24 → 6.0.52 at 1.3.2 (codegen change, +368 B). |
@@ -17,8 +19,8 @@
 
 | Metric | Value | Notes |
 |---|---|---|
-| Binary size (DCE) | **124,376 B** | Down from 162,784 B (1.4.1) — the 1.4.2 stdlib pin sweep dropped the stale `"json"` dep (carved into bayan at cyrius 6.1.25) and the 6.2.x toolchain trimmed the codegen. 1.4.3 (6.2.11) byte-identical to 1.4.2 — pure pin refresh. DCE NOPed 432 unreachable fns (72,344 B). |
-| `dist/agnosys.cyr` size | ~327 KB / 10,125 lines | +79 lines vs 1.3.2 — the 1.4.0 AGNOS `#ifdef CYRIUS_TARGET_AGNOS` gating in `src/syscall.cyr`. Version header only at 1.4.1 (1-line drift). |
+| Binary size (DCE) | **128,728 B** (1.4.4) | The device-model smoke `main.cyr` over error/util/udev/drm. Was 124,376 B at 1.4.3 for the old 20-module surface — not directly comparable (different program). |
+| `dist/agnodrm.cyr` size | ~137 KB / 4,091 lines (1.4.4) | Full bundle = the 9 surviving modules. Down from ~327 KB / 10,125 lines (`dist/agnosys.cyr`, 1.4.3) — the 15 moved modules left with their code. Plus `dist/agnodrm-core.cyr` (error/util/udev/drm). |
 | Fn-table utilization | 433 / 8,192 (5%) | +9 fns since 1.2.7 (stdlib snapshot growth pulled into the include graph) |
 | Var-table | 342 / 8,192 | |
 | Fixup-table | 865 / 262,144 | |
@@ -28,32 +30,23 @@
 
 ## Module Count
 
-**20 kernel-interface modules implemented (100%)** — surface frozen at 1.0. Plus `src/util.cyr` (shared `agnosys_*` cross-module helpers, added 1.3.0; in `[lib.core]` so every profile bundle resolves them).
+**9 modules** post-decomposition (1.4.4): the **device-model core** (error, util, udev, drm) + the **deferred Linux-eccentric group** (journald, netns, bootloader, update, fuse — parked post-v1, no agnos story yet). Down from 20; the other 15 moved to their proper homes (see the decomposition plan / CHANGELOG 1.4.4).
 
-| Module | Public fns | Description |
+| Module | Group | Description |
 |---|---|---|
-| error | (snapshot) | SysError types, errno mapping, Result helpers |
-| syscall | (snapshot) | `agnosys_*` getpid/uid/hostname/sysinfo wrappers |
-| logging | (snapshot) | `log_*` level control via `AGNOSYS_LOG` |
-| security | (snapshot) | Landlock, seccomp BPF, namespace creation |
-| mac | (snapshot) | SELinux/AppArmor detection and context management |
-| audit | (snapshot) | Kernel audit netlink socket, rule management |
-| pam | (snapshot) | PAM service inspection, passwd/who parsing |
-| journald | (snapshot) | Systemd journal send/query |
-| luks | (snapshot) | LUKS2 encrypted volume management |
-| dmverity | (snapshot) | dm-verity integrity verification |
-| ima | (snapshot) | IMA measurements, policy rules |
-| tpm | (snapshot) | TPM2 device, PCR reading, seal/unseal |
-| certpin | (snapshot) | Certificate pin validation, SPKI computation |
-| secureboot | (snapshot) | Secure Boot EFI variable reading |
-| udev | (snapshot) | Device enumeration via udevadm |
-| drm | (snapshot) | DRM device enumeration, ioctl version/caps |
-| netns | (snapshot) | Network namespace create/destroy, veth, nftables |
-| bootloader | (snapshot) | systemd-boot/GRUB detection, cmdline validation |
-| update | (snapshot) | Atomic file ops, version comparison |
-| fuse | (snapshot) | FUSE mount parsing, mount/unmount |
+| error | core | SysError types, errno mapping, Result helpers |
+| util | core | Shared `agnodrm_*` helpers — json-emit, hex/name-char, cstr-starts-with, run_capture/checked, read-fd, fsync/rename |
+| udev | core | Device enumeration via udevadm |
+| drm | core | DRM device enumeration, ioctl version/caps |
+| journald | deferred | Systemd journal send/query |
+| netns | deferred | Network namespace create/destroy, veth, nftables |
+| bootloader | deferred | systemd-boot/GRUB detection, cmdline validation |
+| update | deferred | Atomic file ops, version comparison |
+| fuse | deferred | FUSE mount parsing, mount/unmount |
 
-Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surface-1.0.snapshot) (machine-checkable; CI-gated via `scripts/check-api-surface.sh`). 737 public fns total (+5 `agnosys_*` at 1.3.0, +2 at 1.3.1 — additive; 0 removed, non-breaking).
+Moved out at 1.4.4: `syscall`/`logging` → cyrius/sakshi; `security`/`mac`/`audit` → kavach; `pam` → aegis; `luks`/`dmverity`/`ima`/`tpm`/`certpin`/`secureboot` → sigil.
+
+Per-module public-fn arity is tracked in [`api-surface-1.0.snapshot`](api-surface-1.0.snapshot) (machine-checkable; CI-gated via `scripts/check-api-surface.sh`). **315 public fns** total post-decomposition (was 737 — the 422 removed went with their modules; the `core` profile is `[lib.core]` = error/util/udev/drm).
 
 ## Test / Fuzz / Bench Coverage
 

@@ -1,17 +1,36 @@
 ---
-name: Agnosys Documentation Health
-description: Living state of doc currency in the agnosys repo — fresh / stale / archived / open-question, refreshed as docs are touched
+name: Agnodrm Documentation Health
+description: Living state of doc currency in the agnodrm repo — fresh / stale / archived / open-question, refreshed as docs are touched
 type: state
 ---
 
-# Documentation Health — agnosys
+# Documentation Health — agnodrm
 
-> **Last refresh**: 2026-05-10 (initial audit + 3-row cleanup, paired with the 1.2.1 doc cleanup pass) | **Refresh cadence**: when docs are touched, update the affected row.
-> **Scope**: This repo only (`agnosys`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo cyrius pin/version drift lives in [`development/state.md`](development/state.md), not here.
+> **Last refresh**: 2026-06-19 (agnosys → agnodrm rename audit, paired with the 1.4.4 decomposition cut) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Scope**: This repo only (`agnodrm`, formerly `agnosys`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo cyrius pin/version drift lives in [`development/state.md`](development/state.md), not here.
 
-This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Agnosys is the kernel-interface library every AGNOS component depends on — stale syscall / capability docs propagate downstream, so doc currency carries weight. The doc surface is moderate (~34 files) and most are load-bearing.
+This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Agnodrm is the AGNOS device / DRM model (renamed from agnosys at 1.4.4); device-access docs propagate to ai-hwaccel / mabda, so doc currency carries weight. The doc surface is moderate (~34 files) and most are load-bearing.
 
-Pattern lifted from the agnostik ledger ([`agnostik/docs/doc-health.md`](https://github.com/MacCracken/agnostik/blob/main/docs/doc-health.md)) — same buckets, agnosys-shaped tiers.
+Pattern lifted from the agnostik ledger ([`agnostik/docs/doc-health.md`](https://github.com/MacCracken/agnostik/blob/main/docs/doc-health.md)) — same buckets, agnodrm-shaped tiers.
+
+---
+
+## 2026-06-19 — agnosys → agnodrm rename audit (1.4.4)
+
+The decomposition renamed the repo + removed 15 modules. Doc disposition:
+- ✅ **Active docs updated to agnodrm**: README, CLAUDE.md, CONTRIBUTING.md,
+  SECURITY.md, `development/state.md` (identity + module table → 9 survivors +
+  metrics), `development/roadmap.md` (identity + scope + consumer map),
+  `src/util.cyr` header, the agnosticos genesis table. Generated docs
+  (api-surface snapshot+prose, capability-map) regenerated (730 → 315 fns).
+- 📦 **Historical docs preserved as-is** (renaming would falsify the record):
+  ADRs, `audit/` reports, `development/issues/` + `archive/`, `reviews/`, and the
+  pre-1.4.4 CHANGELOG / state-history / roadmap-phase entries — "agnosys" is the
+  correct name-at-the-time in those.
+- 🟡 **Staged** (deep refresh, not blocking): `development/roadmap.md`'s completed
+  phases still list moved modules (flagged inline as pre-decomposition);
+  `docs/architecture/*` + `docs/SECURITY-NOTES.md` per-module re-read against the
+  trimmed src/.
 
 ---
 

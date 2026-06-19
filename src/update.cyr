@@ -84,14 +84,14 @@ fn update_atomic_write(path, data, data_len): i64 {
     }
 
     # fsync
-    var ret = agnosys_fsync(fd);  # SYS_FSYNC
+    var ret = agnodrm_fsync(fd);  # SYS_FSYNC
     if (ret < 0) {
         sys_unlink(tmppath);
         return err_io(0 - ret, "atomic_write: fsync failed");
     }
 
     # Rename temp to target: syscall 82 = SYS_RENAME
-    ret = agnosys_rename(tmppath, path);
+    ret = agnodrm_rename(tmppath, path);
     if (ret < 0) {
         sys_unlink(tmppath);
         return err_io(0 - ret, "atomic_write: rename failed");
@@ -154,10 +154,10 @@ fn update_atomic_copy(src, dst): i64 {
     }
 
     # fsync (fd closed by defer)
-    agnosys_fsync(dst_fd);
+    agnodrm_fsync(dst_fd);
 
     # Rename temp to target
-    var ret = agnosys_rename(tmppath, dst);
+    var ret = agnodrm_rename(tmppath, dst);
     if (ret < 0) {
         sys_unlink(tmppath);
         return err_io(0 - ret, "atomic_copy: rename failed");
@@ -396,7 +396,7 @@ fn update_state_to_json(s, sb): i64 {
     str_builder_add_cstr(sb, "{\"slot\":");
     str_builder_add_int(sb, update_state_slot(s));
     str_builder_add_cstr(sb, ",\"version\":");
-    agnosys_json_emit_cstr_or_null(sb, update_state_version(s));
+    agnodrm_json_emit_cstr_or_null(sb, update_state_version(s));
     str_builder_add_cstr(sb, ",\"pending\":");
     str_builder_add_int(sb, update_state_pending(s));
     str_builder_add_cstr(sb, ",\"rollback_available\":");
@@ -755,7 +755,7 @@ fn update_verify_manifest(manifest): i64 {
         var hi = 0;
         while (hi < 64) {
             var c = load8(hash + hi);
-            if (agnosys_is_hex_char(c) == 0) {
+            if (agnodrm_is_hex_char(c) == 0) {
                 return err_invalid_argument("file sha256 contains non-hex character");
             }
             hi = hi + 1;

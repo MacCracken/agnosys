@@ -286,7 +286,7 @@ fn wrap_syscall(ret): i64 {
 #
 # Small helpers that several modules need identically. Kept here (rather
 # than copied per-module) so a single definition is audited and tested
-# once. Public `agnosys_*` prefix per the project's prefix discipline.
+# once. Public `agnodrm_*` prefix per the project's prefix discipline.
 #
 # Placed in [lib.core] so every profile bundle (core + domain) resolves
 # these — consumers span security/storage/trust/system profiles.
@@ -295,7 +295,7 @@ fn wrap_syscall(ret): i64 {
 # `null` when the pointer is 0, otherwise a JSON-quoted/escaped string.
 # Replaces the per-module `_<mod>_emit_cstr_or_null` shims (mac, dmverity,
 # drm, certpin, update) that were byte-identical.
-fn agnosys_json_emit_cstr_or_null(sb, c): i64 {
+fn agnodrm_json_emit_cstr_or_null(sb, c): i64 {
     if (c == 0) {
         str_builder_add_cstr(sb, "null");
     } else {
@@ -306,7 +306,7 @@ fn agnosys_json_emit_cstr_or_null(sb, c): i64 {
 
 # Is `ch` an ASCII hex digit (0-9, a-f, A-F)? Single definition shared by
 # the hash/digest validators in ima, dmverity, tpm, update.
-fn agnosys_is_hex_char(ch): i64 {
+fn agnodrm_is_hex_char(ch): i64 {
     if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
     if (ch >= 65 && ch <= 70) { return 1; }   # A-F
     if (ch >= 97 && ch <= 102) { return 1; }  # a-f
@@ -315,7 +315,7 @@ fn agnosys_is_hex_char(ch): i64 {
 
 # Is `ch` valid in a device-mapper / volume name (alphanumeric, `-`, `_`)?
 # Single source for the dm-name allowlist shared by dmverity and luks.
-fn agnosys_is_name_char(ch): i64 {
+fn agnodrm_is_name_char(ch): i64 {
     if (ch >= 48 && ch <= 57) { return 1; }   # 0-9
     if (ch >= 65 && ch <= 90) { return 1; }   # A-Z
     if (ch >= 97 && ch <= 122) { return 1; }  # a-z
@@ -328,7 +328,7 @@ fn agnosys_is_name_char(ch): i64 {
 # `prefix` and compares, stopping at the first mismatch, the prefix
 # terminator, or the str terminator — no up-front strlen of either side
 # (the previous per-module copies scanned both strings fully first).
-fn agnosys_cstr_starts_with(str, prefix): i64 {
+fn agnodrm_cstr_starts_with(str, prefix): i64 {
     var i = 0;
     var pc = load8(prefix);
     while (pc != 0) {
@@ -344,7 +344,7 @@ fn agnosys_cstr_starts_with(str, prefix): i64 {
 # Run a subprocess (cstr argv vec) and capture stdout into a caller buffer.
 # Returns Ok(bytes_read) or Err(errmsg) on exec failure. `errmsg` is the
 # per-tool diagnostic. Shared by dmverity/luks/tpm `*_run_capture`.
-fn agnosys_run_capture(args, buf, buflen, errmsg): i64 {
+fn agnodrm_run_capture(args, buf, buflen, errmsg): i64 {
     var n = exec_capture(args, buf, buflen);
     if (n < 0) {
         return err_unknown(errmsg);
@@ -355,7 +355,7 @@ fn agnosys_run_capture(args, buf, buflen, errmsg): i64 {
 # Run a subprocess (cstr argv vec) and check for a zero exit code.
 # Returns Ok(0) or Err(errmsg) on non-zero exit / exec failure. Shared by
 # dmverity/luks/tpm `*_run_checked`.
-fn agnosys_run_checked(args, errmsg): i64 {
+fn agnodrm_run_checked(args, errmsg): i64 {
     var rc = exec_vec(args);
     if (rc != 0) {
         return err_unknown(errmsg);
@@ -369,7 +369,7 @@ fn agnosys_run_checked(args, errmsg): i64 {
 # even at a full read (the per-module copies alloc'd exactly `cap`, a
 # latent 1-byte overflow when the file filled the buffer). Shared by the
 # pam config / passwd readers.
-fn agnosys_read_fd_to_str(fd, cap): i64 {
+fn agnodrm_read_fd_to_str(fd, cap): i64 {
     var buf = alloc(cap + 1);
     var total = 0;
     var rgo = 1;
@@ -400,11 +400,11 @@ enum UtilSyscall {
     UTIL_SYS_RENAME = 82;
 }
 
-fn agnosys_fsync(fd): i64 {
+fn agnodrm_fsync(fd): i64 {
     return syscall(UTIL_SYS_FSYNC, fd);
 }
 
-fn agnosys_rename(oldpath, newpath): i64 {
+fn agnodrm_rename(oldpath, newpath): i64 {
     return syscall(UTIL_SYS_RENAME, oldpath, newpath);
 }
 
@@ -747,7 +747,7 @@ fn udev_get_device_info(syspath): i64 {
 # Check if a string starts with a given prefix.
 # Thin wrapper over the shared single-pass predicate (public API stable).
 fn udev_starts_with(str, prefix): i64 {
-    return agnosys_cstr_starts_with(str, prefix);
+    return agnodrm_cstr_starts_with(str, prefix);
 }
 
 # Validate a udev rule.
@@ -935,11 +935,11 @@ fn drm_verinfo_to_json(v, sb): i64 {
     str_builder_add_cstr(sb, ",\"patch\":");
     str_builder_add_int(sb, drm_verinfo_patch(v));
     str_builder_add_cstr(sb, ",\"name\":");
-    agnosys_json_emit_cstr_or_null(sb, drm_verinfo_name(v));
+    agnodrm_json_emit_cstr_or_null(sb, drm_verinfo_name(v));
     str_builder_add_cstr(sb, ",\"date\":");
-    agnosys_json_emit_cstr_or_null(sb, drm_verinfo_date(v));
+    agnodrm_json_emit_cstr_or_null(sb, drm_verinfo_date(v));
     str_builder_add_cstr(sb, ",\"desc\":");
-    agnosys_json_emit_cstr_or_null(sb, drm_verinfo_desc(v));
+    agnodrm_json_emit_cstr_or_null(sb, drm_verinfo_desc(v));
     str_builder_add_cstr(sb, "}");
     return 0;
 }
@@ -2770,14 +2770,14 @@ fn update_atomic_write(path, data, data_len): i64 {
     }
 
     # fsync
-    var ret = agnosys_fsync(fd);  # SYS_FSYNC
+    var ret = agnodrm_fsync(fd);  # SYS_FSYNC
     if (ret < 0) {
         sys_unlink(tmppath);
         return err_io(0 - ret, "atomic_write: fsync failed");
     }
 
     # Rename temp to target: syscall 82 = SYS_RENAME
-    ret = agnosys_rename(tmppath, path);
+    ret = agnodrm_rename(tmppath, path);
     if (ret < 0) {
         sys_unlink(tmppath);
         return err_io(0 - ret, "atomic_write: rename failed");
@@ -2840,10 +2840,10 @@ fn update_atomic_copy(src, dst): i64 {
     }
 
     # fsync (fd closed by defer)
-    agnosys_fsync(dst_fd);
+    agnodrm_fsync(dst_fd);
 
     # Rename temp to target
-    var ret = agnosys_rename(tmppath, dst);
+    var ret = agnodrm_rename(tmppath, dst);
     if (ret < 0) {
         sys_unlink(tmppath);
         return err_io(0 - ret, "atomic_copy: rename failed");
@@ -3082,7 +3082,7 @@ fn update_state_to_json(s, sb): i64 {
     str_builder_add_cstr(sb, "{\"slot\":");
     str_builder_add_int(sb, update_state_slot(s));
     str_builder_add_cstr(sb, ",\"version\":");
-    agnosys_json_emit_cstr_or_null(sb, update_state_version(s));
+    agnodrm_json_emit_cstr_or_null(sb, update_state_version(s));
     str_builder_add_cstr(sb, ",\"pending\":");
     str_builder_add_int(sb, update_state_pending(s));
     str_builder_add_cstr(sb, ",\"rollback_available\":");
@@ -3441,7 +3441,7 @@ fn update_verify_manifest(manifest): i64 {
         var hi = 0;
         while (hi < 64) {
             var c = load8(hash + hi);
-            if (agnosys_is_hex_char(c) == 0) {
+            if (agnodrm_is_hex_char(c) == 0) {
                 return err_invalid_argument("file sha256 contains non-hex character");
             }
             hi = hi + 1;
@@ -3757,7 +3757,7 @@ fn fuse_mount_new(device, mountpoint, fstype, options): i64 {
 # Check if a string starts with a prefix.
 # Thin wrapper over the shared single-pass predicate (public API stable).
 fn fuse_starts_with(str, prefix): i64 {
-    return agnosys_cstr_starts_with(str, prefix);
+    return agnodrm_cstr_starts_with(str, prefix);
 }
 
 # Extract a whitespace-delimited field from a line.

@@ -1,22 +1,29 @@
-# Agnosys Roadmap
+# Agnodrm Roadmap
 
-> **Agnosys** is the AGNOS kernel interface library. Cyrius bindings for Linux
-> kernel syscalls and security primitives. Consumers include only the modules
-> they need.
+> **Agnodrm** is the AGNOS device / DRM model — udev device enumeration +
+> DRM/KMS device-node access, on a small error/util support layer. Renamed from
+> **agnosys** (the AGNOS kernel-interface library) at 1.4.4; the
+> trust/security/syscall/logging subsystems decomposed out to
+> sigil/kavach/aegis/cyrius/sakshi.
 >
 > Genesis repo: [agnosticos](https://github.com/MacCracken/agnosticos)
 >
 > **Live state** (versions, sizes, counts, in-flight) → [`state.md`](state.md).
-> Roadmap is durable: completed phases stay; future phases get appended.
+> Roadmap is durable: completed phases stay; future phases get appended. **The
+> phases below predate the agnosys → agnodrm decomposition** — they record how
+> the full library was built before its non-device subsystems moved to their
+> proper homes (so they still list the moved modules).
 
 ## Scope
 
-Agnosys owns **Cyrius bindings to Linux kernel interfaces**. It does NOT own:
-- **Higher-level device abstraction** → yukti (consumes agnosys[udev])
-- **Sandbox policy engine** → kavach (consumes agnosys[landlock,seccomp])
-- **Firewall rules** → nein (consumes agnosys[netns])
-- **Container runtime** → stiva (consumes agnosys[luks,dmverity])
-- **Rendering pipeline** → soorat (consumes agnosys[drm])
+Agnodrm owns **device access** — udev enumeration + DRM/KMS — on a small
+error/util support layer, plus a deferred Linux-eccentric group (journald /
+netns / bootloader / update / fuse) parked post-v1. It does NOT own:
+- **GPU detection / compute** → ai-hwaccel + mabda (consume agnodrm[udev,drm])
+- **Rendering pipeline** → soorat (consumes agnodrm[drm])
+- **Firewall rules** → nein (consumes agnodrm[netns])
+- **Trust / security / firmware / syscall / logging** — moved out at 1.4.4 to
+  sigil / kavach / aegis / cyrius / sakshi (see the decomposition plan).
 
 ## Phase 1 — Core (V0.1) ✅
 

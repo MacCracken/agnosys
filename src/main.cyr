@@ -53,7 +53,7 @@ fn main(): i64 {
     }
 
     # -- util (pure helper) --
-    if (agnosys_is_hex_char(97) == 1) { println("util hex-char: ok"); }
+    if (agnodrm_is_hex_char(97) == 1) { println("util hex-char: ok"); }
 
     # -- udev (pure parse) --
     if (udev_starts_with("block", "blo") == 1) { println("udev parse: ok"); }

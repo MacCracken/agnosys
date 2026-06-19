@@ -25,15 +25,15 @@ Thank you for your interest in contributing.
 | Command | Description |
 |---------|-------------|
 | `cyrius deps` | Vendor the pinned stdlib into `./lib/` (gitignored) |
-| `cyrius build src/main.cyr build/agnosys` | Compile |
-| `cyrius build --aarch64 src/main.cyr build/agnosys-aarch64` | Cross-build for aarch64 |
+| `cyrius build src/main.cyr build/agnodrm` | Compile |
+| `cyrius build --aarch64 src/main.cyr build/agnodrm-aarch64` | Cross-build for aarch64 |
 | `cyrius run src/main.cyr` | Compile + run |
 | `cyrius check src/<module>.cyr` | Syntax check |
 | `cyrius test` | Run `tests/tcyr/*.tcyr` |
 | `cyrius lint src/<module>.cyr` | Static analysis |
 | `cyrius vet src/main.cyr` | Include-graph audit |
 | `cyrius capacity --check src/main.cyr` | 85% table-utilization gate |
-| `cyrius distlib [<profile>]` | Regenerate `dist/agnosys.cyr` (or `dist/agnosys-<profile>.cyr` — core/security/storage/trust/system) |
+| `cyrius distlib [<profile>]` | Regenerate `dist/agnodrm.cyr` (or `dist/agnodrm-core.cyr` — only the `core` profile remains post-decomposition) |
 | `scripts/audit.sh` | Full 11-gate local quality run |
 | `scripts/check-api-surface.sh` | Diff public API vs. snapshot |
 | `scripts/gen-api-surface-prose.sh [--check]` | Regen / check `api-surface-1.0.md` prose |
@@ -69,7 +69,7 @@ The 1.0 surface is **frozen** — adding new modules is rare and requires a majo
 
 ## Code Style
 
-- One module per `src/<module>.cyr` file, `lib.cyr` equivalent is `src/<module>.cyr` itself — there's no per-module lib entry point in agnosys
+- One module per `src/<module>.cyr` file, `lib.cyr` equivalent is `src/<module>.cyr` itself — there's no per-module lib entry point in agnodrm
 - Module-level comment block at the top describing subsystem coverage
 - Function naming: `<module>_<struct>_<field>` for accessors (e.g. `audit_rule_path`, `certpin_entry_host`), `<module>_<verb>_<noun>` for actions (`mac_detect_system`, `audit_open`)
 - Constants via `enum` blocks (avoids global var slot limits)

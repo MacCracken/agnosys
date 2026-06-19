@@ -38,7 +38,7 @@ Please report security issues to **security@agnos.dev**.
 
 ## Design Principles
 
-- **Kernel at the boundary.** Every module wraps a specific kernel interface; no policy decisions hide in agnosys — those live in consumers (kavach for sandbox policy, nein for firewall rules, sigil for trust chain, ...).
+- **Device access at the boundary.** Every module wraps a specific device/kernel interface (udev enumeration, DRM/KMS access); no policy decisions hide in agnodrm — those live in consumers (ai-hwaccel / mabda for GPU, kavach for sandbox policy, sigil for trust chain, ...). Trust/security/firewall modules that once lived here moved out in the agnosys → agnodrm decomposition.
 - **Caller-owned memory.** Hot-path syscall wrappers take pre-allocated buffers; no surprise heap allocations.
 - **Packed errors on hot paths** (`syserr_pack`, zero allocation), heap errors on cold paths (`syserr_new`, carries a diagnostic string).
 - **Constant-time comparisons** for security-sensitive matches (`certpin_ct_streq` for pins; dm-verity root hash via byte memcmp kept off the log path).

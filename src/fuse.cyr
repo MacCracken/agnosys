@@ -30,7 +30,7 @@ fn fuse_mount_new(device, mountpoint, fstype, options): i64 {
 # Check if a string starts with a prefix.
 # Thin wrapper over the shared single-pass predicate (public API stable).
 fn fuse_starts_with(str, prefix): i64 {
-    return agnosys_cstr_starts_with(str, prefix);
+    return agnodrm_cstr_starts_with(str, prefix);
 }
 
 # Extract a whitespace-delimited field from a line.
